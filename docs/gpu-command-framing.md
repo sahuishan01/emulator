@@ -2,8 +2,8 @@
 
 `crates/gpu` starts the guest GPU path with an original bounded parser for
 captured Maxwell channel packets. GPU mappings use our memory crate, with no
-kernel, Vulkan or external crate dependency. It decodes method writes without executing them,
-acknowledge completion, access a driver or render an image.
+kernel, Vulkan or external crate dependency. It decodes method writes; execution,
+completion signals, driver access and rendering remain separate work.
 
 Interface fields were checked against NVIDIA's public
 [MAXWELL_CHANNEL_GPFIFO_A declarations](https://github.com/NVIDIA/open-gpu-doc/blob/master/classes/host/clb06f.h).

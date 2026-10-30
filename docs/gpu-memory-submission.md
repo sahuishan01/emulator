@@ -6,7 +6,8 @@ GPU methods, shaders or fences and are not a completed NV service/ioctl path.
 
 ## Storage and access
 
-CPU regions retain slices of owned backing with opaque stable IDs. Protect/unmap
+CPU regions retain slices of fixed-length owned backing with opaque stable IDs.
+Imported Vec spare capacity is dropped before backing is retained. Protect/unmap
 split metadata without copying bytes. `AddressSpace::pin` checks the complete
 committed range and requested rights, returning a capability-limited MemoryView.
 CPU aliases and GPU mappings observe the same bytes. Existing views retain

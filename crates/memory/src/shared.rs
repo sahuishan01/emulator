@@ -25,7 +25,7 @@ pub(crate) struct AllocationBudget {
 #[derive(Debug)]
 struct Backing {
     id: BackingId,
-    bytes: RefCell<Vec<u8>>,
+    bytes: RefCell<Box<[u8]>>,
     budget: Rc<AllocationBudget>,
 }
 impl Drop for Backing {
@@ -67,7 +67,9 @@ impl BackingSlice {
         Ok(Self {
             backing: Rc::new(Backing {
                 id: BackingId(id),
-                bytes: RefCell::new(bytes),
+                // Discard spare Vec capacity so resident payload accounting
+                // matches the backing allocation retained by pinned views.
+                bytes: RefCell::new(bytes.into_boxed_slice()),
                 budget,
             }),
             offset: 0,

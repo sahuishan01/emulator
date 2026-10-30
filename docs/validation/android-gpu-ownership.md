@@ -1,9 +1,11 @@
 # Android GPU ownership checkpoint
 
 0.7.0-dev (version code 7), APK SHA-256:
-`0eb87ce3cb005ec32fdd9fe8e1dd90bf8332a4cda6ca5ef6e0ef517290570233`.
+`854e225b5e1e299b3a46e167caacadc05e9f2ad85cf11e8087c983799735f42b`.
 
-Verified 94 Rust tests, formatting/Clippy, all 17 independent LLVM fixtures,
+Final backing imports use fixed-length boxed storage, dropping spare Vec capacity
+so retained payload accounting matches the owned allocation. Verified 94 Rust
+tests, formatting/Clippy, all 17 independent LLVM fixtures,
 both pinned Android Rust builds, Gradle build/lint, signature, native identities
 and 16 KiB ELF/ZIP alignment. Both libraries include the new Rust/JNI entry.
 
