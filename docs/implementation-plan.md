@@ -15,8 +15,9 @@ Z-A. Success claims must name the build, device, driver, title version and scene
 
 Current foundation: ten original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
-service sessions, event polling and CLI/Android reference execution. Four owned
-NROs exercise the implemented behavior. All 60 Rust tests and 15 independent
+service sessions, single-core guest scheduling, blocking event/thread waits,
+virtual timeouts and CLI/Android execution. Five owned NROs exercise the
+implemented behavior. All 73 Rust tests and 16 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 
@@ -28,7 +29,7 @@ physical G720 0.3.0-dev report. This closes the owned host corpus checkpoint,
 not guest
 graphics. APK export/state retention are exercised
 separately from graphics;
-there is no guest GPU, shader translator, thread scheduler or commercial game
+there is no guest GPU, shader translator or commercial game
 support yet.
 
 ## Milestones and dependency gates
@@ -56,12 +57,14 @@ The 0.3.0-dev native suite implements sampled draws and changed-content
 reuse in one submission, with a CPU reference and Vulkan allocation counters.
 All six now pass in the supplied physical G720 report. These are host
 workloads, not M4. M3 now has verified handles, bounded CMIF requests/replies,
-cloned-session identity/lifetime, manual-reset events and zero-timeout polling,
-exercised through owned guest NROs. The Android lab embeds that exact engine
-for device testing. M3 remains incomplete: thread creation/scheduling, blocking
-waits, virtual timeouts and multithreaded guest evidence are next. Guest
-GPU-facing service work follows the necessary kernel foundations. Broader host
-format/tiling/presentation work remains open; M4 onward is unimplemented.
+cloned-session identity/lifetime, manual-reset events, thread creation/context
+switching, blocking waits/joins and virtual timeouts through owned NROs.
+The 0.4.0-dev physical report passes the four prior ARM64 engine cases. The
+new 0.5.0-dev scheduling fixture passes deterministic host tests; its Android
+physical gate is separate. M3's first single-core fixture checkpoint is
+implemented; cancellation and broader synchronization remain open. Required
+guest GPU-facing services follow these foundations. Broader host format/tiling/
+presentation work remains open; M4 onward is unimplemented.
 
 M1B is deliberately early. The project must learn what the real Mali driver can
 do before assuming a shader or texture strategy. A native Android triangle

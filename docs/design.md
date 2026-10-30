@@ -4,10 +4,10 @@ This is the proposed design for the original emulator. It supplements
 [architecture.md](architecture.md); planned interfaces are not implemented APIs.
 
 Current implemented slice: bounded region memory, static NRO loading, A64
-interpreter execution, bounded handles/IPC, session cloning, events/polling and
-a single-process session. The Kotlin/JNI lab runs four original Rust guest
+interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
+event/thread waits and virtual deadlines in one process. The Kotlin/JNI lab runs five original Rust guest
 programs plus six host Vulkan workloads and exports reports. Shared memory
-backing/aliases, scheduling, blocking waits, guest graphics and the gameplay
+backing/aliases, broader synchronization, guest graphics and the gameplay
 Android API remain planned. See [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.
 
@@ -88,12 +88,13 @@ not an assumed shortcut around services, memory or GPU emulation.
 
 ## 4. Kernel, services and guest time
 
-The current subset has one main thread, a 256-entry handle table and an owned
-guest TLS message buffer. CMIF requests execute on isolated service snapshots;
+The current subset has up to 16 lifetime threads, a 256-entry handle table and
+owned per-thread TLS message buffers. CMIF requests execute on isolated service snapshots;
 reply bounds, guest write permissions and returned handles are checked before
-publishing state. Cloned handles share a session identity. Manual-reset event
-polls validate every handle; an unsignaled wait with a nonzero timeout explicitly
-faults until scheduling exists. This implements part of the following design.
+publishing state. Cloned handles share a session identity. Event/thread waits
+validate every handle, retain object references and resume on signal or virtual
+timeout. The [single-core reference scheduler](scheduling.md) implements a
+bounded part of the following design; its clock model is not hardware timing.
 
 The kernel owns processes, threads, handle lifetimes, synchronization objects,
 memory operations, timeouts and SVC dispatch. Begin with one host CPU executor
@@ -228,7 +229,7 @@ its documented lifetime. Session handles are validated; callbacks cannot
 target a destroyed activity. A surface loss is an attachment change, not an
 implicit guest reset. Start with arm64 Android; keep desktop host tests.
 
-The current synchronous CLI session states are Loaded, Running, Paused,
+The current synchronous CLI session states are Loaded, Running, Paused, Blocked,
 Exited and Faulted; an exhausted instruction budget pauses it for a later run.
 The planned full runtime adds creation/stop transitions and asynchronous
 safe-point coordination. Android process death

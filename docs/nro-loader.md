@@ -2,7 +2,7 @@
 
 The implemented path is `NroImage` -> process mappings -> `Session` -> original
 A64 interpreter -> `Kernel::dispatch`. It runs the self-authored
-four `examples/homebrew/*.nro` fixtures, assembled and linked from their `.S`
+five `examples/homebrew/*.nro` fixtures, assembled and linked from their `.S`
 sources by LLVM.
 No existing emulator code or console binaries are involved.
 
@@ -24,8 +24,9 @@ read-only entry configuration at `0x7fff0000`, an RW TLS page at `0x7ffe0000`, a
 single main-thread handle, application type, two 64-bit SVC availability masks,
 and an end marker. X0 points to config, X1 is all ones, LR is zero, and SP is
 16-byte aligned. Guest MRS TPIDRRO_EL0 reads `0x7ffe0200`; its first 256 bytes
-form the IPC buffer. This does not read any host thread register. Handles and
-event polling are implemented; there is still no thread scheduler.
+form the IPC buffer. This does not read any host thread register. The
+[reference scheduler](scheduling.md) assigns additional threads their own TLS
+pages, contexts and caller-provided stacks.
 
 Implemented calls:
 
@@ -34,7 +35,8 @@ Implemented calls:
 - SVC `0x07`, ExitProcess: ends the process without a fabricated guest exit-code
   argument or returning to the following instruction, and releases its handles.
 - ConnectToNamedPort, SendSyncRequest and CloseHandle; CreateEvent, SignalEvent,
-  ClearEvent, ResetSignal and polling WaitSynchronization. Their supported
+  ClearEvent, ResetSignal and blocking/polling WaitSynchronization. CreateThread,
+  StartThread, ExitThread and SleepThread add a bounded single-core scheduler. Their supported
   behavior and error boundaries are documented in [kernel-ipc.md](kernel-ipc.md).
 
 The debug path allows at most 16 KiB per message, 1 MiB total and 4096 records.

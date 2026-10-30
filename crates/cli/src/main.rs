@@ -98,6 +98,9 @@ fn run_nro(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         RunOutcome::BudgetExhausted => {
             Err(format!("NRO step budget exhausted at pc={:#x}", session.cpu().pc).into())
         }
+        RunOutcome::Blocked => {
+            Err("guest process is blocked with no runnable thread or scheduled timeout".into())
+        }
     }
 }
 

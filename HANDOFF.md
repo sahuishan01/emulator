@@ -11,7 +11,7 @@ Edition / Dimensity 9400e / Immortalis-G720. Pokémon Legends: Z-A is a later
 compatibility target. The earlier black screen in other emulators is not a
 root-cause diagnosis for our code. No commercial game runs in this implementation.
 
-## Implemented on 2026-10-30
+## Implemented through 2026-10-31
 
 - Ten original Rust workspace crates: memory, a64, loader, ipc, kernel, services,
   session, texture, CLI and android-ffi. No external Cargo dependencies. Nine
@@ -33,10 +33,17 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   the original retains state through its alias. Incoming handles, descriptors,
   domains, contexts and TIPC remain unsupported. No Nintendo device service
   returns fabricated success. See docs/kernel-ipc.md.
-- Manual-reset events with separate writable/readable capabilities and
-  WaitSynchronization polling. Complete-list validation precedes selecting
-  the first signaled handle. Unsignaled nonzero-timeout waits explicitly fault;
-  thread scheduling, blocking waits and virtual timeouts remain next work.
+- Original single-core scheduler: CreateThread/StartThread/ExitThread/SleepThread,
+  per-thread registers/flags/TLS, priority selection, FIFO equal-priority order
+  and 64-instruction quanta. Up to 16 lifetime threads; core 0/default only.
+  Reference time is one virtual ns per instruction, with direct idle deadline
+  jumps. This is a deterministic model, not measured hardware frequency.
+- Manual-reset events, blocking event/thread waits, joins and virtual timeouts.
+  Validate full handle arrays, retain objects across handle closes/array writes,
+  wake all existing manual-reset waiters, preserve X1 on timeout/error. With no
+  runnable thread or future deadline, return bounded Session/RunOutcome::Blocked.
+  Cancellation, mutexes/arbitration and negative yield variants remain open.
+  See docs/scheduling.md.
 - OutputDebugString and ExitProcess with bounded raw debug records and owned
   process TLS. Some guest Result errors are implemented; complete Horizon
   error-result/exception behavior remains unsupported. Exit releases handles.
@@ -44,7 +51,10 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   Our own hello.nro prints its known message and exits after five instructions.
   Three further original NROs test counter=42 (384 instructions/5 IPC calls),
   cloned counter=43 after closing its original (529/7), and event lifecycle
-  (87/0). The raw CPU demo still produces 42 after 24 instructions.
+  (87/0). A fifth NRO checks two-thread events/joins/timeouts (97 instructions,
+  four switches, three blocking waits, one timeout, 1680 reference ns). Its
+  child/main registers, flags, TLS, arguments and final memory are verified.
+  The raw CPU demo still produces 42 after 24 instructions.
 - Original C++ Vulkan GPU Lab shared by desktop CLI and Android JNI. Six
   offscreen workloads: exact image-transfer roundtrip, overlapping depth-tested
   triangles, compute-generated vertices compared to the CPU-uploaded draw,
@@ -60,18 +70,21 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   until teardown, excluding driver/pipeline and host heap overhead.
 - Kotlin Android lab with background native checks, retained report and
   user-selected JSON export. ARM64 and x86_64 APK now embeds the original Rust
-  engine and executes all four original NROs through JNI. Schema 2/workload 4
+  engine and executes five original NROs through JNI. Schema 2/workload 5,
+  engine suite 2, adds per-case scheduling counters. It
   separates `engine` and `gpu` outcomes. The six GPU checks are unchanged.
   Rust returns a bounded initialized 4104-byte value-only C report with caught
   panics. No gameplay/session/surface API yet. See docs/android-engine.md.
 
 ## Verified
 
-- `cargo test --offline --workspace`: 60 tests passed, including malformed IPC,
+- `cargo test --offline --workspace`: 73 tests passed, including malformed IPC,
   identity replacement, reply rollback/permissions, atomic handle exhaustion,
-  clone lifetimes, event capabilities and explicitly unsupported blocking waits.
-- All 15 fixture binaries match LLVM 19 assembly/link output, independently of
-  our decoder: 11 raw A64 programs plus four original homebrew NROs.
+  clone/event lifetimes, scheduling, joins, timeout progress while a thread runs,
+  multi-waiter wakes, creation rollback/limits, deadline overflow and budget
+  independence at 1/7/63/64/65 instructions.
+- All 16 fixture binaries match LLVM 19 assembly/link output, independently of
+  our decoder: 11 raw A64 programs plus five original homebrew NROs.
 - Rust formatting and Clippy with `-D warnings`: passed.
 - GLSL generation and spirv-val checks: passed.
 - Desktop Vulkan workloads: all six passed on llvmpipe, with the Khronos
@@ -84,7 +97,7 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 - Android Gradle debug build and lint passed with pinned toolchains.
 - Original Rust engine cross-built for both Android ABIs; both final ELF files
   export the Rust and JNI engine entry points. Host C-report example executes
-  all four guest programs and validates expected traces and handle cleanup.
+  all five guest programs and validates expected traces and handle cleanup.
 - APK signature, native ELF architecture and 16 KiB ELF/ZIP load alignment
   verified by tools/verify_gpu_apk.py. This is packaging evidence, not a test
   on a 16 KiB Android system.
@@ -99,6 +112,12 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   restores it without rerunning checks. No app crash or app ANR was captured;
   a System UI startup ANR required its Wait action. This is software x86_64
   evidence, not physical ARM64 evidence. See docs/validation/android-engine.md.
+- The 0.5.0-dev AVD run passes all five real guest programs plus six GPU checks.
+  The new guest trace matches 97/2/4/3/1/1680 for instructions/threads/switches/
+  waits/timeouts/virtual ns. Upgrade invalidation, exact export and cold restore
+  pass. A System UI startup ANR blocked the first tap; dismissing that system
+  dialog and using fresh XML bounds started the successful run. No app crash/
+  ANR captured. See docs/validation/android-scheduling.md.
 - Documentation links resolve. Tests and reports are under ignored reports/;
   the copied development APK and hash are under ignored artifacts/.
 
@@ -113,6 +132,12 @@ remain unsupported natively; ASTC LDR and geometry/tessellation are advertised.
 See docs/validation/g720-sampling.md and the earlier validation records.
 The physical sampling/update corpus checkpoint is complete. This does not
 establish guest graphics, sustained performance or commercial-game support.
+The new user-supplied 0.4.0-dev report also passes all four original-engine
+cases on physical ARM64 (5/384/529/87 instructions and 0/5/7/0 IPC calls),
+with expected debug output, empty errors and zero live handles after each exit.
+All six GPU cases still pass; device/driver identity is unchanged. The raw
+report stays ignored; see docs/validation/g720-engine.md. This closes the
+ARM64 original-engine boundary checkpoint, not the newer scheduling fixture.
 
 ## Next implementation work
 
@@ -120,18 +145,18 @@ Architecture, runtime contracts and milestone gates are in docs/architecture.md,
 docs/design.md and docs/implementation-plan.md. M1A/M2 satisfy only the owned
 static NRO fixture gate; general homebrew compatibility remains open. M1B has
 an initial lab, with its physical-device gate and additional experiments open.
-M3 has handles/IPC/cloning/events/polling implemented; its multithreaded and
-blocking-timeout gate remains open. M4 onward is unimplemented. The user
+M3 has its first single-core multithreaded/blocking-timeout fixture implemented,
+alongside handles/IPC/cloning/events. Full synchronization and physical scheduling
+evidence remain open. M4 onward is unimplemented. The user
 requested autonomous progression after each verified checkpoint; continue
 authorized work without repeatedly asking for another go-ahead.
 
-1. Extend the verified kernel slice with thread creation/context switching,
-   deterministic scheduling, blocking waits and virtual timeouts, then actual
+1. Continue kernel cancellation/synchronization and ISA requirements for actual
    guest GPU service submission. Unsupported operations remain explicit errors.
-   Expand the ISA as owned fixtures require it.
-2. Obtain a 0.4.0-dev phone report for the newly embedded original Rust engine.
-   This is new ARM64 C-ABI/runtime evidence. The six-test physical GPU baseline
-   is known; do not imply unchanged GPU checks add guest graphics evidence.
+   Keep virtual reference timing distinct from console timing and performance.
+2. Obtain a 0.5.0-dev phone report for the new two-thread fixture. Prior engine
+   and GPU device checkpoints are passed; the added scheduler needs evidence.
+   Do not imply unchanged GPU checks add guest graphics validation.
 3. Continue conversion/cache/resource-peak evidence, required BC formats,
    guest tiling, shader-stage experiments and Android presentation separately.
 4. Implement guest GPU memory/submission/services, bounded command decoding
@@ -145,8 +170,8 @@ authorized work without repeatedly asking for another go-ahead.
 
 Private repository: https://github.com/sahuishan01/emulator, with source on
 `main`. The verified development GPU Lab APK, checksum, packaging report and
-artifact README are attached to the `v0.4.0-dev` prerelease. Earlier
-`v0.1.0-dev`, `v0.2.0-dev` and `v0.3.0-dev` snapshots are retained. APK binaries and
+artifact README are attached to the `v0.5.0-dev` prerelease. Earlier development
+snapshots through `v0.4.0-dev` are retained. APK binaries and
 private reports remain outside source control. This is a prototype snapshot,
 not a production release or a Switch compatibility claim.
 

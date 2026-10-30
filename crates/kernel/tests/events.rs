@@ -85,7 +85,7 @@ fn closing_a_writer_keeps_the_readable_event_alive_and_waits_check_all_handles()
 }
 
 #[test]
-fn polling_validates_bounds_without_fabricating_blocking_timeout_behavior() {
+fn polling_validates_bounds_and_blocking_timeout_preserves_index() {
     let (mut k, mut cpu, mut m, _write, read) = event();
     cpu.x[1] = u64::MAX;
     cpu.x[2] = 0;
@@ -105,12 +105,12 @@ fn polling_validates_bounds_without_fabricating_blocking_timeout_behavior() {
     cpu.x[1] = 0x1000;
     cpu.x[2] = 1;
     cpu.x[3] = 100;
-    let saved = cpu.clone();
-    assert_eq!(
-        k.dispatch(SVC_WAIT_SYNCHRONIZATION, &mut cpu, &mut m),
-        Err(KernelError::UnsupportedWaitTimeout(100))
-    );
-    assert_eq!(cpu, saved);
+    k.dispatch(SVC_WAIT_SYNCHRONIZATION, &mut cpu, &mut m)
+        .unwrap();
+    assert_eq!(k.prepare_execution(&mut cpu), ScheduleOutcome::Ready);
+    assert_eq!(cpu.x[0], RESULT_TIMEOUT);
+    assert_eq!(cpu.x[1], 0x1000);
+    assert_eq!(k.scheduler_stats().virtual_time_ns, 100);
 }
 
 #[test]

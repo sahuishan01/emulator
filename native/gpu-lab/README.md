@@ -89,9 +89,11 @@ separate package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version 0.4.0-dev uses schema version 2: `engine` contains four actual guest
+Version 0.5.0-dev uses schema version 2/workload 5: `engine` contains five actual guest
 reference-program results, while `gpu` contains these six unchanged native
 Vulkan results. Top-level `allPassed` requires both groups to pass.
+The new engine case exercises original thread scheduling, blocking event waits,
+joins and virtual timeouts; the six native GPU workloads remain version 3.
 The last completed report is retained across activity recreation.
 Reports from an older workload version are not displayed as current results;
 after upgrading from an earlier workload version, run the updated checks again.

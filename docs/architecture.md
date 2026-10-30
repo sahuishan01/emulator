@@ -5,8 +5,9 @@ Design baseline: 2026-10-30. This document defines the system boundaries;
 [implementation-plan.md](implementation-plan.md) defines delivery order and
 acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
-interpreter, handles, HIPC/CMIF v0, cloned sessions, event polling and CLI
-sessions. Android embeds the same Rust engine for four original guest checks
+interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
+event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
+Rust engine for five original guest checks
 alongside the Vulkan laboratory. The user
 supplied a physical G720 0.3.0-dev report passing all six current workloads,
 including BC1 conversion, sampling and updates. Guest graphics and Android
@@ -107,7 +108,7 @@ crates/
   cli/                implemented NRO/raw-program runner
   loader/             implemented static NRO subset
   ipc/                implemented bounded HIPC/CMIF v0 subset
-  kernel/             implemented SVCs, handles, cloned sessions and event polling
+  kernel/             implemented handles/IPC, guest threads, blocking waits and timeouts
   services/           implemented minimal SM and emulator-owned diagnostic service
   shader/             planned original GPU shader decoder / IR
   gpu/                planned guest commands and GPU address space
@@ -117,11 +118,11 @@ crates/
   android-ffi/        implemented reference-program C ABI; gameplay API planned
 android/
   app/                planned user application
-  gpu-lab/            four guest checks plus six host GPU checks; presentation planned
+  gpu-lab/            five guest checks plus six host GPU checks; presentation planned
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/
-  homebrew/           four implemented original static NRO fixtures
+  homebrew/           five implemented original static NRO fixtures
 tests/
   gpu-workloads/      planned command, shader and reference-image tests
 ```
@@ -133,7 +134,7 @@ tests/
 | Guest memory | Guest addresses, ownership, access checks; later shared backing/aliases | Bounded transactional mappings, reservation/commit/protect/unmap and cross-region accesses implemented |
 | CPU | A64 registers, decode/execute, exceptions/SVC boundary; later SIMD/atomics/JIT | Small tested interpreter subset |
 | Loader | Validate executable bounds/segments and construct guest process | Static uncompressed NRO0 v0 subset; no linking or modules |
-| Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Handles, transactional IPC, cloned sessions, manual-reset events and polling; scheduling/blocking waits planned |
+| Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Handles/IPC, cloned sessions, single-core guest scheduling, event/thread blocking waits and virtual timeouts |
 | Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | CMIF v0 SM Initialize/GetService for `emu:test`; system device services planned |
 | Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shader translation | Planned |
 | Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Six offscreen native workloads, including BC1 conversion, sampling and updates; guest backend/presentation planned |
@@ -157,7 +158,8 @@ have independent read/write/execute permissions. Instructions fetch aligned
 An access may cross adjacent mappings after checking the complete range.
 Writes preflight all permissions before mutation. There is no page-table/MMU
 model, shared backing/alias model, SP alignment-control model, exclusive
-monitor, guest threading or privileged exception state yet.
+monitor or privileged exception state yet. Guest threads share this checked
+address space through a deterministic single host executor.
 
 SVC produces a host-visible event after advancing the guest PC. The NRO
 session dispatches the [implemented SVC/IPC subset](kernel-ipc.md); the raw harness

@@ -1,7 +1,7 @@
 //! Composition of original NRO loading, CPU execution and the minimal kernel.
 
 use emulator_a64::{Cpu, ExecutionError, StepEvent};
-use emulator_kernel::{homebrew_config, Kernel, KernelError, KernelEvent};
+use emulator_kernel::{homebrew_config, Kernel, KernelError, KernelEvent, ScheduleOutcome};
 use emulator_loader::{LoadError, LoadedImage, NroImage};
 use emulator_memory::{AddressSpace, MemoryError, Permissions};
 use std::fmt;
@@ -10,7 +10,7 @@ pub const LOAD_BASE: u64 = 0x10_0000;
 pub const CONFIG_BASE: u64 = 0x7fff_0000;
 pub const STACK_BASE: u64 = 0x8000_0000;
 pub const STACK_SIZE: usize = 64 * 1024;
-pub const TLS_PAGE: u64 = 0x7ffe_0000;
+pub const TLS_PAGE: u64 = emulator_kernel::THREAD_TLS_ARENA;
 pub const TLS_BASE: u64 = TLS_PAGE + 0x200;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +18,7 @@ pub enum SessionState {
     Loaded,
     Running,
     Paused,
+    Blocked,
     Exited,
     Faulted,
 }
@@ -48,6 +49,7 @@ impl std::error::Error for SessionError {}
 pub enum RunOutcome {
     Exited,
     BudgetExhausted,
+    Blocked,
 }
 
 pub struct Session {
@@ -130,11 +132,18 @@ impl Session {
     }
 
     pub fn run(&mut self, budget: u64) -> Result<RunOutcome, SessionError> {
-        if !matches!(self.state, SessionState::Loaded | SessionState::Paused) {
+        if !matches!(
+            self.state,
+            SessionState::Loaded | SessionState::Paused | SessionState::Blocked
+        ) {
             return Err(SessionError::InvalidState(self.state));
         }
         self.state = SessionState::Running;
         for _ in 0..budget {
+            if self.kernel.prepare_execution(&mut self.cpu) == ScheduleOutcome::Blocked {
+                self.state = SessionState::Blocked;
+                return Ok(RunOutcome::Blocked);
+            }
             let event = match self.cpu.step(&mut self.memory) {
                 Ok(event) => event,
                 Err(error) => {
@@ -143,6 +152,10 @@ impl Session {
                 }
             };
             self.instructions = self.instructions.saturating_add(1);
+            if let Err(error) = self.kernel.instruction_completed() {
+                self.state = SessionState::Faulted;
+                return Err(SessionError::Kernel(error));
+            }
             if let StepEvent::SupervisorCall { immediate } = event {
                 match self
                     .kernel

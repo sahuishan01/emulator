@@ -66,3 +66,23 @@ fn ipc_guest_runs_through_the_same_public_nro_command() {
     assert!(String::from_utf8_lossy(&result.stdout)
         .contains("Guest IPC counter reached 42; handles closed."));
 }
+
+#[test]
+fn threaded_guest_runs_through_the_public_nro_command() {
+    let image = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/homebrew/threads.nro"
+    );
+    let result = Command::new(env!("CARGO_BIN_EXE_emulator-cli"))
+        .args(["run-nro", image])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = String::from_utf8_lossy(&result.stdout);
+    assert!(text.contains("Guest threads woke events, joined and timed out."));
+    assert!(text.contains("after 97 instructions"));
+}

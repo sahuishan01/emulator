@@ -39,13 +39,11 @@ native extracts and APKs remain under ignored `reports/` and `artifacts/`.
 
 ## Limits and next evidence
 
-This does not execute the ARM64 library on hardware or test a 16 KiB Android
-runtime. The new physical checkpoint is the same four guest programs through
-the ARM64 Rust/C++/JNI boundary on the user's Realme/Mali-G720 phone. The
-previous physical [six-workload GPU checkpoint](g720-sampling.md) remains valid
-for that unchanged host corpus; it does not validate this new engine boundary.
+This AVD run does not test physical ARM64 or a 16 KiB Android runtime. The later
+user-supplied [physical report](g720-engine.md) passes all four original-engine
+cases on ARM64 and all six unchanged GPU cases, closing that device checkpoint.
 
-Thread scheduling and blocking waits/timeouts, guest GPU commands/shaders,
-Android guest-frame presentation and commercial games remain unimplemented.
-The event suite covers manual-reset signaling and polling, not blocking waits.
-This is a development diagnostic APK, not a production emulator release.
+Thread scheduling/blocking waits were unimplemented in 0.4.0-dev; the newer
+0.5.0-dev [scheduling work](../scheduling.md) adds a separate fixture that needs
+its own physical evidence. Guest graphics and commercial games remain open.
+These are development diagnostics, not production emulator releases.

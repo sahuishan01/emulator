@@ -35,6 +35,7 @@ struct Case {
     instructions: u64,
     ipc_calls: usize,
     memory: Option<(u64, u64)>,
+    scheduler: (usize, u64, u64), // threads, blocking waits, timeouts
 }
 fn reference_checks() -> String {
     let cases = [
@@ -45,6 +46,7 @@ fn reference_checks() -> String {
             instructions: 5,
             ipc_calls: 0,
             memory: None,
+            scheduler: (1, 0, 0),
         },
         Case {
             name: "guest-service-manager-ipc",
@@ -53,6 +55,7 @@ fn reference_checks() -> String {
             instructions: 384,
             ipc_calls: 5,
             memory: Some((0x2000, 42)),
+            scheduler: (1, 0, 0),
         },
         Case {
             name: "guest-cloned-session-lifetime",
@@ -61,6 +64,7 @@ fn reference_checks() -> String {
             instructions: 529,
             ipc_calls: 7,
             memory: Some((0x2000, 43)),
+            scheduler: (1, 0, 0),
         },
         Case {
             name: "guest-event-signaling-polling",
@@ -69,6 +73,16 @@ fn reference_checks() -> String {
             instructions: 87,
             ipc_calls: 0,
             memory: Some((0x2008, 7)),
+            scheduler: (1, 0, 0),
+        },
+        Case {
+            name: "guest-thread-scheduling-and-blocking-waits",
+            image: include_bytes!("../../../examples/homebrew/threads.nro"),
+            message: "Guest threads woke events, joined and timed out.\n",
+            instructions: 97,
+            ipc_calls: 0,
+            memory: Some((0x2020, 42)),
+            scheduler: (2, 3, 1),
         },
     ];
     let mut all_passed = true;
@@ -78,12 +92,21 @@ fn reference_checks() -> String {
         let mut ipc_calls = 0;
         let mut handles = 0;
         let mut debug = String::new();
+        let mut scheduling = (0, 0, 0, 0, 0);
         let check = (|| -> Result<(), String> {
             let mut session = Session::from_nro(case.image).map_err(|e| e.to_string())?;
             let outcome = session.run(10000).map_err(|e| e.to_string())?;
             instructions = session.instructions();
             ipc_calls = session.kernel().ipc_records().len();
             handles = session.kernel().live_handle_count();
+            let stats = session.kernel().scheduler_stats();
+            scheduling = (
+                stats.threads_created,
+                stats.context_switches,
+                stats.blocking_waits,
+                stats.timeouts,
+                stats.virtual_time_ns,
+            );
             for record in session.debug_records() {
                 debug.push_str(&String::from_utf8_lossy(record));
             }
@@ -92,6 +115,7 @@ fn reference_checks() -> String {
                 || ipc_calls != case.ipc_calls
                 || handles != 0
                 || session.debug_records() != [case.message.as_bytes().to_vec()]
+                || (stats.threads_created, stats.blocking_waits, stats.timeouts) != case.scheduler
             {
                 return Err("Reference guest output, lifetime or execution trace mismatch".into());
             }
@@ -105,14 +129,36 @@ fn reference_checks() -> String {
                     return Err("Reference guest memory result mismatch".into());
                 }
             }
+            if stats.threads_created > 1 {
+                for (address, expected) in [
+                    (LOAD_BASE + 0x2008, 42),
+                    (LOAD_BASE + 0x2010, LOAD_BASE + 0x2000),
+                    (LOAD_BASE + 0x2018, 0x7ffe1200),
+                    (LOAD_BASE + 0x2028, LOAD_BASE + 0x2000),
+                    (0x7ffe0280, 0x1111),
+                    (0x7ffe1280, 0x2222),
+                ] {
+                    if session
+                        .memory()
+                        .read_u64(address)
+                        .map_err(|e| e.to_string())?
+                        != expected
+                    {
+                        return Err("Thread argument, TLS or wait-result mismatch".into());
+                    }
+                }
+                if stats.context_switches < 4 || stats.virtual_time_ns < 1600 {
+                    return Err("Guest scheduling or virtual-time progress mismatch".into());
+                }
+            }
             Ok(())
         })();
         let passed = check.is_ok();
         all_passed &= passed;
-        tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"handlesAfterExit\":{},\"debugOutput\":{},\"error\":{}}}",
-            quote(case.name),passed,instructions,ipc_calls,handles,quote(&debug),quote(&check.err().unwrap_or_default())));
+        tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"debugOutput\":{},\"error\":{}}}",
+            quote(case.name),passed,instructions,ipc_calls,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":1,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":2,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -144,7 +190,7 @@ mod tests {
         assert_eq!(result.abi_version, 1);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 4);
+        assert_eq!(text.matches("\"passed\":true").count(), 5);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

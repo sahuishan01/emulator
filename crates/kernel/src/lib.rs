@@ -1,13 +1,18 @@
-//! Original bounded Horizon SVC/handle/IPC subset. No scheduler or success stubs.
+//! Original bounded Horizon SVC/handle/IPC and single-core scheduler subset.
 
 mod handles;
+mod scheduler;
 pub mod service;
 
 use emulator_a64::Cpu;
 use emulator_ipc::{encode_reply, parse_request, CommandType, IpcError, IPC_BUFFER_SIZE};
 use emulator_memory::{Access, AddressSpace, MemoryError};
 pub use handles::HandleError;
-use handles::{HandleTable, Object};
+use handles::{HandleTable, Object, ThreadObject};
+pub use scheduler::{
+    ScheduleOutcome, SchedulerError, SchedulerStats, MAX_THREADS, THREAD_QUANTUM, THREAD_TLS_ARENA,
+};
+use scheduler::{Scheduler, WaitTarget};
 use service::{Service, ServiceError};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -15,6 +20,10 @@ use std::fmt;
 use std::rc::Rc;
 
 pub const SVC_EXIT_PROCESS: u16 = 0x07;
+pub const SVC_CREATE_THREAD: u16 = 0x08;
+pub const SVC_START_THREAD: u16 = 0x09;
+pub const SVC_EXIT_THREAD: u16 = 0x0a;
+pub const SVC_SLEEP_THREAD: u16 = 0x0b;
 pub const SVC_OUTPUT_DEBUG_STRING: u16 = 0x27;
 pub const SVC_CLOSE_HANDLE: u16 = 0x16;
 pub const SVC_CONNECT_TO_NAMED_PORT: u16 = 0x1f;
@@ -50,8 +59,12 @@ pub enum KernelError {
     InvalidThreadLocalRegion,
     UnsupportedControl(u32),
     IpcTraceLimit,
-    UnsupportedWaitTimeout(i64),
     InvalidWaitCount(i32),
+    Scheduler(SchedulerError),
+    InvalidThreadEntry(u64),
+    InvalidThreadStack(u64),
+    InvalidThreadPriority(i32),
+    UnsupportedProcessor(i32),
 }
 
 impl fmt::Display for KernelError {
@@ -75,11 +88,14 @@ impl fmt::Display for KernelError {
             }
             Self::UnsupportedControl(id) => write!(f, "unsupported CMIF control command {id}"),
             Self::IpcTraceLimit => write!(f, "guest IPC trace limit exceeded"),
-            Self::UnsupportedWaitTimeout(timeout) => write!(
-                f,
-                "blocking guest waits are not implemented (timeout {timeout})"
-            ),
             Self::InvalidWaitCount(count) => write!(f, "invalid guest wait handle count {count}"),
+            Self::Scheduler(error) => write!(f, "guest scheduler error: {error:?}"),
+            Self::InvalidThreadEntry(entry) => write!(f, "invalid guest thread entry {entry:#x}"),
+            Self::InvalidThreadStack(stack) => write!(f, "invalid guest thread stack {stack:#x}"),
+            Self::InvalidThreadPriority(priority) => {
+                write!(f, "invalid guest thread priority {priority}")
+            }
+            Self::UnsupportedProcessor(core) => write!(f, "unsupported guest processor {core}"),
         }
     }
 }
@@ -100,7 +116,7 @@ pub struct IpcRecord {
     pub reply_bytes: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Kernel {
     debug_records: Vec<Vec<u8>>,
     debug_bytes: usize,
@@ -108,9 +124,37 @@ pub struct Kernel {
     handles: HandleTable,
     ports: BTreeMap<String, Box<dyn Service>>,
     ipc_records: Vec<IpcRecord>,
+    scheduler: Scheduler,
+}
+
+impl Default for Kernel {
+    fn default() -> Self {
+        let main = ThreadObject::new(0);
+        Self {
+            debug_records: Vec::new(),
+            debug_bytes: 0,
+            exited: false,
+            handles: HandleTable::new(main.clone()),
+            ports: BTreeMap::new(),
+            ipc_records: Vec::new(),
+            scheduler: Scheduler::new(main),
+        }
+    }
 }
 
 impl Kernel {
+    pub fn scheduler_stats(&self) -> SchedulerStats {
+        self.scheduler.stats()
+    }
+    pub fn current_thread_id(&self) -> usize {
+        self.scheduler.current()
+    }
+    pub fn prepare_execution(&mut self, cpu: &mut Cpu) -> ScheduleOutcome {
+        self.scheduler.prepare(cpu)
+    }
+    pub fn instruction_completed(&mut self) -> Result<(), KernelError> {
+        self.scheduler.tick().map_err(KernelError::Scheduler)
+    }
     pub fn debug_records(&self) -> &[Vec<u8>] {
         &self.debug_records
     }
@@ -281,7 +325,59 @@ impl Kernel {
         Ok(())
     }
 
-    fn wait_poll(&self, cpu: &mut Cpu, memory: &AddressSpace) -> Result<(), KernelError> {
+    fn create_thread(
+        &mut self,
+        cpu: &mut Cpu,
+        memory: &mut AddressSpace,
+    ) -> Result<(), KernelError> {
+        let id = self
+            .scheduler
+            .next_thread()
+            .map_err(KernelError::Scheduler)?;
+        let entry = cpu.x[1];
+        if entry % 4 != 0 || memory.check_access(entry, 4, Access::Execute).is_err() {
+            return Err(KernelError::InvalidThreadEntry(entry));
+        }
+        let stack = cpu.x[3];
+        if stack < 16
+            || stack % 16 != 0
+            || memory.check_access(stack - 16, 16, Access::Write).is_err()
+        {
+            return Err(KernelError::InvalidThreadStack(stack));
+        }
+        let priority = cpu.x[4] as u32 as i32;
+        if !(0..64).contains(&priority) {
+            return Err(KernelError::InvalidThreadPriority(priority));
+        }
+        let core = cpu.x[5] as u32 as i32;
+        if core != 0 && core != -2 {
+            return Err(KernelError::UnsupportedProcessor(core));
+        }
+        let object = ThreadObject::new(id);
+        let pending = self
+            .handles
+            .stage(vec![Object::Thread(object.clone())])
+            .map_err(KernelError::Handle)?;
+        let tls_page = THREAD_TLS_ARENA + id as u64 * 4096;
+        let mut context = Cpu::new(entry, stack);
+        context.x[0] = cpu.x[2];
+        context.tpidrro_el0 = tls_page + 0x200;
+        // No fallible publication follows the transactional guest mapping.
+        memory
+            .map(
+                tls_page,
+                vec![0; 4096],
+                emulator_memory::Permissions::READ_WRITE,
+            )
+            .map_err(KernelError::Memory)?;
+        self.scheduler.add(object, context, priority as u8);
+        cpu.x[0] = 0;
+        cpu.x[1] = u64::from(pending.ids[0]);
+        self.handles.commit(pending);
+        Ok(())
+    }
+
+    fn wait_poll(&mut self, cpu: &mut Cpu, memory: &AddressSpace) -> Result<(), KernelError> {
         let count = cpu.x[2] as u32 as i32;
         if count < 0 {
             return Err(KernelError::InvalidWaitCount(count));
@@ -299,19 +395,21 @@ impl Kernel {
             return Ok(());
         }
         let mut first_signaled = None;
+        let mut targets = Vec::with_capacity(count as usize);
         for (index, bytes) in input[..count as usize * 4].chunks_exact(4).enumerate() {
             let handle = u32::from_le_bytes(bytes.try_into().expect("four bytes"));
-            let signaled = match self.handles.get(handle) {
-                Ok(Object::ReadableEvent(signal)) => signal.get(),
-                Ok(Object::MainThread) => false,
+            let target = match self.handles.get(handle) {
+                Ok(Object::ReadableEvent(signal)) => WaitTarget(signal),
+                Ok(Object::Thread(object)) => WaitTarget(object.terminated),
                 _ => {
                     cpu.x[0] = RESULT_INVALID_HANDLE;
                     return Ok(());
                 }
             };
-            if signaled && first_signaled.is_none() {
+            if target.signaled() && first_signaled.is_none() {
                 first_signaled = Some(index);
             }
+            targets.push(target);
         }
         if let Some(index) = first_signaled {
             cpu.x[0] = 0;
@@ -319,7 +417,9 @@ impl Kernel {
         } else if cpu.x[3] == 0 {
             cpu.x[0] = RESULT_TIMEOUT;
         } else {
-            return Err(KernelError::UnsupportedWaitTimeout(cpu.x[3] as i64));
+            self.scheduler
+                .wait(targets, cpu.x[3] as i64)
+                .map_err(KernelError::Scheduler)?;
         }
         Ok(())
     }
@@ -336,8 +436,42 @@ impl Kernel {
         match id {
             SVC_EXIT_PROCESS => {
                 self.exited = true;
+                self.scheduler.terminate_all();
                 self.handles.clear();
                 Ok(KernelEvent::ProcessExited)
+            }
+            SVC_CREATE_THREAD => {
+                self.create_thread(cpu, memory)?;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_START_THREAD => {
+                cpu.x[0] = match self.handles.get(cpu.x[0] as u32) {
+                    Ok(Object::Thread(object)) => {
+                        if self.scheduler.start(object.id) {
+                            0
+                        } else {
+                            RESULT_INVALID_STATE
+                        }
+                    }
+                    _ => RESULT_INVALID_HANDLE,
+                };
+                Ok(KernelEvent::Continue)
+            }
+            SVC_EXIT_THREAD => {
+                if self.scheduler.exit_current() {
+                    self.exited = true;
+                    self.scheduler.terminate_all();
+                    self.handles.clear();
+                    Ok(KernelEvent::ProcessExited)
+                } else {
+                    Ok(KernelEvent::Continue)
+                }
+            }
+            SVC_SLEEP_THREAD => {
+                self.scheduler
+                    .sleep(cpu.x[0] as i64)
+                    .map_err(KernelError::Scheduler)?;
+                Ok(KernelEvent::Continue)
             }
             SVC_CLOSE_HANDLE => {
                 cpu.x[0] = if self.handles.close(cpu.x[0] as u32).is_ok() {
@@ -408,6 +542,10 @@ pub fn homebrew_config() -> Vec<u8> {
     let mut available = [0_u64; 2];
     for id in [
         SVC_EXIT_PROCESS,
+        SVC_CREATE_THREAD,
+        SVC_START_THREAD,
+        SVC_EXIT_THREAD,
+        SVC_SLEEP_THREAD,
         SVC_OUTPUT_DEBUG_STRING,
         SVC_CLOSE_HANDLE,
         SVC_CONNECT_TO_NAMED_PORT,
