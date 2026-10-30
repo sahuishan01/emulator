@@ -13,7 +13,7 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 
 ## Implemented on 2026-10-30
 
-- Six original Rust workspace crates: memory, a64, loader, kernel, session and
+- Seven original Rust workspace crates: memory, a64, loader, kernel, session, texture and
   CLI. No external Cargo dependencies; Rust unsafe code remains forbidden.
 - Bounded memory with transactional batch mappings, reservation/commit,
   protect/unmap and cross-region accesses. Failed writes do not partially
@@ -31,9 +31,12 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 - Session execution budgets pause and resume without repeating debug output.
   Our own hello.nro prints its known message and exits after five instructions.
   The raw CPU demo still produces 42 after 24 instructions.
-- Original C++ Vulkan GPU Lab shared by desktop CLI and Android JNI. Three
+- Original C++ Vulkan GPU Lab shared by desktop CLI and Android JNI. Four
   offscreen workloads: exact image-transfer roundtrip, overlapping depth-tested
-  triangles and compute-generated vertices compared to the CPU-uploaded draw.
+  triangles, compute-generated vertices compared to the CPU-uploaded draw,
+  and BC1-to-RGBA8 compute conversion compared to our Rust reference decoder.
+- Original bounded BC1 RGBA UNORM reference decoder, six tests and generated
+  GPU corpus. Does not implement other BC formats, sRGB, guest tiling or sampling.
 - GPU reports contain device/driver identity, physical feature advertisements,
   limits, heaps, queues, 11 format queries and per-workload results. A format
   query is not proof of texture sampling/decoding correctness.
@@ -43,12 +46,12 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 
 ## Verified
 
-- `cargo test --offline --workspace`: 34 tests passed.
+- `cargo test --offline --workspace`: 40 tests passed.
 - All 11 fixture binaries match LLVM 19 assembly/link output, independently of
   our decoder. Sources include the original homebrew NRO.
 - Rust formatting and Clippy with `-D warnings`: passed.
 - GLSL generation and spirv-val checks: passed.
-- Desktop Vulkan workloads: all three passed on llvmpipe, with the Khronos
+- Desktop Vulkan workloads: all four passed on llvmpipe, with the Khronos
   layer enabled and zero validation errors. Synchronization validation was
   requested through VK_LAYER_ENABLES. Missing-driver execution returns a
   bounded failed JSON report and a nonzero exit status.
@@ -57,14 +60,20 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   verified by tools/verify_gpu_apk.py. This is packaging evidence, not a test
   on a 16 KiB Android system.
 - Installed and launched in an isolated Android 15/API 35 x86_64 AVD with
-  SwiftShader. All three native workloads passed. JSON export matches the
+  SwiftShader. All four native workloads passed in 0.2.0-dev. Upgrade from the
+  three-test 0.1.0-dev build rejects its old cached report. JSON export matches the
   private saved report byte for byte. A cold restart restores it and enables
   export without rerunning tests. Android validation layers are not bundled.
 - Documentation links resolve. Tests and reports are under ignored reports/;
   the copied development APK and hash are under ignored artifacts/.
 
-No physical phone is connected. The G720 gate is untested. An AVD/software
-renderer pass is not physical Mali validation or Switch gameplay evidence.
+No physical phone is connected through ADB. The user supplied a GPU Lab
+0.1.0-dev report recording all three initial checks passing on Mali-G720-
+Immortalis MC12 / realme RMX5061 / Android 16 / Vulkan 1.3.247. BC1/3/7 queries
+are unsupported, ASTC LDR is advertised, and geometry/tessellation are both
+advertised. Validation was disabled. See docs/validation/g720-initial.md.
+The new fourth BC1 conversion check requires a 0.2.0-dev phone report. Do not
+describe that new test, sampling or commercial gameplay as physically verified.
 
 ## Next implementation work
 
@@ -74,10 +83,11 @@ static NRO fixture gate; general homebrew compatibility remains open. M1B has
 an initial lab, with its physical-device gate and additional experiments open.
 M3 onward is unimplemented.
 
-1. Run the built GPU Lab APK on the user's phone, export JSON and record the
-   exact APK hash, phone/Android/GPU/driver and workload results.
-2. Extend the lab with a tested reference texture decoder/GPU fallback,
-   sampled textures, missing-stage experiments and Android presentation.
+1. Run GPU Lab 0.2.0-dev on the user's phone and inspect the new fourth check.
+   Its workload-version field prevents an old cached three-test report from
+   being presented as results for the updated suite.
+2. Extend the BC1 prototype with sampled textures, other required BC formats,
+   guest tiling, shader-stage experiments and Android presentation.
 3. Add original threads, handles, events, waits, timers and bounded IPC with
    owned guest workloads. Expand ISA and loaders only as required by them.
 4. Implement guest GPU memory/submission/services, bounded command decoding
@@ -91,7 +101,8 @@ M3 onward is unimplemented.
 
 Private repository: https://github.com/sahuishan01/emulator, with source on
 `main`. The verified development GPU Lab APK, checksum, packaging report and
-artifact README are attached to the `v0.1.0-dev` prerelease. APK binaries and
+artifact README are attached to the `v0.2.0-dev` prerelease. The original
+`v0.1.0-dev` snapshot is retained. APK binaries and
 private reports remain outside source control. This is a prototype snapshot,
 not a production release or a Switch compatibility claim.
 

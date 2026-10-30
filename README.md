@@ -12,8 +12,10 @@ the implemented components from the remaining Switch/Android work.
 The original Rust engine now loads our own static NRO homebrew, executes it
 through an A64 interpreter subset, emits debug output through an implemented
 kernel call, and exits. A separate Android Vulkan GPU Lab APK exercises image
-transfers, depth testing and compute-to-draw visibility. It has been tested on
-software drivers; physical G720 testing is still required.
+transfers, depth testing, compute-to-draw visibility and BC1 conversion. The
+first three checks passed in the user's supplied physical G720 report. The
+new BC1-to-RGBA8 check still requires a run on that phone. See the
+[device evidence and its limits](docs/validation/g720-initial.md).
 
 The engine does not run commercial Switch games. Guest GPU commands, shader
 translation, threads/IPC, most CPU instructions and the gameplay application
@@ -76,6 +78,7 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/loader` | Bounded static NRO validation, segments, permissions and BSS |
 | `crates/kernel` | Debug output, process exit and minimal homebrew configuration |
 | `crates/session` | Process entry state, guarded stack and resumable execution budgets |
+| `crates/texture` | Original bounded BC1 RGBA UNORM reference decoder |
 | `crates/cli` | NRO/raw-program execution and demo |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
 | `examples/homebrew` | Our homebrew source and assembled NRO fixture |
@@ -94,12 +97,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android GPU Lab
 
 The verified development APK, checksum and packaging report are attached to
-the [GPU Lab development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.1.0-dev)
+the [GPU Lab development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.2.0-dev)
 in this private repository. The APK is a host Vulkan diagnostic; it does not
 run Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.1.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.1.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.2.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.2.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. GitHub redirects downloads to temporary signed asset
@@ -143,9 +146,11 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has 34 Rust tests and 11 independently assembled fixtures.
-The three Vulkan workloads passed on desktop llvmpipe with zero validation
-errors and on an Android 15 AVD using SwiftShader. APK build, lint, signature,
-native architectures and 16 KiB ELF/ZIP alignment were verified. Those results
-do not establish physical G720 compatibility or 16 KiB Android runtime behavior.
+The current suite has 40 Rust tests and 11 independently assembled A64 fixtures.
+Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
+All four Vulkan workloads passed on desktop llvmpipe with zero validation
+errors and on an Android 15 SwiftShader AVD. The original three passed in the
+user's supplied physical G720 report. APK build, lint, signature, native
+architectures and 16 KiB ELF/ZIP alignment were verified. The new BC1 workload
+needs separate physical testing; 16 KiB Android runtime behavior is untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).

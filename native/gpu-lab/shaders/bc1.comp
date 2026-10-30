@@ -1,0 +1,31 @@
+#version 450
+layout(local_size_x=8, local_size_y=8) in;
+layout(std430, set=0, binding=0) readonly buffer Blocks { uvec2 blocks[]; } source;
+layout(rgba8, set=0, binding=1) uniform writeonly image2D destination;
+
+uint channel(uint a, uint b, uint mask, uint selector, bool fourColors) {
+    uint numerator, denominator;
+    if (selector == 0) { numerator=a; denominator=mask; }
+    else if (selector == 1) { numerator=b; denominator=mask; }
+    else if (fourColors) {
+        numerator = selector == 2 ? 2*a+b : a+2*b;
+        denominator = 3*mask;
+    } else { numerator=a+b; denominator=2*mask; }
+    return (numerator*255 + denominator/2)/denominator;
+}
+void main() {
+    uvec2 pixel=gl_GlobalInvocationID.xy;
+    uvec2 extent=uvec2(imageSize(destination));
+    if (any(greaterThanEqual(pixel,extent))) return;
+    uint stride=(extent.x+3)/4;
+    uvec2 encoded=source.blocks[(pixel.y/4)*stride+pixel.x/4];
+    uint a=encoded.x & 65535, b=encoded.x >> 16;
+    uint selector=(encoded.y >> (2*(4*(pixel.y%4)+pixel.x%4))) & 3;
+    uvec4 result=uvec4(0);
+    if (a>b || selector!=3) {
+        result=uvec4(channel(a>>11,b>>11,31,selector,a>b),
+            channel((a>>5)&63,(b>>5)&63,63,selector,a>b),
+            channel(a&31,b&31,31,selector,a>b),255);
+    }
+    imageStore(destination,ivec2(pixel),vec4(result)/255.0);
+}

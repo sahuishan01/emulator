@@ -19,6 +19,7 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
+        private const val WORKLOAD_VERSION = 2
     }
 
     private external fun runGpuChecks(): ByteArray
@@ -83,10 +84,13 @@ class MainActivity : Activity() {
             val previous = filesDir.resolve("last-report.json")
             if (previous.exists()) {
                 val saved = previous.readText()
-                JSONObject(saved)
-                report = saved
-                output.text = saved
-                exportButton.isEnabled = true
+                if (JSONObject(saved).optInt("workloadVersion", 0) == WORKLOAD_VERSION) {
+                    report = saved
+                    output.text = saved
+                    exportButton.isEnabled = true
+                } else {
+                    output.text = "Ready. Run checks again for this version's updated tests."
+                }
             }
         } catch (_: Exception) { }
     }

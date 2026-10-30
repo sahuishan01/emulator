@@ -6,7 +6,7 @@ guest shaders or run Switch games. The C++ implementation uses the NDK/system
 Vulkan interfaces; the emulation engine remains the separate original Rust
 workspace.
 
-Three bounded offscreen workloads:
+Four bounded offscreen workloads (workload version 2):
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -14,6 +14,10 @@ Three bounded offscreen workloads:
 3. A compute shader generates the same vertex/color data, followed by an
    explicit compute-to-vertex dependency. Every output byte must match the
    CPU-uploaded draw's result.
+4. An original compute shader decodes BC1 RGBA UNORM bytes into an RGBA8 storage
+   image without native BC support. Every readback byte must match a fixture
+   produced by our tested Rust reference decoder. Both opaque and transparent
+   block modes are exercised. See [the decoding contract](../../docs/bc1-fallback.md).
 
 The report includes device/driver/API identity, software-renderer status,
 physical feature advertisements, limits, memory heaps, queue families and
@@ -21,7 +25,8 @@ format-query results, plus per-test outcomes and errors. Format entries report
 optimal-tiling feature bits and a combined 2D sampled/transfer-source/transfer-
 destination image query. Heap sizes are advertised capacity, not free memory
 or the application's allocation budget. A passing report
-establishes these workloads only. Compression sampling/decoding, stencil,
+establishes these workloads only. Compressed texture sampling, formats beyond
+linear BC1 RGBA UNORM, stencil,
 additional shader stages, Android swapchain presentation and guest GPU command
 handling are not established by these tests.
 
@@ -31,6 +36,7 @@ word arrays in `generated/shaders.h`. Regenerate/verify with:
 ```sh
 python3 tools/compile_gpu_shaders.py
 python3 tools/compile_gpu_shaders.py --check
+python3 tools/generate_bc1_fixture.py --check
 ```
 
 Requirements: glslangValidator and spirv-val. Native desktop builds additionally
@@ -69,6 +75,8 @@ x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
 The last completed report is retained across activity recreation.
+Reports from an older workload version are not displayed as current results;
+after upgrading from 0.1.0-dev, run the updated checks again.
 
 Verify signatures, native architectures, ELF load alignment and native ZIP
 payload alignment with:

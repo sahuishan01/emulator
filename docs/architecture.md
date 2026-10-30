@@ -6,8 +6,10 @@ Design baseline: 2026-10-30. This document defines the system boundaries;
 acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, a debug-output/exit kernel slice and a CLI session. The separate
-Android Vulkan laboratory builds and passes software-driver checks; it has
-not yet been exercised on the physical G720.
+Android Vulkan laboratory builds and passes software-driver checks. The user
+supplied a physical G720 report passing the initial three workloads; the new
+BC1 conversion workload requires its own physical run. An original Rust BC1
+reference decoder is implemented separately from guest GPU emulation.
 
 ## Scope
 
@@ -106,10 +108,11 @@ crates/
   gpu/                planned guest commands and GPU address space
   renderer-vulkan/    planned host backend
   session/            implemented single-process bounded execution
+  texture/            implemented linear BC1 RGBA UNORM reference decoding
   android-ffi/        planned audited Android interface
 android/
   app/                planned user application
-  gpu-lab/            implemented diagnostic application; physical test pending
+  gpu-lab/            initial physical report supplied; new BC1 test pending
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/
@@ -128,7 +131,7 @@ tests/
 | Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Debug-output/exit only; other operations fail explicitly |
 | Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | Planned |
 | Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shader translation | Planned |
-| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Three offscreen native workloads implemented; guest backend/presentation planned |
+| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Four offscreen native workloads implemented, including BC1 conversion; guest backend/presentation planned |
 | Android host | Lifecycle, surface, input, audio and diagnostics | GPU Lab and JSON export implemented; engine integration planned |
 | CLI | Bounded interpreter execution with explicit unsupported-operation errors | Implemented |
 

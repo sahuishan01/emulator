@@ -23,6 +23,7 @@ games/
 firmware/
 keys/
 captures/
+.codex-attachments/
 *.nsp
 *.xci
 *.nca

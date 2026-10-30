@@ -47,3 +47,7 @@ dependencies = [
  "emulator-loader",
  "emulator-memory",
 ]
+
+[[package]]
+name = "emulator-texture"
+version = "0.1.0"

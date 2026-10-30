@@ -13,15 +13,18 @@ GT 7 Dream Edition / Immortalis-G720 as the first physical graphics target.
 The eventual title target is the original Switch version of Pokémon Legends:
 Z-A. Success claims must name the build, device, driver, title version and scene.
 
-Current foundation: six original Rust crates implement bounded guest memory,
+Current foundation: seven original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, debug-output/exit SVCs and a CLI
 session. Our NRO prints its known message and exits after five instructions.
-All 34 Rust tests and 11 independent LLVM fixture comparisons pass.
+All 40 Rust tests and 11 independent LLVM fixture comparisons pass. The texture
+crate adds original BC1 RGBA UNORM reference decoding and a reproducible fixture.
 
 The separate Android GPU Lab APK builds and passes lint, signature and native
-packaging checks. Its three host workloads pass on llvmpipe (with zero Vulkan
-validation errors) and an Android 15 SwiftShader AVD. APK export/state retention
-are exercised separately from graphics. Physical G720 execution is pending;
+packaging checks. Four host workloads pass on llvmpipe with zero Vulkan
+validation errors and on an Android 15 SwiftShader AVD. The original three
+passed in the user's supplied physical G720 report. The new BC1 compute conversion
+test requires its own phone run. APK export/state retention are exercised
+separately from graphics;
 there is no guest GPU, shader translator, scheduler/IPC or commercial game
 support yet.
 
@@ -43,8 +46,10 @@ support yet.
 M1A and the M2 fixture gate are implemented for the explicitly restricted
 [NRO/ABI subset](nro-loader.md). They do not establish general NRO/libnx or
 commercial startup compatibility. M1B has a buildable laboratory and initial
-offscreen workloads; its physical-device gate and the additional texture,
-shader-stage and presentation experiments below remain open. M3 onward is
+offscreen workloads and an initial physical-device report. Its expanded
+texture, shader-stage and presentation experiments below remain open. BC1
+reference/GPU conversion is implemented, with its new physical gate pending.
+M3 onward is
 unimplemented.
 
 M1B is deliberately early. The project must learn what the real Mali driver can

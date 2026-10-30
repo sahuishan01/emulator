@@ -1,6 +1,7 @@
 // Original host Vulkan diagnostics. This does not decode or emulate Switch GPU work.
 #include "gpu_lab.h"
 #include "shaders.h"
+#include "bc1_fixture.h"
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <array>
@@ -248,7 +249,7 @@ public:
         check(vkAllocateMemory(device, &allocation, nullptr, &memory), "allocate image memory");
         allocations.push_back(memory);
         check(vkBindImageMemory(device, output.handle, memory, 0), "bind image memory");
-        if (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+        if (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT)) {
             auto view = structure<VkImageViewCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
             view.image = output.handle; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = format;
             view.subresourceRange = {aspect, 0, 1, 0, 1};
@@ -332,17 +333,19 @@ bool transfer_roundtrip(Context& context) {
     return context.read(destination) == expected;
 }
 
-void generate_vertices(Context& context, VkCommandBuffer command, const Buffer& vertices) {
-    VkDescriptorSetLayoutBinding binding{}; binding.binding = 0; binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    binding.descriptorCount = 1; binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+struct ComputePipeline { VkPipeline pipeline; VkPipelineLayout layout; VkDescriptorSet set; };
+
+template<size_t Size> ComputePipeline compute_pipeline(Context& context,
+        const std::vector<VkDescriptorSetLayoutBinding>& bindings, const std::array<uint32_t, Size>& code) {
     auto layout_info = structure<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-    layout_info.bindingCount = 1; layout_info.pBindings = &binding;
+    layout_info.bindingCount = static_cast<uint32_t>(bindings.size()); layout_info.pBindings = bindings.data();
     VkDescriptorSetLayout descriptor_layout{};
     check(vkCreateDescriptorSetLayout(context.device, &layout_info, nullptr, &descriptor_layout), "create compute descriptor layout");
     context.descriptor_layouts.push_back(descriptor_layout);
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
+    std::vector<VkDescriptorPoolSize> sizes;
+    for (const auto& binding : bindings) sizes.push_back({binding.descriptorType, binding.descriptorCount});
     auto pool_info = structure<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
-    pool_info.maxSets = 1; pool_info.poolSizeCount = 1; pool_info.pPoolSizes = &size;
+    pool_info.maxSets = 1; pool_info.poolSizeCount = static_cast<uint32_t>(sizes.size()); pool_info.pPoolSizes = sizes.data();
     VkDescriptorPool pool{};
     check(vkCreateDescriptorPool(context.device, &pool_info, nullptr, &pool), "create descriptor pool");
     context.descriptor_pools.push_back(pool);
@@ -350,10 +353,6 @@ void generate_vertices(Context& context, VkCommandBuffer command, const Buffer& 
     set_info.descriptorPool = pool; set_info.descriptorSetCount = 1; set_info.pSetLayouts = &descriptor_layout;
     VkDescriptorSet set{};
     check(vkAllocateDescriptorSets(context.device, &set_info, &set), "allocate descriptor set");
-    VkDescriptorBufferInfo buffer_info{vertices.handle, 0, vertices.size};
-    auto write = structure<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
-    write.dstSet = set; write.descriptorCount = 1; write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; write.pBufferInfo = &buffer_info;
-    vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
     auto pipeline_layout_info = structure<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
     pipeline_layout_info.setLayoutCount = 1; pipeline_layout_info.pSetLayouts = &descriptor_layout;
     VkPipelineLayout layout{};
@@ -362,17 +361,75 @@ void generate_vertices(Context& context, VkCommandBuffer command, const Buffer& 
     auto pipeline_info = structure<VkComputePipelineCreateInfo>(VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
     pipeline_info.layout = layout;
     pipeline_info.stage = structure<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
-    pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; pipeline_info.stage.module = context.shader(shaders::vertices_comp); pipeline_info.stage.pName = "main";
+    pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; pipeline_info.stage.module = context.shader(code); pipeline_info.stage.pName = "main";
     VkPipeline pipeline{};
     const auto result = vkCreateComputePipelines(context.device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline);
     if (pipeline) context.pipelines.push_back(pipeline);
     check(result, "create compute pipeline");
+    return {pipeline, layout, set};
+}
+
+void generate_vertices(Context& context, VkCommandBuffer command, const Buffer& vertices) {
+    VkDescriptorSetLayoutBinding binding{}; binding.binding = 0; binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binding.descriptorCount = 1; binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    const auto compute = compute_pipeline(context, {binding}, shaders::vertices_comp);
+    VkDescriptorBufferInfo buffer_info{vertices.handle, 0, vertices.size};
+    auto write = structure<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+    write.dstSet = compute.set; write.descriptorCount = 1; write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; write.pBufferInfo = &buffer_info;
+    vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
     buffer_barrier(command, vertices, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, nullptr);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, compute.layout, 0, 1, &compute.set, 0, nullptr);
     vkCmdDispatch(command, 1, 1, 1);
     buffer_barrier(command, vertices, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                    VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+}
+
+bool bc1_conversion(Context& context) {
+    const auto blocks = context.buffer(sizeof(bc1_fixture::input), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    // Serialize fixture words explicitly; GPU blocks are little-endian byte data.
+    std::vector<uint8_t> input(sizeof(bc1_fixture::input));
+    for (size_t index = 0; index < input.size(); ++index)
+        input[index] = static_cast<uint8_t>(bc1_fixture::input[index / 4] >> (8 * (index % 4)));
+    context.write(blocks, input.data(), input.size());
+    const auto output = context.image(VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    const auto readback = context.buffer(PIXEL_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    std::vector<VkDescriptorSetLayoutBinding> bindings(2);
+    bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].binding = 1; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    for (auto& binding : bindings) { binding.descriptorCount = 1; binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT; }
+    const auto compute = compute_pipeline(context, bindings, shaders::bc1_comp);
+    VkDescriptorBufferInfo buffer_info{blocks.handle, 0, blocks.size};
+    VkDescriptorImageInfo image_info{}; image_info.imageView = output.view; image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    for (size_t index = 0; index < writes.size(); ++index) {
+        writes[index] = structure<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+        writes[index].dstSet = compute.set; writes[index].dstBinding = static_cast<uint32_t>(index);
+        writes[index].descriptorCount = 1; writes[index].descriptorType = bindings[index].descriptorType;
+    }
+    writes[0].pBufferInfo = &buffer_info; writes[1].pImageInfo = &image_info;
+    vkUpdateDescriptorSets(context.device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    const auto command = context.begin();
+    buffer_barrier(command, blocks, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_WRITE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+    image_barrier(command, output.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, compute.layout, 0, 1, &compute.set, 0, nullptr);
+    vkCmdDispatch(command, (SIDE + 7) / 8, (SIDE + 7) / 8, 1);
+    image_barrier(command, output.handle, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    const auto copy = image_copy();
+    vkCmdCopyImageToBuffer(command, output.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.handle, 1, &copy);
+    buffer_barrier(command, readback, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
+    context.submit(command);
+    const auto actual = context.read(readback);
+    static_assert(sizeof(bc1_fixture::rgba8) == PIXEL_BYTES);
+    for (size_t index = 0; index < actual.size(); ++index)
+        if (actual[index] != static_cast<uint8_t>(bc1_fixture::rgba8[index / 4] >> (8 * (index % 4)))) return false;
+    return true;
 }
 
 std::vector<uint8_t> draw_triangles(Context& context, bool compute) {
@@ -551,14 +608,15 @@ GpuReport run_gpu_checks() {
         tests.push_back({"depth-tested-triangles", expected_triangle(direct), "Front green triangle must hide a later red triangle; corner remains clear"});
         const auto computed = draw_triangles(context, true);
         tests.push_back({"compute-to-vertex-visibility", expected_triangle(computed) && computed == direct, "GPU-generated vertices must match every byte of the CPU-uploaded reference draw"});
+        tests.push_back({"bc1-to-rgba8-fallback", bc1_conversion(context), "GPU BC1 RGBA decode must match every byte of the Rust reference; no native BC feature required"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 3 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 4 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"scope\":\"host-vulkan-only\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":2,\"scope\":\"host-vulkan-only\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
