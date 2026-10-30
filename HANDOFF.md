@@ -13,8 +13,8 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 
 ## Implemented through 2026-10-31
 
-- Ten original Rust workspace crates: memory, a64, loader, ipc, kernel, services,
-  session, texture, CLI and android-ffi. No external Cargo dependencies. Nine
+- Eleven original Rust workspace crates: memory, a64, loader, ipc, kernel, services,
+  session, texture, gpu, CLI and android-ffi. No external Cargo dependencies. Ten
   core crates forbid unsafe code; android-ffi permits the C export attribute
   only and contains no unsafe blocks or raw-pointer arguments.
 - Bounded memory with transactional batch mappings, reservation/commit,
@@ -42,7 +42,11 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   Validate full handle arrays, retain objects across handle closes/array writes,
   wake all existing manual-reset waiters, preserve X1 on timeout/error. With no
   runnable thread or future deadline, return bounded Session/RunOutcome::Blocked.
-  Cancellation, mutexes/arbitration and negative yield variants remain open.
+  CancelSynchronization now interrupts active waits or coalesces a deferred
+  request. Invalid/immediate/poll results leave deferred cancellation pending;
+  the next blocking wait consumes it once. SleepThread is not interrupted.
+  ClearEvent now accepts readable as well as writable handles. Mutexes/
+  arbitration, pseudo handles and negative yield variants remain open.
   See docs/scheduling.md.
 - OutputDebugString and ExitProcess with bounded raw debug records and owned
   process TLS. Some guest Result errors are implemented; complete Horizon
@@ -55,6 +59,17 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   four switches, three blocking waits, one timeout, 1680 reference ns). Its
   child/main registers, flags, TLS, arguments and final memory are verified.
   The raw CPU demo still produces 42 after 24 instructions.
+- A sixth NRO checks active/deferred cancellation, coalescing, preserved result
+  indices and readable-event clearing: 106 instructions, two threads, four
+  switches, two blocked waits, two delivered cancellations, zero timeouts and
+  1091 reference ns. It stores 42 and exits with no live handles.
+- Original GPU command framing in crates/gpu, independent of kernel/Vulkan.
+  Bounded 40-bit GPFIFO entries plus incrementing/non-incrementing/immediate/
+  increment-once pushbuffer packets; explicit malformed/control/overflow/budget
+  errors. Pure method-write decoding with no partial output, GPU address-space
+  resolution, class execution, shader translation or rendering. Host tests only;
+  this parser is not linked into the Android reference path. See
+  docs/gpu-command-framing.md.
 - Original C++ Vulkan GPU Lab shared by desktop CLI and Android JNI. Six
   offscreen workloads: exact image-transfer roundtrip, overlapping depth-tested
   triangles, compute-generated vertices compared to the CPU-uploaded draw,
@@ -70,21 +85,22 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   until teardown, excluding driver/pipeline and host heap overhead.
 - Kotlin Android lab with background native checks, retained report and
   user-selected JSON export. ARM64 and x86_64 APK now embeds the original Rust
-  engine and executes five original NROs through JNI. Schema 2/workload 5,
-  engine suite 2, adds per-case scheduling counters. It
+  engine and executes six original NROs through JNI. Schema 2/workload 6,
+  engine suite 3, adds the cancellation case and cancelledWaits counters. It
   separates `engine` and `gpu` outcomes. The six GPU checks are unchanged.
   Rust returns a bounded initialized 4104-byte value-only C report with caught
   panics. No gameplay/session/surface API yet. See docs/android-engine.md.
 
 ## Verified
 
-- `cargo test --offline --workspace`: 73 tests passed, including malformed IPC,
+- `cargo test --offline --workspace`: 84 tests passed, including malformed IPC,
   identity replacement, reply rollback/permissions, atomic handle exhaustion,
   clone/event lifetimes, scheduling, joins, timeout progress while a thread runs,
   multi-waiter wakes, creation rollback/limits, deadline overflow and budget
-  independence at 1/7/63/64/65 instructions.
-- All 16 fixture binaries match LLVM 19 assembly/link output, independently of
-  our decoder: 11 raw A64 programs plus five original homebrew NROs.
+  independence at 1/7/63/64/65 instructions, cancellation ordering/coalescing,
+  sleeping-target behavior, readable-event clearing and GPU framing failures.
+- All 17 fixture binaries match LLVM 19 assembly/link output, independently of
+  our decoder: 11 raw A64 programs plus six original homebrew NROs.
 - Rust formatting and Clippy with `-D warnings`: passed.
 - GLSL generation and spirv-val checks: passed.
 - Desktop Vulkan workloads: all six passed on llvmpipe, with the Khronos
@@ -97,7 +113,7 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 - Android Gradle debug build and lint passed with pinned toolchains.
 - Original Rust engine cross-built for both Android ABIs; both final ELF files
   export the Rust and JNI engine entry points. Host C-report example executes
-  all five guest programs and validates expected traces and handle cleanup.
+  all six guest programs and validates expected traces and handle cleanup.
 - APK signature, native ELF architecture and 16 KiB ELF/ZIP load alignment
   verified by tools/verify_gpu_apk.py. This is packaging evidence, not a test
   on a 16 KiB Android system.
@@ -118,6 +134,12 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   pass. A System UI startup ANR blocked the first tap; dismissing that system
   dialog and using fresh XML bounds started the successful run. No app crash/
   ANR captured. See docs/validation/android-scheduling.md.
+- The 0.6.0-dev AVD run passes six guest programs plus six Vulkan checks.
+  Cancellation matches 106/2/4/2/0/2/1091 for instructions/threads/switches/
+  waits/timeouts/interruptions/virtual ns. Workload-5 cache invalidation,
+  byte-exact export and cold restoration pass. System UI needed its startup
+  ANR Wait action; no app crash/ANR was captured. See
+  docs/validation/android-cancellation.md. GPU framing has host tests only.
 - Documentation links resolve. Tests and reports are under ignored reports/;
   the copied development APK and hash are under ignored artifacts/.
 
@@ -138,6 +160,11 @@ with expected debug output, empty errors and zero live handles after each exit.
 All six GPU cases still pass; device/driver identity is unchanged. The raw
 report stays ignored; see docs/validation/g720-engine.md. This closes the
 ARM64 original-engine boundary checkpoint, not the newer scheduling fixture.
+The supplied 0.5.0-dev report passes all five engine cases and six GPU cases on
+physical ARM64/G720. The scheduling trace matches 97/2/4/3/1/1680 exactly;
+device/driver identity is unchanged and all errors are empty. It closes that
+physical scheduler checkpoint; see docs/validation/g720-scheduling.md. Raw
+reports remain ignored. The newer cancellation fixture is separate evidence.
 
 ## Next implementation work
 
@@ -146,16 +173,18 @@ docs/design.md and docs/implementation-plan.md. M1A/M2 satisfy only the owned
 static NRO fixture gate; general homebrew compatibility remains open. M1B has
 an initial lab, with its physical-device gate and additional experiments open.
 M3 has its first single-core multithreaded/blocking-timeout fixture implemented,
-alongside handles/IPC/cloning/events. Full synchronization and physical scheduling
-evidence remain open. M4 onward is unimplemented. The user
+alongside handles/IPC/cloning/events and now cancellation. Physical scheduling
+evidence passed in 0.5.0-dev. M4 has initial GPU framing only; guest submission,
+method/shader execution and presentation remain unimplemented. The user
 requested autonomous progression after each verified checkpoint; continue
 authorized work without repeatedly asking for another go-ahead.
 
-1. Continue kernel cancellation/synchronization and ISA requirements for actual
-   guest GPU service submission. Unsupported operations remain explicit errors.
+1. Continue GPU address-space/submission ownership, packet continuation/class
+   routing and needed NV service/ioctl behavior. Extend synchronization/ISA as
+   owned workloads require it. Unsupported operations remain explicit errors.
    Keep virtual reference timing distinct from console timing and performance.
-2. Obtain a 0.5.0-dev phone report for the new two-thread fixture. Prior engine
-   and GPU device checkpoints are passed; the added scheduler needs evidence.
+2. Obtain a 0.6.0-dev phone report for the new cancellation fixture. Prior engine,
+   scheduling and GPU device checkpoints are passed; cancellation needs evidence.
    Do not imply unchanged GPU checks add guest graphics validation.
 3. Continue conversion/cache/resource-peak evidence, required BC formats,
    guest tiling, shader-stage experiments and Android presentation separately.
@@ -170,8 +199,8 @@ authorized work without repeatedly asking for another go-ahead.
 
 Private repository: https://github.com/sahuishan01/emulator, with source on
 `main`. The verified development GPU Lab APK, checksum, packaging report and
-artifact README are attached to the `v0.5.0-dev` prerelease. Earlier development
-snapshots through `v0.4.0-dev` are retained. APK binaries and
+artifact README are attached to the `v0.6.0-dev` prerelease. Earlier development
+snapshots through `v0.5.0-dev` are retained. APK binaries and
 private reports remain outside source control. This is a prototype snapshot,
 not a production release or a Switch compatibility claim.
 

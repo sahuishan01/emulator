@@ -2,7 +2,7 @@
 
 The implemented path is `NroImage` -> process mappings -> `Session` -> original
 A64 interpreter -> `Kernel::dispatch`. It runs the self-authored
-five `examples/homebrew/*.nro` fixtures, assembled and linked from their `.S`
+six `examples/homebrew/*.nro` fixtures, assembled and linked from their `.S`
 sources by LLVM.
 No existing emulator code or console binaries are involved.
 
@@ -36,7 +36,8 @@ Implemented calls:
   argument or returning to the following instruction, and releases its handles.
 - ConnectToNamedPort, SendSyncRequest and CloseHandle; CreateEvent, SignalEvent,
   ClearEvent, ResetSignal and blocking/polling WaitSynchronization. CreateThread,
-  StartThread, ExitThread and SleepThread add a bounded single-core scheduler. Their supported
+  StartThread, ExitThread and SleepThread add a bounded single-core scheduler;
+  CancelSynchronization interrupts or retains a pending wait cancellation. Their supported
   behavior and error boundaries are documented in [kernel-ipc.md](kernel-ipc.md).
 
 The debug path allows at most 16 KiB per message, 1 MiB total and 4096 records.

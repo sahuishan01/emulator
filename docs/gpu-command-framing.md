@@ -1,0 +1,60 @@
+# Original GPU command framing
+
+`crates/gpu` starts the guest GPU path with an original bounded parser for
+captured Maxwell channel packets. It has no kernel, Vulkan or external crate
+dependency. It decodes framing into method writes; it does not execute them,
+acknowledge completion, access a driver or render an image.
+
+Interface fields were checked against NVIDIA's public
+[MAXWELL_CHANNEL_GPFIFO_A declarations](https://github.com/NVIDIA/open-gpu-doc/blob/master/classes/host/clb06f.h).
+No existing emulator core or implementation is copied, linked or imported.
+The reference is a hardware interface, not the implementation baseline.
+
+## Supported input
+
+An eight-byte little-endian GPFIFO entry contains a 40-bit GPU virtual address
+and a 21-bit length in words. This subset accepts unconditional user/main-level
+fetches without sync-wait. Conditional, privileged, subroutine, reserved-bit,
+zero-length control and sync-wait entries fail explicitly. A fetch is limited
+to 16384 words (64 KiB), and an address range must remain within 40 bits.
+These size limits are prototype policy, not hardware limits.
+
+GPU virtual addresses are distinct `GpuVa` values, not host pointers. Parsing
+does not resolve or map them. `GpFifoEntry::decode` requires exactly the declared
+capture length; future GPU address-space code must separately validate/read the
+backing memory and retain its identity.
+
+The pushbuffer parser supports eight subchannels and four modern packet forms:
+
+| Form | Decoded method writes |
+| --- | --- |
+| Incrementing | Each payload word advances the method word index |
+| Non-incrementing | Every payload targets the same method |
+| Increment once | First payload targets M; subsequent payloads target M+1 |
+| Immediate | One write with the 13-bit inline value and no following payload |
+
+The exact zero word is recognized as the documented no-op. Other legacy,
+control, reserved and end-segment forms fail explicitly. Method word indices
+are 12 bits; byte offsets are four times those indices. Increment overflow is
+rejected rather than wrapped. Partial words, truncated payloads and reserved
+packet bits are rejected. A write budget caps output at at most 16384 writes.
+All work is bounded by input/output limits, and errors expose no partial output.
+
+The parser currently requires complete packets in a captured entry. Packet
+continuation across entries, ring control, conditional fetching, class binding,
+method execution and synchronization remain unimplemented. An accepted packet
+does not imply its method has supported GPU semantics.
+
+## Evidence and next work
+
+Tests use original literal wire vectors independently of the decoder. They
+cover all four forms, subchannel/method/payload ordering, 40-bit addresses,
+declared capture length, every truncated prefix of a packet, unsupported entry
+flags/opcodes, address and method overflow, and input/output budgets. The GPU
+parser is tested on the host and is not part of the Android reference suite.
+
+Next: bounded GPU memory mappings and submission ownership, packet continuation,
+class routing and needed NV service/ioctl semantics. Shader decoding/IR/SPIR-V,
+method execution, host renderer integration and presentation follow. M4's full
+guest-to-image checkpoint remains open; the six Vulkan lab workloads continue
+to use host shaders.

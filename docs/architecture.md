@@ -7,7 +7,7 @@ acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
 event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
-Rust engine for five original guest checks
+Rust engine for six original guest checks
 alongside the Vulkan laboratory. The user
 supplied a physical G720 0.3.0-dev report passing all six current workloads,
 including BC1 conversion, sampling and updates. Guest graphics and Android
@@ -111,18 +111,18 @@ crates/
   kernel/             implemented handles/IPC, guest threads, blocking waits and timeouts
   services/           implemented minimal SM and emulator-owned diagnostic service
   shader/             planned original GPU shader decoder / IR
-  gpu/                planned guest commands and GPU address space
+  gpu/                implemented bounded command framing; address space/execution planned
   renderer-vulkan/    planned host backend
   session/            implemented single-process bounded execution
   texture/            implemented linear BC1 RGBA UNORM reference decoding
   android-ffi/        implemented reference-program C ABI; gameplay API planned
 android/
   app/                planned user application
-  gpu-lab/            five guest checks plus six host GPU checks; presentation planned
+  gpu-lab/            six guest checks plus six host GPU checks; presentation planned
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/
-  homebrew/           five implemented original static NRO fixtures
+  homebrew/           six implemented original static NRO fixtures
 tests/
   gpu-workloads/      planned command, shader and reference-image tests
 ```
@@ -136,7 +136,7 @@ tests/
 | Loader | Validate executable bounds/segments and construct guest process | Static uncompressed NRO0 v0 subset; no linking or modules |
 | Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Handles/IPC, cloned sessions, single-core guest scheduling, event/thread blocking waits and virtual timeouts |
 | Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | CMIF v0 SM Initialize/GetService for `emu:test`; system device services planned |
-| Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shader translation | Planned |
+| Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shader translation | Bounded GPFIFO/pushbuffer framing implemented; mappings, method execution, shaders and submissions planned |
 | Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Six offscreen native workloads, including BC1 conversion, sampling and updates; guest backend/presentation planned |
 | Android host | Lifecycle, surface, input, audio and diagnostics | Engine reference checks, GPU Lab and JSON export implemented; gameplay integration planned |
 | CLI | Bounded interpreter execution with explicit unsupported-operation errors | Implemented |

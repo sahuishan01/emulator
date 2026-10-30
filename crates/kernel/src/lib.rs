@@ -33,9 +33,11 @@ pub const SVC_SIGNAL_EVENT: u16 = 0x11;
 pub const SVC_CLEAR_EVENT: u16 = 0x12;
 pub const SVC_RESET_SIGNAL: u16 = 0x17;
 pub const SVC_WAIT_SYNCHRONIZATION: u16 = 0x18;
+pub const SVC_CANCEL_SYNCHRONIZATION: u16 = 0x19;
 pub const RESULT_INVALID_HANDLE: u64 = 0xe401;
 pub const RESULT_INVALID_ADDRESS: u64 = 0xe601;
 pub const RESULT_TIMEOUT: u64 = 0xea01;
+pub const RESULT_INTERRUPTED: u64 = 0xec01;
 pub const RESULT_TOO_MANY_HANDLES: u64 = 0xee01;
 pub const RESULT_INVALID_STATE: u64 = 0xfa01;
 pub const MAIN_THREAD_HANDLE: u64 = handles::MAIN_THREAD_HANDLE as u64;
@@ -416,6 +418,8 @@ impl Kernel {
             cpu.x[1] = index as u64;
         } else if cpu.x[3] == 0 {
             cpu.x[0] = RESULT_TIMEOUT;
+        } else if self.scheduler.take_cancellation() {
+            cpu.x[0] = RESULT_INTERRUPTED;
         } else {
             self.scheduler
                 .wait(targets, cpu.x[3] as i64)
@@ -473,6 +477,16 @@ impl Kernel {
                     .map_err(KernelError::Scheduler)?;
                 Ok(KernelEvent::Continue)
             }
+            SVC_CANCEL_SYNCHRONIZATION => {
+                cpu.x[0] = match self.handles.get(cpu.x[0] as u32) {
+                    Ok(Object::Thread(object)) => {
+                        self.scheduler.cancel_wait(object.id);
+                        0
+                    }
+                    _ => RESULT_INVALID_HANDLE,
+                };
+                Ok(KernelEvent::Continue)
+            }
             SVC_CLOSE_HANDLE => {
                 cpu.x[0] = if self.handles.close(cpu.x[0] as u32).is_ok() {
                     0
@@ -489,6 +503,10 @@ impl Kernel {
                 cpu.x[0] = match self.handles.get(cpu.x[0] as u32) {
                     Ok(Object::WritableEvent(signal)) => {
                         signal.set(id == SVC_SIGNAL_EVENT);
+                        0
+                    }
+                    Ok(Object::ReadableEvent(signal)) if id == SVC_CLEAR_EVENT => {
+                        signal.set(false);
                         0
                     }
                     _ => RESULT_INVALID_HANDLE,
@@ -555,6 +573,7 @@ pub fn homebrew_config() -> Vec<u8> {
         SVC_CLEAR_EVENT,
         SVC_RESET_SIGNAL,
         SVC_WAIT_SYNCHRONIZATION,
+        SVC_CANCEL_SYNCHRONIZATION,
     ] {
         available[id as usize / 64] |= 1_u64 << (id % 64);
     }

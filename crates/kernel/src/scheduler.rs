@@ -30,6 +30,7 @@ pub struct SchedulerStats {
     pub blocking_waits: u64,
     pub timeouts: u64,
     pub virtual_time_ns: u64,
+    pub cancelled_waits: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +61,7 @@ struct Thread {
     priority: u8,
     ready_order: u128,
     state: State,
+    cancel_pending: bool,
 }
 #[derive(Debug)]
 pub struct Scheduler {
@@ -79,6 +81,7 @@ impl Scheduler {
                 priority: MAIN_PRIORITY,
                 ready_order: 0,
                 state: State::Runnable,
+                cancel_pending: false,
             }],
             current: 0,
             quantum_used: 0,
@@ -104,6 +107,7 @@ impl Scheduler {
             priority,
             ready_order: 0,
             state: State::Created,
+            cancel_pending: false,
         });
         self.stats.threads_created += 1;
     }
@@ -137,6 +141,30 @@ impl Scheduler {
         self.threads[self.current].state = State::Waiting { targets, deadline };
         self.stats.blocking_waits += 1;
         Ok(())
+    }
+    pub fn take_cancellation(&mut self) -> bool {
+        let pending = std::mem::take(&mut self.threads[self.current].cancel_pending);
+        if pending {
+            self.stats.cancelled_waits += 1;
+        }
+        pending
+    }
+    pub fn cancel_wait(&mut self, id: usize) {
+        if matches!(self.threads[id].state, State::Waiting { .. }) {
+            let order = self.next_order();
+            let thread = &mut self.threads[id];
+            // Replacing the wait drops retained objects and its deadline. It
+            // cannot later turn an interrupted wait into a signal or timeout.
+            thread.state = State::Runnable;
+            thread.ready_order = order;
+            thread.cpu.x[0] = crate::RESULT_INTERRUPTED;
+            thread.cancel_pending = false;
+            self.stats.cancelled_waits += 1;
+        } else if !matches!(self.threads[id].state, State::Exited) {
+            // Coalesce repeated requests. SleepThread is not a synchronization
+            // wait, so cancellation remains pending without waking the sleeper.
+            self.threads[id].cancel_pending = true;
+        }
     }
     pub fn sleep(&mut self, ns: i64) -> Result<(), SchedulerError> {
         if ns == 0 {

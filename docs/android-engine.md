@@ -1,10 +1,10 @@
 # Android original-engine checks
 
-Version 0.5.0-dev embeds the original Rust engine into the existing Android
+Version 0.6.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
-The app's worker calls Rust once to execute five original NRO fixtures
+The app's worker calls Rust once to execute six original NRO fixtures
 described in [kernel-ipc.md](kernel-ipc.md), then calls the unchanged six-test
 C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
 counts, guest memory results and zero remaining handles after process exit.
@@ -61,12 +61,13 @@ validate the Android C ABI or either Android runtime architecture.
 
 The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
 installations update in place. Select **Run engine and GPU checks**, then
-**Export report**. Schema version 2, workload version 5, has separate `engine`
+**Export report**. Schema version 2, workload version 6, has separate `engine`
 and `gpu` objects and combined `allPassed`. The embedded GPU suite retains
 its own workload version 3. Engine reports record host/guest architecture,
-five per-case outcomes, instruction/IPC counts, output, handle cleanup and
-thread/switch/wait/timeout/virtual-time counters. Engine suite version 2 adds
-the original two-thread [scheduling fixture](scheduling.md).
+six per-case outcomes, instruction/IPC counts, output, handle cleanup and
+thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 3
+adds the cancellation fixture. `cancelledWaits` counts delivered interruptions;
+`timeouts` counts expired blocked waits, excluding immediate zero-timeout polls.
 The top level adds device, Android and application identity. Previous
 workload-version reports are not shown as current results after an upgrade.
 
@@ -74,7 +75,10 @@ The isolated Android 15/API 35 x86_64 AVD is the software QA target; its
 SwiftShader results do not establish ARM64/Mali behavior. The physical G720
 0.4.0-dev report passed the four engine checks through the ARM64 C ABI as well
 as all six unchanged GPU checks. See [physical evidence](validation/g720-engine.md).
-The new physical checkpoint is the fifth, scheduling/blocking-wait fixture.
+The [0.5.0-dev physical report](validation/g720-scheduling.md) also passes the
+fifth, scheduling/blocking-wait fixture. The sixth, cancellation case is the
+new device checkpoint. The separate GPU framing parser has host tests only
+and is not called by these Android reference programs.
 
 Neither group emulates guest GPU commands, translates guest shaders, presents
 guest frames or boots a commercial title. Pokémon Legends: Z-A remains a

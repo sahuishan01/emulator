@@ -5,11 +5,13 @@ This is the proposed design for the original emulator. It supplements
 
 Current implemented slice: bounded region memory, static NRO loading, A64
 interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
-event/thread waits and virtual deadlines in one process. The Kotlin/JNI lab runs five original Rust guest
+event/thread waits, cancellation and virtual deadlines in one process. The Kotlin/JNI lab runs six original Rust guest
 programs plus six host Vulkan workloads and exports reports. Shared memory
 backing/aliases, broader synchronization, guest graphics and the gameplay
 Android API remain planned. See [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.
+The [GPU framing parser](gpu-command-framing.md) now implements the first
+bounded command layer independently of GPU services, memory and rendering.
 
 ## 1. Process, addresses and memory
 

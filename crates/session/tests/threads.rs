@@ -92,3 +92,40 @@ fn infinite_guest_wait_returns_blocked_without_a_host_hang_or_false_exit() {
     assert!(session.debug_records().is_empty());
     assert!(session.kernel().live_handle_count() > 0);
 }
+
+#[test]
+fn owned_cancellation_guest_preserves_indices_and_delivers_requests_once() {
+    let bytes = include_bytes!("../../../examples/homebrew/cancellation.nro");
+    let mut reference = Session::from_nro(bytes).unwrap();
+    assert_eq!(reference.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(reference.instructions(), 106);
+    assert_eq!(
+        reference.debug_records(),
+        &[b"Guest cancellation interrupted waits exactly once.\n".to_vec()]
+    );
+    for offset in [0x2018, 0x2028] {
+        assert_eq!(
+            reference.memory().read_u64(LOAD_BASE + offset).unwrap(),
+            LOAD_BASE + 0x2000
+        );
+    }
+    assert_eq!(reference.memory().read_u64(LOAD_BASE + 0x2020).unwrap(), 42);
+    let stats = reference.kernel().scheduler_stats();
+    assert_eq!(stats.threads_created, 2);
+    assert_eq!(stats.blocking_waits, 2);
+    assert_eq!(stats.cancelled_waits, 2);
+    assert_eq!(stats.timeouts, 0);
+    assert_eq!(reference.kernel().live_handle_count(), 0);
+    for budget in [1, 7, 64] {
+        let mut session = Session::from_nro(bytes).unwrap();
+        for _ in 0..2000 {
+            if session.run(budget).unwrap() == RunOutcome::Exited {
+                break;
+            }
+        }
+        assert_eq!(session.state(), SessionState::Exited);
+        assert_eq!(session.instructions(), reference.instructions());
+        assert_eq!(session.kernel().scheduler_stats(), stats);
+        assert_eq!(session.cpu(), reference.cpu());
+    }
+}

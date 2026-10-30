@@ -36,10 +36,12 @@ and APKs remain in ignored `reports/` and `artifacts/` directories.
 
 The supplied [0.4.0-dev phone report](g720-engine.md) already passes the four
 prior engine checks through the ARM64 boundary and all six G720 GPU checks.
-That predates this scheduler. A new physical report is needed for the fifth
-guest case; the software AVD does not establish its ARM64/device result.
+The later [0.5.0-dev phone report](g720-scheduling.md) passes the fifth guest
+case with the same trace, closing its physical checkpoint. The software AVD
+itself does not establish ARM64/device behavior.
 
 The scheduler is single core and its clock is a deterministic reference model.
-Cancellation, remaining synchronization, guest GPU services/commands/shaders,
+The newer cancellation and GPU framing work needs separate evidence. Remaining
+synchronization, guest GPU services/method execution/shaders,
 presentation and commercial-game support remain open. This APK is a debug-signed
 development diagnostic, not a production emulator release.

@@ -27,6 +27,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "emulator-gpu"
+version = "0.1.0"
+
+[[package]]
 name = "emulator-ipc"
 version = "0.1.0"
 

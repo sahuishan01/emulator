@@ -66,11 +66,24 @@ array without invalidating the pending wait or redirecting it to another object.
 Manual-reset events wake all existing waiters; clearing later does not reblock
 those already awakened. Register/flag state and TLS remain per thread.
 
+CancelSynchronization (`0x19`) accepts a real thread handle. It interrupts an
+active synchronization wait with result `0xec01`, preserving X1 and dropping
+the old deadline/object references. When a thread is not in such a wait, a
+pending flag coalesces repeated requests. Valid immediate signaled results,
+zero-timeout polls and argument errors leave that flag pending; the next wait
+that would block consumes it once. SleepThread is not a synchronization wait:
+it retains pending cancellation without waking early. Later signals/timeouts
+cannot overwrite a completed cancellation. Other threads' flags are independent.
+Pseudo handles and ReplyAndReceive remain outside this implemented subset.
+
+ClearEvent accepts readable as well as writable event handles. SignalEvent
+continues to require a writable handle; cancellation does not signal an event.
+
 ExitThread (`0x0a`) marks its thread object permanently signaled for joins. A
 running thread survives closing its handle. Exiting the last active thread
 ends the process; ExitProcess (`0x07`) terminates all threads. Process exit
 releases handles. TLS/record reclamation before process teardown is future
-work. Cancellation, mutexes, condition variables and address arbitration remain
+work. Mutexes, condition variables and address arbitration remain
 explicitly unsupported; they do not fabricate successful synchronization.
 
 ## Evidence and next work
@@ -89,11 +102,21 @@ overflow, bounded deadlock reporting, and execution budgets of 1/7/63/64/65.
 The Android engine suite adds this as its fifth real guest program and reports
 per-case thread/switch/wait/timeout/virtual-time counters.
 
-Next kernel work includes cancellation and remaining synchronization/ISA
-requirements for guest GPU service submission. Guest GPU memory/submissions,
-commands, shader translation and presentation remain unimplemented. No
+The new original `cancellation.nro` checks a deferred coalesced request, an
+active blocked-wait interruption, preserved result indices, event state and
+readable ClearEvent. It exits after 106 instructions, four switches, two
+blocking waits and two delivered cancellations, at 1091 reference ns. The
+Android suite adds this as its sixth actual guest program.
+
+Next kernel work includes remaining synchronization/ISA requirements for GPU
+service submission. [GPU command framing](gpu-command-framing.md) is now
+implemented separately; GPU memory/submissions, method execution, shader
+translation and presentation remain open. No
 commercial game is supported by this checkpoint.
 
 Public interface references: [SVC](https://switchbrew.org/wiki/SVC),
 [libnx register wrappers](https://github.com/switchbrew/libnx/blob/master/nx/source/kernel/svc.s)
 and [thread-local region](https://switchbrew.org/wiki/Thread_Local_Region).
+Cancellation ordering was also checked against the public
+[Mesosphere OS wait interface](https://github.com/Atmosphere-NX/Atmosphere/blob/master/libraries/libmesosphere/source/kern_k_synchronization_object.cpp);
+its implementation is not a dependency and is not copied.

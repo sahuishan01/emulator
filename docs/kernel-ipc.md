@@ -22,10 +22,11 @@ for the host's diagnostic evidence.
 | `0x0a` ExitThread | Terminate the current thread and signal joins |
 | `0x0b` SleepThread | Zero yields; positive ns sleep using reference virtual time |
 | `0x11` SignalEvent | Set a writable event's shared signal |
-| `0x12` ClearEvent | Clear through a writable event handle |
+| `0x12` ClearEvent | Clear through a writable or readable event handle |
 | `0x16` CloseHandle | Release one handle; aliases retain their object |
 | `0x17` ResetSignal | Clear through a readable handle; unsignaled returns invalid state |
 | `0x18` WaitSynchronization | Validate up to 64 event/thread handles; immediate results, polling or blocking waits with virtual timeouts |
+| `0x19` CancelSynchronization | Interrupt a thread's active wait or retain a pending cancellation |
 | `0x1f` ConnectToNamedPort | Bounded NUL-terminated ASCII name from X1; return result/handle in W0/W1 |
 | `0x21` SendSyncRequest | Request/reply through guest TLS; W0 is the session handle on entry and result on return |
 | `0x27` OutputDebugString | Preserve bounded raw guest debug bytes |
@@ -41,7 +42,7 @@ virtual timeout. There are no host sleeps. See [scheduling.md](scheduling.md)
 for the supported single-core scheduler, clock model and bounded blocked state.
 
 Implemented guest results include invalid handle `0xe401`, invalid address
-`0xe601`, timeout `0xea01`, too many wait handles `0xee01`, and invalid event
+`0xe601`, timeout `0xea01`, interruption `0xec01`, too many wait handles `0xee01`, and invalid event
 state `0xfa01`. Handle-table exhaustion, unsupported services/commands and
 malformed IPC currently produce typed host faults. Complete Horizon error
 mapping and exception delivery are not implemented.
@@ -90,6 +91,7 @@ Run each with `cargo run --offline -p emulator-cli -- run-nro <file>`.
 | `ipc-clone.nro` | Shared counter reaches 43 after original handle closes | 529 | 7 |
 | `events.nro` | Signaling, repeated polls, reset/clear, capability/close errors; seven verified outcomes | 87 | 0 |
 | `threads.nro` | Separate contexts/TLS, sleeping child, blocking event wait, join and finite timeout | 97 | 0 |
+| `cancellation.nro` | Deferred and active cancellation, coalescing, preserved indices, event state and readable clear | 106 | 0 |
 
 Tests also cover truncated wire prefixes, PID replacement, malformed layouts,
 reply capacity, read-only output, rollback after oversized replies, atomic
