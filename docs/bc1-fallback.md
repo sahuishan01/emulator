@@ -31,9 +31,11 @@ This does not create or sample a native BC texture.
 The user's supplied 0.2.0-dev report records this GPU conversion passing on the
 physical Mali-G720 driver while native BC support is false. See the
 [physical checkpoint](validation/g720-bc1.md). Sampling the resulting RGBA8
-image in a draw remains the next test; this corpus checks conversion/readback.
+image in a draw is covered by the new [0.3.0-dev sampling workloads](bc1-sampling.md),
+which still require a physical phone run. The original corpus checks conversion/readback.
 
 BC1 RGB-only interpretation, sRGB, BC2-BC7, pitched/block-linear guest layouts,
-mips/arrays/3D, sampling and guest graphics integration are unsupported. The
+mips/arrays/3D and guest graphics integration are unsupported. Sampling is
+currently a bounded host diagnostic, not a guest texture implementation. The
 original encoded blocks must be retained when future aliases/readbacks need
 them. A passing conversion microtest is not a game-rendering result.

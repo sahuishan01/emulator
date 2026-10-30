@@ -20,8 +20,8 @@ All 40 Rust tests and 11 independent LLVM fixture comparisons pass. The texture
 crate adds original BC1 RGBA UNORM reference decoding and a reproducible fixture.
 
 The separate Android GPU Lab APK builds and passes lint, signature and native
-packaging checks. Four host workloads pass on llvmpipe with zero Vulkan
-validation errors and on an Android 15 SwiftShader AVD. All four, including
+packaging checks. Six host workloads pass on llvmpipe with zero Vulkan
+validation errors and on an Android 15 SwiftShader AVD. The original four, including
 BC1 conversion, passed in the user's supplied physical G720 0.2.0-dev report.
 This closes the conversion corpus checkpoint, not texture sampling or guest
 graphics. APK export/state retention are exercised
@@ -52,6 +52,9 @@ texture, shader-stage and presentation experiments below remain open. BC1
 reference/GPU conversion is implemented and its initial physical corpus passed.
 The next checkpoint is sampling the converted image in a draw, with reference
 readback, synchronization, update/lifetime and resource-peak evidence.
+The 0.3.0-dev native suite now implements sampled draws and changed-content
+reuse in one submission, with a CPU reference and Vulkan allocation counters.
+Its two new physical results remain pending. These are host workloads, not M4.
 M3 onward is
 unimplemented.
 

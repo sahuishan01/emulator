@@ -16,6 +16,9 @@
 namespace {
 constexpr uint32_t SIDE = 64;
 constexpr size_t PIXEL_BYTES = SIDE * SIDE * 4;
+static_assert(bc1_fixture::rgba8.size() == SIDE * SIDE);
+static_assert(bc1_fixture::updated_rgba8.size() == SIDE * SIDE);
+static_assert(bc1_fixture::input.size() * sizeof(uint32_t) == (SIDE / 4) * (SIDE / 4) * 8);
 constexpr std::array<float, 36> VERTICES = {
     -0.8f,-0.8f,0.2f, 0,1,0, 0.8f,-0.8f,0.2f, 0,1,0, 0,0.8f,0.2f, 0,1,0,
     -0.8f,-0.8f,0.7f, 1,0,0, 0.8f,-0.8f,0.7f, 1,0,0, 0,0.8f,0.7f, 1,0,0
@@ -57,6 +60,8 @@ public:
     std::vector<VkBuffer> buffers;
     std::vector<VkImage> images;
     std::vector<VkImageView> views;
+    std::vector<VkSampler> samplers;
+    uint64_t allocation_bytes = 0;
     std::vector<VkDeviceMemory> allocations;
     std::vector<VkShaderModule> shaders;
     std::vector<VkPipeline> pipelines;
@@ -80,6 +85,7 @@ public:
             for (auto handle : descriptor_pools) vkDestroyDescriptorPool(device, handle, nullptr);
             for (auto handle : descriptor_layouts) vkDestroyDescriptorSetLayout(device, handle, nullptr);
             for (auto handle : shaders) vkDestroyShaderModule(device, handle, nullptr);
+            for (auto handle : samplers) vkDestroySampler(device, handle, nullptr);
             for (auto handle : views) vkDestroyImageView(device, handle, nullptr);
             for (auto handle : images) vkDestroyImage(device, handle, nullptr);
             for (auto handle : buffers) vkDestroyBuffer(device, handle, nullptr);
@@ -199,6 +205,7 @@ public:
         allocation.allocationSize = requirements.size; allocation.memoryTypeIndex = type;
         check(vkAllocateMemory(device, &allocation, nullptr, &output.memory), "allocate buffer memory");
         allocations.push_back(output.memory);
+        allocation_bytes += requirements.size;
         check(vkBindBufferMemory(device, output.handle, output.memory, 0), "bind buffer memory");
         return output;
     }
@@ -248,8 +255,9 @@ public:
         VkDeviceMemory memory{};
         check(vkAllocateMemory(device, &allocation, nullptr, &memory), "allocate image memory");
         allocations.push_back(memory);
+        allocation_bytes += requirements.size;
         check(vkBindImageMemory(device, output.handle, memory, 0), "bind image memory");
-        if (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT)) {
+        if (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) {
             auto view = structure<VkImageViewCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
             view.image = output.handle; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = format;
             view.subresourceRange = {aspect, 0, 1, 0, 1};
@@ -385,16 +393,12 @@ void generate_vertices(Context& context, VkCommandBuffer command, const Buffer& 
                    VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
 }
 
-bool bc1_conversion(Context& context) {
+struct Bc1Decoder { Buffer blocks; Image output; ComputePipeline compute; };
+
+Bc1Decoder bc1_decoder(Context& context, const Image* shared_image = nullptr, bool sampled = false) {
     const auto blocks = context.buffer(sizeof(bc1_fixture::input), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    // Serialize fixture words explicitly; GPU blocks are little-endian byte data.
-    std::vector<uint8_t> input(sizeof(bc1_fixture::input));
-    for (size_t index = 0; index < input.size(); ++index)
-        input[index] = static_cast<uint8_t>(bc1_fixture::input[index / 4] >> (8 * (index % 4)));
-    context.write(blocks, input.data(), input.size());
-    const auto output = context.image(VK_FORMAT_R8G8B8A8_UNORM,
-        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-    const auto readback = context.buffer(PIXEL_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto output = shared_image ? *shared_image : context.image(VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | (sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : 0), VK_IMAGE_ASPECT_COLOR_BIT);
     std::vector<VkDescriptorSetLayoutBinding> bindings(2);
     bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[1].binding = 1; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -410,26 +414,45 @@ bool bc1_conversion(Context& context) {
     }
     writes[0].pBufferInfo = &buffer_info; writes[1].pImageInfo = &image_info;
     vkUpdateDescriptorSets(context.device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    const auto command = context.begin();
-    buffer_barrier(command, blocks, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_WRITE_BIT,
+    return {blocks, output, compute};
+}
+
+template<size_t Size> std::vector<uint8_t> word_bytes(const std::array<uint32_t, Size>& words) {
+    std::vector<uint8_t> bytes(Size * 4);
+    for (size_t index = 0; index < bytes.size(); ++index)
+        bytes[index] = static_cast<uint8_t>(words[index / 4] >> (8 * (index % 4)));
+    return bytes;
+}
+
+void decode_bc1(VkCommandBuffer command, const Bc1Decoder& decoder, bool sampled_before) {
+    buffer_barrier(command, decoder.blocks, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_WRITE_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-    image_barrier(command, output.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipeline);
-    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, compute.layout, 0, 1, &compute.set, 0, nullptr);
+    image_barrier(command, decoder.output.handle,
+        sampled_before ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_GENERAL,
+        sampled_before ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        sampled_before ? VK_ACCESS_SHADER_READ_BIT : 0,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, decoder.compute.pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, decoder.compute.layout, 0, 1, &decoder.compute.set, 0, nullptr);
     vkCmdDispatch(command, (SIDE + 7) / 8, (SIDE + 7) / 8, 1);
-    image_barrier(command, output.handle, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+}
+
+bool bc1_conversion(Context& context) {
+    const auto decoder = bc1_decoder(context);
+    const auto input = word_bytes(bc1_fixture::input);
+    context.write(decoder.blocks, input.data(), input.size());
+    const auto readback = context.buffer(PIXEL_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto command = context.begin();
+    decode_bc1(command, decoder, false);
+    image_barrier(command, decoder.output.handle, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     const auto copy = image_copy();
-    vkCmdCopyImageToBuffer(command, output.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.handle, 1, &copy);
+    vkCmdCopyImageToBuffer(command, decoder.output.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.handle, 1, &copy);
     buffer_barrier(command, readback, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
         VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
     context.submit(command);
-    const auto actual = context.read(readback);
-    static_assert(sizeof(bc1_fixture::rgba8) == PIXEL_BYTES);
-    for (size_t index = 0; index < actual.size(); ++index)
-        if (actual[index] != static_cast<uint8_t>(bc1_fixture::rgba8[index / 4] >> (8 * (index % 4)))) return false;
-    return true;
+    return context.read(readback) == word_bytes(bc1_fixture::rgba8) && context.read(decoder.blocks) == input;
 }
 
 std::vector<uint8_t> draw_triangles(Context& context, bool compute) {
@@ -543,6 +566,158 @@ bool expected_triangle(const std::vector<uint8_t>& bytes) {
            bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 255;
 }
 
+std::array<bool, 2> sampled_bc1_updates(Context& context) {
+    // Two descriptor sets keep the original and updated encoded data immutable
+    // while both dispatch/draw pairs reuse one decoded image in one submission.
+    const auto original = bc1_decoder(context, nullptr, true);
+    const auto updated = bc1_decoder(context, &original.output, true);
+    const auto first_input = word_bytes(bc1_fixture::input);
+    const auto second_input = word_bytes(bc1_fixture::updated_input);
+    context.write(original.blocks, first_input.data(), first_input.size());
+    context.write(updated.blocks, second_input.data(), second_input.size());
+    const auto color = context.image(VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    const auto readback = context.buffer(2 * PIXEL_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+    auto sampler_info = structure<VkSamplerCreateInfo>(VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO);
+    sampler_info.magFilter = VK_FILTER_NEAREST; sampler_info.minFilter = VK_FILTER_NEAREST;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler_info.addressModeU = sampler_info.addressModeV = sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VkSampler sampler{};
+    check(vkCreateSampler(context.device, &sampler_info, nullptr, &sampler), "create nearest texture sampler");
+    context.samplers.push_back(sampler);
+    VkDescriptorSetLayoutBinding binding{}; binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1; binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    auto descriptor_info = structure<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
+    descriptor_info.bindingCount = 1; descriptor_info.pBindings = &binding;
+    VkDescriptorSetLayout descriptor_layout{};
+    check(vkCreateDescriptorSetLayout(context.device, &descriptor_info, nullptr, &descriptor_layout), "create texture descriptor layout");
+    context.descriptor_layouts.push_back(descriptor_layout);
+    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    auto pool_info = structure<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
+    pool_info.maxSets = 1; pool_info.poolSizeCount = 1; pool_info.pPoolSizes = &pool_size;
+    VkDescriptorPool pool{};
+    check(vkCreateDescriptorPool(context.device, &pool_info, nullptr, &pool), "create texture descriptor pool");
+    context.descriptor_pools.push_back(pool);
+    auto set_info = structure<VkDescriptorSetAllocateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
+    set_info.descriptorPool = pool; set_info.descriptorSetCount = 1; set_info.pSetLayouts = &descriptor_layout;
+    VkDescriptorSet descriptor{};
+    check(vkAllocateDescriptorSets(context.device, &set_info, &descriptor), "allocate texture descriptor");
+    VkDescriptorImageInfo sampled_image{sampler, original.output.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    auto write = structure<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+    write.dstSet = descriptor; write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; write.pImageInfo = &sampled_image;
+    vkUpdateDescriptorSets(context.device, 1, &write, 0, nullptr);
+    auto layout_info = structure<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
+    layout_info.setLayoutCount = 1; layout_info.pSetLayouts = &descriptor_layout;
+    VkPipelineLayout layout{};
+    check(vkCreatePipelineLayout(context.device, &layout_info, nullptr, &layout), "create texture pipeline layout");
+    context.pipeline_layouts.push_back(layout);
+
+    VkAttachmentDescription attachment{}; attachment.format = VK_FORMAT_R8G8B8A8_UNORM;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT; attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    const VkAttachmentReference reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{}; subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1; subpass.pColorAttachments = &reference;
+    std::array<VkSubpassDependency, 2> dependencies{};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL; dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[1].srcSubpass = 0; dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT; dependencies[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    auto pass_info = structure<VkRenderPassCreateInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
+    pass_info.attachmentCount = 1; pass_info.pAttachments = &attachment;
+    pass_info.subpassCount = 1; pass_info.pSubpasses = &subpass;
+    pass_info.dependencyCount = static_cast<uint32_t>(dependencies.size()); pass_info.pDependencies = dependencies.data();
+    VkRenderPass pass{};
+    check(vkCreateRenderPass(context.device, &pass_info, nullptr, &pass), "create texture render pass");
+    context.render_passes.push_back(pass);
+    auto framebuffer_info = structure<VkFramebufferCreateInfo>(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
+    framebuffer_info.renderPass = pass; framebuffer_info.attachmentCount = 1; framebuffer_info.pAttachments = &color.view;
+    framebuffer_info.width = SIDE; framebuffer_info.height = SIDE; framebuffer_info.layers = 1;
+    VkFramebuffer framebuffer{};
+    check(vkCreateFramebuffer(context.device, &framebuffer_info, nullptr, &framebuffer), "create texture framebuffer");
+    context.framebuffers.push_back(framebuffer);
+    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+    for (auto& stage : stages) { stage = structure<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO); stage.pName = "main"; }
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = context.shader(shaders::texture_vert);
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = context.shader(shaders::texture_frag);
+    auto vertex_input = structure<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
+    auto assembly = structure<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    const VkViewport viewport{0, 0, SIDE, SIDE, 0, 1}; const VkRect2D scissor{{0, 0}, {SIDE, SIDE}};
+    auto viewport_info = structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
+    viewport_info.viewportCount = 1; viewport_info.pViewports = &viewport; viewport_info.scissorCount = 1; viewport_info.pScissors = &scissor;
+    auto raster = structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
+    raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
+    auto multisample = structure<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState blend_attachment{}; blend_attachment.colorWriteMask = 15;
+    auto blend = structure<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
+    blend.attachmentCount = 1; blend.pAttachments = &blend_attachment;
+    auto pipeline_info = structure<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
+    pipeline_info.stageCount = static_cast<uint32_t>(stages.size()); pipeline_info.pStages = stages.data();
+    pipeline_info.pVertexInputState = &vertex_input; pipeline_info.pInputAssemblyState = &assembly;
+    pipeline_info.pViewportState = &viewport_info; pipeline_info.pRasterizationState = &raster;
+    pipeline_info.pMultisampleState = &multisample; pipeline_info.pColorBlendState = &blend;
+    pipeline_info.layout = layout; pipeline_info.renderPass = pass;
+    VkPipeline pipeline{};
+    const auto created = vkCreateGraphicsPipelines(context.device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline);
+    if (pipeline) context.pipelines.push_back(pipeline);
+    check(created, "create texture sampling pipeline");
+
+    const auto command = context.begin();
+    for (int iteration = 0; iteration < 2; ++iteration) {
+        decode_bc1(command, iteration == 0 ? original : updated, iteration != 0);
+        image_barrier(command, original.output.handle, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        image_barrier(command, color.handle, iteration == 0 ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            iteration == 0 ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT,
+            iteration == 0 ? 0 : VK_ACCESS_TRANSFER_READ_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        VkClearValue clear{}; clear.color.float32[0] = clear.color.float32[2] = clear.color.float32[3] = 1;
+        auto begin = structure<VkRenderPassBeginInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
+        begin.renderPass = pass; begin.framebuffer = framebuffer; begin.renderArea = scissor;
+        begin.clearValueCount = 1; begin.pClearValues = &clear;
+        vkCmdBeginRenderPass(command, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor, 0, nullptr);
+        vkCmdDraw(command, 3, 1, 0, 0);
+        vkCmdEndRenderPass(command);
+        auto copy = image_copy(); copy.bufferOffset = static_cast<VkDeviceSize>(iteration) * PIXEL_BYTES;
+        vkCmdCopyImageToBuffer(command, color.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.handle, 1, &copy);
+    }
+    buffer_barrier(command, readback, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
+    context.submit(command);
+    const auto actual = context.read(readback);
+    std::array<bool, 2> results{true, true};
+    for (size_t iteration = 0; iteration < 2; ++iteration) {
+        const auto& expected = iteration == 0 ? bc1_fixture::rgba8 : bc1_fixture::updated_rgba8;
+        for (int y = 0; y < static_cast<int>(SIDE); ++y) for (int x = 0; x < static_cast<int>(SIDE); ++x) {
+            // Integer oracle for nearest sampling at pixel centers; positions
+            // are a quarter texel away from boundaries, including both clamps.
+            const int sx = std::clamp((5 * static_cast<int>(SIDE) - 6 * x - 3) / 4, 0, static_cast<int>(SIDE) - 1);
+            const int sy = std::clamp((6 * y + 3 - static_cast<int>(SIDE)) / 4, 0, static_cast<int>(SIDE) - 1);
+            const auto rgba = expected[sy * SIDE + sx];
+            const size_t offset = iteration * PIXEL_BYTES + (y * SIDE + x) * 4;
+            for (size_t channel = 0; channel < 4; ++channel)
+                if (actual[offset + channel] != static_cast<uint8_t>(rgba >> (8 * channel))) results[iteration] = false;
+        }
+    }
+    results[0] = results[0] && context.read(original.blocks) == first_input;
+    results[1] = results[1] && context.read(updated.blocks) == second_input;
+    return results;
+}
+
 void append_capabilities(std::ostream& json, const Context& context) {
     json << ",\"deviceAvailable\":" << (context.physical ? "true" : "false");
     const auto& limits = context.properties.limits;
@@ -609,14 +784,17 @@ GpuReport run_gpu_checks() {
         const auto computed = draw_triangles(context, true);
         tests.push_back({"compute-to-vertex-visibility", expected_triangle(computed) && computed == direct, "GPU-generated vertices must match every byte of the CPU-uploaded reference draw"});
         tests.push_back({"bc1-to-rgba8-fallback", bc1_conversion(context), "GPU BC1 RGBA decode must match every byte of the Rust reference; no native BC feature required"});
+        const auto sampled = sampled_bc1_updates(context);
+        tests.push_back({"bc1-converted-texture-sampling", sampled[0], "Nearest sampled draw must match the CPU texel-coordinate oracle, including edges and transparent pixels"});
+        tests.push_back({"bc1-texture-update-resample", sampled[1], "The same image is redecoded and resampled in one submission; updated pixels and encoded source bytes must match"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 4 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 6 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":2,\"scope\":\"host-vulkan-only\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":3,\"scope\":\"host-vulkan-only\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -631,6 +809,7 @@ GpuReport run_gpu_checks() {
         if (index) json << ',';
         json << "{\"name\":" << quoted(tests[index].name) << ",\"passed\":" << (tests[index].passed ? "true" : "false") << ",\"detail\":" << quoted(tests[index].detail) << '}';
     }
-    json << "],\"allPassed\":" << (passed ? "true" : "false") << ",\"error\":" << quoted(error) << '}';
+    json << "],\"diagnosticAllocations\":{\"scope\":\"all-lab-workloads\",\"bytesRequested\":" << context.allocation_bytes
+         << ",\"count\":" << context.allocations.size() << ",\"includesDriverOverhead\":false},\"allPassed\":" << (passed ? "true" : "false") << ",\"error\":" << quoted(error) << '}';
     return {passed, json.str()};
 }

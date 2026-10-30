@@ -12,10 +12,12 @@ the implemented components from the remaining Switch/Android work.
 The original Rust engine now loads our own static NRO homebrew, executes it
 through an A64 interpreter subset, emits debug output through an implemented
 kernel call, and exits. A separate Android Vulkan GPU Lab APK exercises image
-transfers, depth testing, compute-to-draw visibility and BC1 conversion. All
-four checks passed in the user's supplied physical G720 0.2.0-dev report,
+transfers, depth testing, compute-to-draw visibility, BC1 conversion, sampled
+draws and converted-image updates. The initial four checks passed in the
+user's supplied physical G720 0.2.0-dev report,
 including BC1 conversion without native BC support. See the
 [device evidence and its limits](docs/validation/g720-bc1.md).
+The new 0.3.0-dev sampled-draw/update checks need their own phone run.
 
 The engine does not run commercial Switch games. Guest GPU commands, shader
 translation, threads/IPC, most CPU instructions and the gameplay application
@@ -97,12 +99,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android GPU Lab
 
 The verified development APK, checksum and packaging report are attached to
-the [GPU Lab development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.2.0-dev)
+the [GPU Lab development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.3.0-dev)
 in this private repository. The APK is a host Vulkan diagnostic; it does not
 run Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.2.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.2.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.3.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.3.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. GitHub redirects downloads to temporary signed asset
@@ -148,10 +150,11 @@ python3 tools/assemble_a64_fixtures.py --check
 
 The current suite has 40 Rust tests and 11 independently assembled A64 fixtures.
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
-All four Vulkan workloads passed on desktop llvmpipe with zero validation
-errors and on an Android 15 SwiftShader AVD. All four passed in the user's
-supplied physical G720 report, with validation disabled on the phone. APK
+All six Vulkan workloads passed on desktop llvmpipe with zero validation
+errors and on an Android 15 SwiftShader AVD. A deliberately stale update in a temporary control build fails the
+update test while the preceding five pass. The initial four workloads passed
+in the user's supplied physical G720 report, with validation disabled. APK
 build, lint, signature, native architectures and 16 KiB ELF/ZIP alignment were
-verified. Converted-texture sampling and 16 KiB Android runtime behavior
-remain untested.
+verified. The new sampled-draw/update checks require physical testing;
+16 KiB Android runtime behavior remains untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).

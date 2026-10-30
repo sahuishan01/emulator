@@ -7,8 +7,9 @@ acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, a debug-output/exit kernel slice and a CLI session. The separate
 Android Vulkan laboratory builds and passes software-driver checks. The user
-supplied a physical G720 0.2.0-dev report passing all four current workloads,
-including BC1 conversion. Texture sampling and presentation remain untested.
+supplied a physical G720 0.2.0-dev report passing the initial four workloads,
+including BC1 conversion. New sampled-draw/update workloads pass desktop checks
+and require physical testing. Android presentation remains unimplemented.
 An original Rust BC1
 reference decoder is implemented separately from guest GPU emulation.
 
@@ -113,7 +114,7 @@ crates/
   android-ffi/        planned audited Android interface
 android/
   app/                planned user application
-  gpu-lab/            four-test physical report supplied; sampling/presentation planned
+  gpu-lab/            four-test physical report; new sampling/update tests implemented
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/
@@ -132,7 +133,7 @@ tests/
 | Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Debug-output/exit only; other operations fail explicitly |
 | Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | Planned |
 | Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shader translation | Planned |
-| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Four offscreen native workloads implemented, including BC1 conversion; guest backend/presentation planned |
+| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Six offscreen native workloads, including BC1 conversion, sampling and updates; guest backend/presentation planned |
 | Android host | Lifecycle, surface, input, audio and diagnostics | GPU Lab and JSON export implemented; engine integration planned |
 | CLI | Bounded interpreter execution with explicit unsupported-operation errors | Implemented |
 

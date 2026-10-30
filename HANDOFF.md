@@ -31,15 +31,19 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 - Session execution budgets pause and resume without repeating debug output.
   Our own hello.nro prints its known message and exits after five instructions.
   The raw CPU demo still produces 42 after 24 instructions.
-- Original C++ Vulkan GPU Lab shared by desktop CLI and Android JNI. Four
+- Original C++ Vulkan GPU Lab shared by desktop CLI and Android JNI. Six
   offscreen workloads: exact image-transfer roundtrip, overlapping depth-tested
   triangles, compute-generated vertices compared to the CPU-uploaded draw,
-  and BC1-to-RGBA8 compute conversion compared to our Rust reference decoder.
+  BC1-to-RGBA8 compute conversion, converted texture sampling and image updates
+  compared to our Rust reference and CPU texel-coordinate oracle. Both new
+  dispatch/draw pairs run in one submission and retain both encoded inputs.
 - Original bounded BC1 RGBA UNORM reference decoder, six tests and generated
   GPU corpus. Does not implement other BC formats, sRGB, guest tiling or sampling.
 - GPU reports contain device/driver identity, physical feature advertisements,
   limits, heaps, queues, 11 format queries and per-workload results. A format
   query is not proof of texture sampling/decoding correctness.
+- Allocation reports sum requested Vulkan memory across all workloads held
+  until teardown, excluding driver/pipeline and host heap overhead.
 - Kotlin Android GPU Lab with background native checks, retained report and
   user-selected JSON export. ARM64 and x86_64 debug APK. This is a separate
   diagnostic app; it does not embed or execute the Rust engine.
@@ -51,17 +55,20 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   our decoder. Sources include the original homebrew NRO.
 - Rust formatting and Clippy with `-D warnings`: passed.
 - GLSL generation and spirv-val checks: passed.
-- Desktop Vulkan workloads: all four passed on llvmpipe, with the Khronos
+- Desktop Vulkan workloads: all six passed on llvmpipe, with the Khronos
   layer enabled and zero validation errors. Synchronization validation was
   requested through VK_LAYER_ENABLES. Missing-driver execution returns a
   bounded failed JSON report and a nonzero exit status.
+- A temporary negative-control build reuses old source blocks for the second
+  draw; only the update/resample test fails, with zero validation errors. The
+  mutated source/build stays under ignored reports/ and is not shipped.
 - Android Gradle debug build and lint passed with pinned toolchains.
 - APK signature, native ELF architecture and 16 KiB ELF/ZIP load alignment
   verified by tools/verify_gpu_apk.py. This is packaging evidence, not a test
   on a 16 KiB Android system.
 - Installed and launched in an isolated Android 15/API 35 x86_64 AVD with
-  SwiftShader. All four native workloads passed in 0.2.0-dev. Upgrade from the
-  three-test 0.1.0-dev build rejects its old cached report. JSON export matches the
+  SwiftShader. All six native workloads passed in 0.3.0-dev. Upgrade from the
+  four-test 0.2.0-dev build rejects its old cached report. JSON export matches the
   private saved report byte for byte. A cold restart restores it and enables
   export without rerunning tests. Android validation layers are not bundled.
 - Documentation links resolve. Tests and reports are under ignored reports/;
@@ -76,6 +83,8 @@ ASTC LDR and geometry/tessellation remain advertised. Validation was disabled.
 See docs/validation/g720-initial.md and docs/validation/g720-bc1.md. This closes
 the physical conversion-corpus checkpoint; sampling and commercial gameplay
 are not established by the report.
+New 0.3.0-dev checks add sampled draws and in-place decoded-image reuse. Their
+physical results are pending, with workload version 3 preventing stale reports.
 
 ## Next implementation work
 
@@ -85,11 +94,9 @@ static NRO fixture gate; general homebrew compatibility remains open. M1B has
 an initial lab, with its physical-device gate and additional experiments open.
 M3 onward is unimplemented.
 
-1. Extend the BC1 prototype to sample its converted RGBA8 image in a draw and
-   compare rendered readback, including transparency/edges, compute-to-fragment
-   ordering and lifetime. The existing four-test physical checkpoint passed;
-   do not ask the user to repeat it without a changed workload.
-2. Add conversion-update/cache and memory-peak evidence, then other required
+1. Inspect a 0.3.0-dev phone report for the two new sampled-draw/update tests.
+   The four original checks passed physically; the expanded suite has six.
+2. Extend conversion/cache and memory-peak evidence, then other required
    BC formats, guest tiling, shader-stage experiments and Android presentation.
 3. Add original threads, handles, events, waits, timers and bounded IPC with
    owned guest workloads. Expand ISA and loaders only as required by them.
@@ -104,8 +111,8 @@ M3 onward is unimplemented.
 
 Private repository: https://github.com/sahuishan01/emulator, with source on
 `main`. The verified development GPU Lab APK, checksum, packaging report and
-artifact README are attached to the `v0.2.0-dev` prerelease. The original
-`v0.1.0-dev` snapshot is retained. APK binaries and
+artifact README are attached to the `v0.3.0-dev` prerelease. Earlier
+`v0.1.0-dev` and `v0.2.0-dev` snapshots are retained. APK binaries and
 private reports remain outside source control. This is a prototype snapshot,
 not a production release or a Switch compatibility claim.
 

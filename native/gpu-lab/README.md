@@ -6,7 +6,7 @@ guest shaders or run Switch games. The C++ implementation uses the NDK/system
 Vulkan interfaces; the emulation engine remains the separate original Rust
 workspace.
 
-Four bounded offscreen workloads (workload version 2):
+Six bounded offscreen workloads (workload version 3):
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -18,6 +18,12 @@ Four bounded offscreen workloads (workload version 2):
    image without native BC support. Every readback byte must match a fixture
    produced by our tested Rust reference decoder. Both opaque and transparent
    block modes are exercised. See [the decoding contract](../../docs/bc1-fallback.md).
+5. Sample the converted RGBA8 image in a fullscreen draw, checking nearest
+   coordinates, mirrored orientation, clamped edges and transparent pixels
+   against a CPU reference for every output byte.
+6. Reconvert the same image from changed BC1 input and sample again. Both
+   dispatch/draw pairs run in one submission, with both encoded inputs retained
+   unchanged. See [the sampling and reuse contract](../../docs/bc1-sampling.md).
 
 The report includes device/driver/API identity, software-renderer status,
 physical feature advertisements, limits, memory heaps, queue families and
@@ -29,6 +35,10 @@ establishes these workloads only. Compressed texture sampling, formats beyond
 linear BC1 RGBA UNORM, stencil,
 additional shader stages, Android swapchain presentation and guest GPU command
 handling are not established by these tests.
+
+The allocation section records device-memory requests across all workloads,
+which remain allocated through teardown. It excludes driver/pipeline and
+process/Java/native heap overhead; it is not an application memory budget.
 
 Our GLSL sources are compiled and validated into the committed aligned SPIR-V
 word arrays in `generated/shaders.h`. Regenerate/verify with:
@@ -76,7 +86,7 @@ storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
 The last completed report is retained across activity recreation.
 Reports from an older workload version are not displayed as current results;
-after upgrading from 0.1.0-dev, run the updated checks again.
+after upgrading from an earlier workload version, run the updated checks again.
 
 Verify signatures, native architectures, ELF load alignment and native ZIP
 payload alignment with:
