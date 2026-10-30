@@ -43,6 +43,10 @@ an original compute shader converts owned BC1 blocks into an RGBA8 image and
 checks every readback byte against the Rust reference fixture. Native BC
 support is not required or enabled by that workload.
 
+The user subsequently supplied a 0.2.0-dev report passing all four workloads,
+including that conversion test. See the [follow-up result](g720-bc1.md) for
+the completed checkpoint and remaining scope.
+
 This is a linear BC1 conversion experiment. BC3/BC7, sRGB transfer behavior,
 Tegra block-linear addressing, alias/readback coherence, sampling/presentation
 and full guest integration remain separate work. BC1-to-RGBA8 expands texel

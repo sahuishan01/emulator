@@ -21,9 +21,10 @@ crate adds original BC1 RGBA UNORM reference decoding and a reproducible fixture
 
 The separate Android GPU Lab APK builds and passes lint, signature and native
 packaging checks. Four host workloads pass on llvmpipe with zero Vulkan
-validation errors and on an Android 15 SwiftShader AVD. The original three
-passed in the user's supplied physical G720 report. The new BC1 compute conversion
-test requires its own phone run. APK export/state retention are exercised
+validation errors and on an Android 15 SwiftShader AVD. All four, including
+BC1 conversion, passed in the user's supplied physical G720 0.2.0-dev report.
+This closes the conversion corpus checkpoint, not texture sampling or guest
+graphics. APK export/state retention are exercised
 separately from graphics;
 there is no guest GPU, shader translator, scheduler/IPC or commercial game
 support yet.
@@ -48,7 +49,9 @@ M1A and the M2 fixture gate are implemented for the explicitly restricted
 commercial startup compatibility. M1B has a buildable laboratory and initial
 offscreen workloads and an initial physical-device report. Its expanded
 texture, shader-stage and presentation experiments below remain open. BC1
-reference/GPU conversion is implemented, with its new physical gate pending.
+reference/GPU conversion is implemented and its initial physical corpus passed.
+The next checkpoint is sampling the converted image in a draw, with reference
+readback, synchronization, update/lifetime and resource-peak evidence.
 M3 onward is
 unimplemented.
 

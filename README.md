@@ -12,10 +12,10 @@ the implemented components from the remaining Switch/Android work.
 The original Rust engine now loads our own static NRO homebrew, executes it
 through an A64 interpreter subset, emits debug output through an implemented
 kernel call, and exits. A separate Android Vulkan GPU Lab APK exercises image
-transfers, depth testing, compute-to-draw visibility and BC1 conversion. The
-first three checks passed in the user's supplied physical G720 report. The
-new BC1-to-RGBA8 check still requires a run on that phone. See the
-[device evidence and its limits](docs/validation/g720-initial.md).
+transfers, depth testing, compute-to-draw visibility and BC1 conversion. All
+four checks passed in the user's supplied physical G720 0.2.0-dev report,
+including BC1 conversion without native BC support. See the
+[device evidence and its limits](docs/validation/g720-bc1.md).
 
 The engine does not run commercial Switch games. Guest GPU commands, shader
 translation, threads/IPC, most CPU instructions and the gameplay application
@@ -149,8 +149,9 @@ python3 tools/assemble_a64_fixtures.py --check
 The current suite has 40 Rust tests and 11 independently assembled A64 fixtures.
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
 All four Vulkan workloads passed on desktop llvmpipe with zero validation
-errors and on an Android 15 SwiftShader AVD. The original three passed in the
-user's supplied physical G720 report. APK build, lint, signature, native
-architectures and 16 KiB ELF/ZIP alignment were verified. The new BC1 workload
-needs separate physical testing; 16 KiB Android runtime behavior is untested.
+errors and on an Android 15 SwiftShader AVD. All four passed in the user's
+supplied physical G720 report, with validation disabled on the phone. APK
+build, lint, signature, native architectures and 16 KiB ELF/ZIP alignment were
+verified. Converted-texture sampling and 16 KiB Android runtime behavior
+remain untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).

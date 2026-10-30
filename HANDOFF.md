@@ -67,13 +67,15 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
 - Documentation links resolve. Tests and reports are under ignored reports/;
   the copied development APK and hash are under ignored artifacts/.
 
-No physical phone is connected through ADB. The user supplied a GPU Lab
-0.1.0-dev report recording all three initial checks passing on Mali-G720-
-Immortalis MC12 / realme RMX5061 / Android 16 / Vulkan 1.3.247. BC1/3/7 queries
-are unsupported, ASTC LDR is advertised, and geometry/tessellation are both
-advertised. Validation was disabled. See docs/validation/g720-initial.md.
-The new fourth BC1 conversion check requires a 0.2.0-dev phone report. Do not
-describe that new test, sampling or commercial gameplay as physically verified.
+No physical phone is connected through ADB. The user supplied GPU Lab
+0.1.0-dev and 0.2.0-dev reports from Mali-G720-Immortalis MC12 / realme RMX5061 /
+Android 16 / Vulkan 1.3.247, with matching device and driver identity. The new
+0.2.0-dev report records all four checks passing, including BC1-to-RGBA8
+conversion without native BC support. BC1/3/7 queries remain unsupported,
+ASTC LDR and geometry/tessellation remain advertised. Validation was disabled.
+See docs/validation/g720-initial.md and docs/validation/g720-bc1.md. This closes
+the physical conversion-corpus checkpoint; sampling and commercial gameplay
+are not established by the report.
 
 ## Next implementation work
 
@@ -83,11 +85,12 @@ static NRO fixture gate; general homebrew compatibility remains open. M1B has
 an initial lab, with its physical-device gate and additional experiments open.
 M3 onward is unimplemented.
 
-1. Run GPU Lab 0.2.0-dev on the user's phone and inspect the new fourth check.
-   Its workload-version field prevents an old cached three-test report from
-   being presented as results for the updated suite.
-2. Extend the BC1 prototype with sampled textures, other required BC formats,
-   guest tiling, shader-stage experiments and Android presentation.
+1. Extend the BC1 prototype to sample its converted RGBA8 image in a draw and
+   compare rendered readback, including transparency/edges, compute-to-fragment
+   ordering and lifetime. The existing four-test physical checkpoint passed;
+   do not ask the user to repeat it without a changed workload.
+2. Add conversion-update/cache and memory-peak evidence, then other required
+   BC formats, guest tiling, shader-stage experiments and Android presentation.
 3. Add original threads, handles, events, waits, timers and bounded IPC with
    owned guest workloads. Expand ISA and loaders only as required by them.
 4. Implement guest GPU memory/submission/services, bounded command decoding
