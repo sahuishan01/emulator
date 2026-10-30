@@ -3,9 +3,30 @@
 //! Wire fields follow NVIDIA's public MAXWELL_CHANNEL_GPFIFO_A interface.
 use std::fmt;
 
+mod address_space;
+mod submission;
+pub use address_space::{
+    AddressSpaceId, GpuAddressSpace, GpuMemoryError, GpuMemoryRange, MappingId,
+};
+pub use submission::{
+    QueueError, QueueLimits, QueueStats, Submission, SubmissionId, SubmissionQueue,
+};
+
 pub const MAX_PUSHBUFFER_WORDS: usize = 16 * 1024;
 pub const MAX_METHOD_WRITES: usize = MAX_PUSHBUFFER_WORDS;
 const GPU_ADDRESS_LIMIT: u64 = 1 << 40;
+
+fn allocate_identity(counter: &std::sync::atomic::AtomicU64) -> Option<u64> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut id = counter.load(Relaxed);
+    loop {
+        let next = id.checked_add(1)?;
+        match counter.compare_exchange_weak(id, next, Relaxed, Relaxed) {
+            Ok(_) => return Some(id),
+            Err(actual) => id = actual,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpuVa(pub u64);

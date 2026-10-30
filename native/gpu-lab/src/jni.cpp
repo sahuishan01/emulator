@@ -12,10 +12,9 @@ struct EngineReport {
 static_assert(sizeof(EngineReport) == 4104 && alignof(EngineReport) == 4);
 static_assert(offsetof(EngineReport, bytes) == 8);
 extern "C" EngineReport emulator_run_reference_guests();
+extern "C" EngineReport emulator_run_gpu_core_checks();
 
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_MainActivity_runEngineChecks(JNIEnv* env, jobject) {
-    const auto report = emulator_run_reference_guests();
+static jbyteArray copy_engine_report(JNIEnv* env, const EngineReport& report) {
     if (report.abi_version != 1 || report.length > sizeof(report.bytes)) {
         const auto type = env->FindClass("java/lang/RuntimeException");
         if (type) env->ThrowNew(type, "Invalid original engine report ABI");
@@ -24,6 +23,16 @@ Java_com_algosculptor_emulator_gpulab_MainActivity_runEngineChecks(JNIEnv* env, 
     const auto bytes = env->NewByteArray(static_cast<jsize>(report.length));
     if (bytes) env->SetByteArrayRegion(bytes, 0, static_cast<jsize>(report.length), reinterpret_cast<const jbyte*>(report.bytes));
     return bytes;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_MainActivity_runEngineChecks(JNIEnv* env, jobject) {
+    return copy_engine_report(env, emulator_run_reference_guests());
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_MainActivity_runGpuCoreChecks(JNIEnv* env, jobject) {
+    return copy_engine_report(env, emulator_run_gpu_core_checks());
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

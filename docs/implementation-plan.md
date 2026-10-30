@@ -17,11 +17,12 @@ Current foundation: eleven original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
 virtual timeouts/cancellation and CLI/Android execution. Six owned NROs exercise
-the implemented behavior. All 84 Rust tests and 17 independent
+the implemented behavior. All 94 Rust tests and 17 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
-The GPU crate adds bounded original GPFIFO/pushbuffer framing, independently of
-kernel/Vulkan. It has host tests and no guest submission or execution yet.
+The GPU crate adds bounded framing, shared backing, GPU mappings and owned
+decoded batches, tested independently of kernel/Vulkan on the host and Android.
+NV-service submission and method/shader execution remain unimplemented.
 
 The Android engine/GPU Lab APK builds and passes lint, signature and native
 packaging checks. Six host workloads pass on llvmpipe with zero Vulkan
@@ -63,10 +64,10 @@ cloned-session identity/lifetime, manual-reset events, thread creation/context
 switching, blocking waits/joins and virtual timeouts through owned NROs.
 The 0.5.0-dev physical report passes all five ARM64 engine cases, including
 the deterministic scheduling fixture. M3's first single-core fixture checkpoint
-is verified; 0.6.0-dev adds cancellation and readable-event clearing. Broader
+is verified; the supplied 0.6.0-dev report also passes cancellation. Broader
 synchronization remains open. Required
 guest GPU-facing services follow these foundations. Broader host format/tiling/
-presentation work remains open. M4 has initial command framing; its full guest
+presentation work remains open. M4 has framing, mappings and decoded batch ownership; its full guest
 submission/shader/image acceptance gate remains unimplemented.
 
 M1B is deliberately early. The project must learn what the real Mali driver can

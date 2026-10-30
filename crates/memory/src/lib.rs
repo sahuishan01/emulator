@@ -1,6 +1,9 @@
 //! Guest virtual memory for the initial single-threaded interpreter.
 
-use std::fmt;
+mod shared;
+use shared::{AllocationBudget, BackingSlice};
+pub use shared::{BackingId, BackingRange, MemoryView};
+use std::{cell::Cell, fmt, rc::Rc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
@@ -57,14 +60,31 @@ pub enum MemoryError {
     EmptyMapping,
     AddressOverflow,
     OverlappingMapping,
-    Unmapped { address: u64, size: usize },
-    PermissionDenied { address: u64, access: Access },
-    UnalignedInstruction { address: u64 },
-    NotReserved { address: u64 },
-    NotCommitted { address: u64 },
+    Unmapped {
+        address: u64,
+        size: usize,
+    },
+    PermissionDenied {
+        address: u64,
+        access: Access,
+    },
+    UnalignedInstruction {
+        address: u64,
+    },
+    NotReserved {
+        address: u64,
+    },
+    NotCommitted {
+        address: u64,
+    },
     AllocationLimit,
     AllocationFailed,
     TooManyMappings,
+    ViewBounds {
+        offset: usize,
+        size: usize,
+        length: usize,
+    },
 }
 
 impl fmt::Display for MemoryError {
@@ -91,6 +111,11 @@ impl fmt::Display for MemoryError {
             Self::AllocationLimit => write!(f, "guest memory allocation limit exceeded"),
             Self::AllocationFailed => write!(f, "guest memory backing allocation failed"),
             Self::TooManyMappings => write!(f, "guest mapping limit exceeded"),
+            Self::ViewBounds {
+                offset,
+                size,
+                length,
+            } => write!(f, "backing view range {offset}+{size} exceeds {length}"),
         }
     }
 }
@@ -101,14 +126,14 @@ impl std::error::Error for MemoryError {}
 struct Region {
     start: u64,
     end: u64,
-    bytes: Option<Vec<u8>>,
+    bytes: Option<BackingSlice>,
     permissions: Permissions,
 }
 
 #[derive(Debug)]
 pub struct AddressSpace {
     regions: Vec<Region>,
-    byte_limit: usize,
+    budget: Rc<AllocationBudget>,
 }
 
 const MAX_MAPPINGS: usize = 4096;
@@ -137,7 +162,10 @@ impl AddressSpace {
     pub fn with_limit(byte_limit: usize) -> Self {
         Self {
             regions: Vec::new(),
-            byte_limit,
+            budget: Rc::new(AllocationBudget {
+                limit: byte_limit,
+                used: Cell::new(0),
+            }),
         }
     }
 
@@ -145,7 +173,7 @@ impl AddressSpace {
         self.regions
             .iter()
             .filter_map(|region| region.bytes.as_ref())
-            .map(Vec::len)
+            .map(|slice| slice.len)
             .sum()
     }
 
@@ -159,6 +187,77 @@ impl AddressSpace {
                 permissions: region.permissions,
                 committed: region.bytes.is_some(),
             })
+    }
+    /// Originating allocations remain charged while any CPU/GPU view owns them.
+    pub fn resident_bytes(&self) -> usize {
+        self.budget.used.get()
+    }
+
+    pub fn pin(
+        &self,
+        address: u64,
+        size: usize,
+        permissions: Permissions,
+    ) -> Result<MemoryView, MemoryError> {
+        if size == 0 {
+            return Err(MemoryError::EmptyMapping);
+        }
+        let spans = self.covered(address, size, None)?;
+        for &(index, _, _) in &spans {
+            let region = &self.regions[index];
+            if region.bytes.is_none() {
+                return Err(MemoryError::NotCommitted { address });
+            }
+            for access in [Access::Read, Access::Write, Access::Execute] {
+                if permissions.allows(access) && !region.permissions.allows(access) {
+                    return Err(MemoryError::PermissionDenied {
+                        address: region.start.max(address),
+                        access,
+                    });
+                }
+            }
+        }
+        let parts = spans
+            .into_iter()
+            .map(|(index, offset, size)| {
+                self.regions[index]
+                    .bytes
+                    .as_ref()
+                    .expect("committed preflight")
+                    .slice(offset, size)
+            })
+            .collect();
+        Ok(MemoryView::new(parts, size, permissions))
+    }
+    pub fn map_alias(
+        &mut self,
+        address: u64,
+        view: &MemoryView,
+        permissions: Permissions,
+    ) -> Result<(), MemoryError> {
+        if !view.permits(permissions) {
+            return Err(MemoryError::PermissionDenied {
+                address,
+                access: [Access::Read, Access::Write, Access::Execute]
+                    .into_iter()
+                    .find(|a| permissions.allows(*a) && !view.permissions().allows(*a))
+                    .expect("missing permission"),
+            });
+        }
+        checked_end(address, view.len())?;
+        let mut next = address;
+        let mut pending = Vec::new();
+        for span in &view.spans {
+            let end = checked_end(next, span.len)?;
+            pending.push(Region {
+                start: next,
+                end,
+                bytes: Some(span.clone()),
+                permissions,
+            });
+            next = end;
+        }
+        self.append_regions(pending)
     }
 
     pub fn map(
@@ -175,6 +274,9 @@ impl AddressSpace {
     }
 
     pub fn map_batch(&mut self, mappings: Vec<Mapping>) -> Result<(), MemoryError> {
+        if mappings.len() > MAX_MAPPINGS.saturating_sub(self.regions.len()) {
+            return Err(MemoryError::TooManyMappings);
+        }
         let mut pending = Vec::new();
         for mapping in mappings {
             if mapping.bytes.is_empty() {
@@ -184,7 +286,7 @@ impl AddressSpace {
             pending.push(Region {
                 start: mapping.start,
                 end,
-                bytes: Some(mapping.bytes),
+                bytes: Some(BackingSlice::new(mapping.bytes, Rc::clone(&self.budget))?),
                 permissions: mapping.permissions,
             });
         }
@@ -208,12 +310,12 @@ impl AddressSpace {
         let additional = pending
             .iter()
             .filter_map(|r| r.bytes.as_ref())
-            .try_fold(0_usize, |sum, bytes| sum.checked_add(bytes.len()))
+            .try_fold(0_usize, |sum, bytes| sum.checked_add(bytes.len))
             .ok_or(MemoryError::AllocationLimit)?;
         if self
             .mapped_bytes()
             .checked_add(additional)
-            .is_none_or(|size| size > self.byte_limit)
+            .is_none_or(|size| size > self.budget.limit)
         {
             return Err(MemoryError::AllocationLimit);
         }
@@ -258,7 +360,7 @@ impl AddressSpace {
         if self
             .mapped_bytes()
             .checked_add(bytes.len())
-            .is_none_or(|size| size > self.byte_limit)
+            .is_none_or(|size| size > self.budget.limit)
         {
             return Err(MemoryError::AllocationLimit);
         }
@@ -268,7 +370,7 @@ impl AddressSpace {
             Some(Region {
                 start: address,
                 end,
-                bytes: Some(bytes),
+                bytes: Some(BackingSlice::new(bytes, Rc::clone(&self.budget))?),
                 permissions,
             }),
             None,
@@ -350,9 +452,9 @@ impl AddressSpace {
         let bytes = result
             .iter()
             .filter_map(|r| r.bytes.as_ref())
-            .try_fold(0_usize, |sum, bytes| sum.checked_add(bytes.len()))
+            .try_fold(0_usize, |sum, bytes| sum.checked_add(bytes.len))
             .ok_or(MemoryError::AllocationLimit)?;
-        if bytes > self.byte_limit {
+        if bytes > self.budget.limit {
             return Err(MemoryError::AllocationLimit);
         }
         result.sort_unstable_by_key(|r| r.start);
@@ -436,7 +538,7 @@ impl AddressSpace {
                 .bytes
                 .as_ref()
                 .expect("accessible region has backing");
-            output[written..written + size].copy_from_slice(&bytes[offset..offset + size]);
+            bytes.read(offset, &mut output[written..written + size]);
             written += size;
         }
         Ok(())
@@ -451,9 +553,9 @@ impl AddressSpace {
         for (index, offset, size) in spans {
             let bytes = self.regions[index]
                 .bytes
-                .as_mut()
+                .as_ref()
                 .expect("writable region has backing");
-            bytes[offset..offset + size].copy_from_slice(&input[consumed..consumed + size]);
+            bytes.write(offset, &input[consumed..consumed + size]);
             consumed += size;
         }
         Ok(())
@@ -498,11 +600,7 @@ fn fragment(
     let bytes = if let Some(bytes) = &region.bytes {
         let size = (end - start) as usize;
         let offset = (start - region.start) as usize;
-        let mut copy = Vec::new();
-        copy.try_reserve_exact(size)
-            .map_err(|_| MemoryError::AllocationFailed)?;
-        copy.extend_from_slice(&bytes[offset..offset + size]);
-        Some(copy)
+        Some(bytes.slice(offset, size))
     } else {
         None
     };

@@ -1,8 +1,8 @@
 # Original GPU command framing
 
 `crates/gpu` starts the guest GPU path with an original bounded parser for
-captured Maxwell channel packets. It has no kernel, Vulkan or external crate
-dependency. It decodes framing into method writes; it does not execute them,
+captured Maxwell channel packets. GPU mappings use our memory crate, with no
+kernel, Vulkan or external crate dependency. It decodes method writes without executing them,
 acknowledge completion, access a driver or render an image.
 
 Interface fields were checked against NVIDIA's public
@@ -22,7 +22,9 @@ These size limits are prototype policy, not hardware limits.
 GPU virtual addresses are distinct `GpuVa` values, not host pointers. Parsing
 does not resolve or map them. `GpFifoEntry::decode` requires exactly the declared
 capture length; future GPU address-space code must separately validate/read the
-backing memory and retain its identity.
+backing memory and retain its identity. The new
+[GPU memory/submission layer](gpu-memory-submission.md) provides owned mappings
+and immutable command capture through separate internal APIs.
 
 The pushbuffer parser supports eight subchannels and four modern packet forms:
 
@@ -40,8 +42,9 @@ rejected rather than wrapped. Partial words, truncated payloads and reserved
 packet bits are rejected. A write budget caps output at at most 16384 writes.
 All work is bounded by input/output limits, and errors expose no partial output.
 
-The parser currently requires complete packets in a captured entry. Packet
-continuation across entries, ring control, conditional fetching, class binding,
+The standalone parser requires complete captured packets. The decode queue
+joins entries within a batch. Continuation across batches, ring control,
+conditional fetching, class binding,
 method execution and synchronization remain unimplemented. An accepted packet
 does not imply its method has supported GPU semantics.
 
@@ -51,9 +54,9 @@ Tests use original literal wire vectors independently of the decoder. They
 cover all four forms, subchannel/method/payload ordering, 40-bit addresses,
 declared capture length, every truncated prefix of a packet, unsupported entry
 flags/opcodes, address and method overflow, and input/output budgets. The GPU
-parser is tested on the host and is not part of the Android reference suite.
+parser is tested on the host and through the separate Android `gpuCore` group.
 
-Next: bounded GPU memory mappings and submission ownership, packet continuation,
+Bounded GPU mappings and decoded submission ownership are implemented. Next:
 class routing and needed NV service/ioctl semantics. Shader decoding/IR/SPIR-V,
 method execution, host renderer integration and presentation follow. M4's full
 guest-to-image checkpoint remains open; the six Vulkan lab workloads continue

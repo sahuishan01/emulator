@@ -32,8 +32,8 @@ The Android checks above do not establish GPU parser execution on the phone.
 
 Raw reports/captures/native extracts/APKs remain in ignored directories.
 The supplied [0.5.0-dev physical report](g720-scheduling.md) already passes the
-five prior guest cases and all six GPU cases on ARM64/G720. The new sixth
-cancellation case needs its own physical report. This is not a 16 KiB Android
+five prior guest cases and all six GPU cases on ARM64/G720. The later [0.6.0-dev phone report](g720-cancellation.md) passes the sixth
+cancellation case, closing that physical checkpoint. This is not a 16 KiB Android
 runtime test or a console-timing/performance claim. Guest GPU memory/submission,
 method execution, shaders, presentation and commercial gameplay remain open.
 The APK is a debug-signed development diagnostic, not a production emulator.

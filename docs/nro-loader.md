@@ -52,9 +52,9 @@ Guest CPU faults and unsupported calls have separate typed errors.
 
 Memory now supports transactional batches, reserved/committed regions,
 cross-region access, protection and unmapping. Entire write ranges are checked
-before mutation. The current reference implementation copies affected memory
-layouts during protection/unmapping; shared physical backing/aliases, page
-tables and optimized backing management are future work.
+before mutation. Protection/unmapping now retain shared backing slices;
+explicit aliases and GPU pins preserve identity/lifetime. Page tables and an
+optimized paged allocator remain future work. See [ownership](gpu-memory-submission.md).
 
 Run:
 

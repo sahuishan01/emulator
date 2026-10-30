@@ -10,6 +10,8 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 emulator-session = { path = "../session" }
+emulator-memory = { path = "../memory" }
+emulator-gpu = { path = "../gpu" }
 
 # Audited exception for the exported symbol attribute only. This boundary has
 # no raw pointer arguments, borrowed outputs or unsafe blocks. Engine crates

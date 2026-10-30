@@ -2,6 +2,7 @@
 //! C callers receive initialized bytes, never Rust pointers or allocations.
 use emulator_session::{RunOutcome, Session, LOAD_BASE};
 use std::fmt::Write;
+mod gpu_core;
 
 pub const REPORT_CAPACITY: usize = 4096;
 #[repr(C)]
@@ -196,9 +197,29 @@ fn reference_checks() -> String {
 /// Panics never unwind through C; output has no pointers and needs no free call.
 #[no_mangle]
 pub extern "C" fn emulator_run_reference_guests() -> EngineReport {
-    let mut json=std::panic::catch_unwind(reference_checks).unwrap_or_else(|_|String::from("{\"scope\":\"original-guest-reference-programs\",\"allPassed\":false,\"error\":\"Engine panic\"}"));
+    encode_report(reference_checks, "original-guest-reference-programs")
+}
+
+#[no_mangle]
+pub extern "C" fn emulator_run_gpu_core_checks() -> EngineReport {
+    encode_report(
+        gpu_core::report,
+        "original-gpu-memory-and-command-reference",
+    )
+}
+
+fn encode_report(run: fn() -> String, scope: &str) -> EngineReport {
+    let mut json = std::panic::catch_unwind(run).unwrap_or_else(|_| {
+        format!(
+            "{{\"scope\":{},\"allPassed\":false,\"error\":\"Engine panic\"}}",
+            quote(scope)
+        )
+    });
     if json.len() > REPORT_CAPACITY {
-        json=String::from("{\"scope\":\"original-guest-reference-programs\",\"allPassed\":false,\"error\":\"Report capacity exceeded\"}");
+        json = format!(
+            "{{\"scope\":{},\"allPassed\":false,\"error\":\"Report capacity exceeded\"}}",
+            quote(scope)
+        );
     }
     let mut report = EngineReport {
         abi_version: 1,
@@ -222,6 +243,20 @@ mod tests {
         assert!(text.ends_with("\"allPassed\":true}"));
         assert_eq!(text.matches("\"passed\":true").count(), 6);
         assert!(result.bytes[result.length as usize..]
+            .iter()
+            .all(|b| *b == 0));
+    }
+    #[test]
+    fn gpu_core_checks_use_actual_shared_memory_and_retire_all_resources() {
+        let report = emulator_run_gpu_core_checks();
+        assert_eq!(report.abi_version, 1);
+        let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
+        assert!(text.ends_with("\"allPassed\":true}"));
+        assert_eq!(text.matches("\"passed\":true").count(), 2);
+        assert!(text.contains(
+            "\"capturedSubmissions\":2,\"decodedWrites\":4,\"residentBytesAfterRelease\":0"
+        ));
+        assert!(report.bytes[report.length as usize..]
             .iter()
             .all(|b| *b == 0));
     }

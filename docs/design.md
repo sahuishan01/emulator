@@ -6,12 +6,13 @@ This is the proposed design for the original emulator. It supplements
 Current implemented slice: bounded region memory, static NRO loading, A64
 interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
 event/thread waits, cancellation and virtual deadlines in one process. The Kotlin/JNI lab runs six original Rust guest
-programs plus six host Vulkan workloads and exports reports. Shared memory
-backing/aliases, broader synchronization, guest graphics and the gameplay
+programs, two GPU-core memory/command cases and six Vulkan workloads, with report
+export. Broader synchronization, guest graphics and the gameplay
 Android API remain planned. See [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.
-The [GPU framing parser](gpu-command-framing.md) now implements the first
-bounded command layer independently of GPU services, memory and rendering.
+The [GPU memory/submission layer](gpu-memory-submission.md) implements shared
+backing, owned GPU mappings and decoded batch capture independently of GPU
+services, method execution and rendering.
 
 ## 1. Process, addresses and memory
 
@@ -30,11 +31,13 @@ The current region implementation is the reference path. Reservation, commit,
 map/protect/unmap and cross-mapping accesses are implemented, including batch
 mapping validation and complete write preflight before changing bytes. Address
 arithmetic, segment overlap and BSS sizes use checked arithmetic and explicit
-allocation limits. Protect/unmap currently copy owned region data; shared
-backings and a page-based representation remain future work.
+allocation limits. Protect/unmap retain shared backing slices; pinned views and
+aliases keep stable identity/lifetime. Originating allocations remain charged
+until their final reference drops, including GPU/queue pins. A page-based
+allocator and concurrent renderer coherence remain future work.
 
-Ordinary CPU-only memory has a fast checked path. Shared CPU/GPU ranges also
-track last CPU write generation, last GPU producer and required completion.
+Planned renderer coherence: CPU-only memory keeps a checked path. Shared
+CPU/GPU ranges will track last CPU write generation, GPU producer and completion.
 When a CPU read needs GPU-written data, resolve the producer and perform the
 required readback/invalidation. Never hold the scheduler's handle-table lock
 while waiting for the GPU. Guest memory visibility and Vulkan host memory

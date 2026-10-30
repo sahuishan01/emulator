@@ -8,7 +8,7 @@ functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
 event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
 Rust engine for six original guest checks
-alongside the Vulkan laboratory. The user
+alongside two GPU memory/command reference cases and the Vulkan laboratory. The user
 supplied a physical G720 0.3.0-dev report passing all six current workloads,
 including BC1 conversion, sampling and updates. Guest graphics and Android
 presentation remain unimplemented.
@@ -111,14 +111,14 @@ crates/
   kernel/             implemented handles/IPC, guest threads, blocking waits and timeouts
   services/           implemented minimal SM and emulator-owned diagnostic service
   shader/             planned original GPU shader decoder / IR
-  gpu/                implemented bounded command framing; address space/execution planned
+  gpu/                implemented mappings, command framing and owned decode queues; execution planned
   renderer-vulkan/    planned host backend
   session/            implemented single-process bounded execution
   texture/            implemented linear BC1 RGBA UNORM reference decoding
   android-ffi/        implemented reference-program C ABI; gameplay API planned
 android/
   app/                planned user application
-  gpu-lab/            six guest checks plus six host GPU checks; presentation planned
+  gpu-lab/            six guest, two GPU-core and six Vulkan checks; presentation planned
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/
@@ -131,12 +131,12 @@ tests/
 
 | Layer | Responsibility | Current state |
 | --- | --- | --- |
-| Guest memory | Guest addresses, ownership, access checks; later shared backing/aliases | Bounded transactional mappings, reservation/commit/protect/unmap and cross-region accesses implemented |
+| Guest memory | Guest addresses, ownership, aliases and access checks | Shared backing/pins, resident budgets, transactional mappings and cross-region access implemented |
 | CPU | A64 registers, decode/execute, exceptions/SVC boundary; later SIMD/atomics/JIT | Small tested interpreter subset |
 | Loader | Validate executable bounds/segments and construct guest process | Static uncompressed NRO0 v0 subset; no linking or modules |
 | Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Handles/IPC, cloned sessions, single-core guest scheduling, event/thread blocking waits and virtual timeouts |
 | Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | CMIF v0 SM Initialize/GetService for `emu:test`; system device services planned |
-| Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shader translation | Bounded GPFIFO/pushbuffer framing implemented; mappings, method execution, shaders and submissions planned |
+| Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shaders | GPU mappings, captured decode batches and framing implemented; NV services, method/shader execution and rendering planned |
 | Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Six offscreen native workloads, including BC1 conversion, sampling and updates; guest backend/presentation planned |
 | Android host | Lifecycle, surface, input, audio and diagnostics | Engine reference checks, GPU Lab and JSON export implemented; gameplay integration planned |
 | CLI | Bounded interpreter execution with explicit unsupported-operation errors | Implemented |
@@ -157,7 +157,7 @@ have independent read/write/execute permissions. Instructions fetch aligned
 32-bit little-endian words; supported data operations allow unaligned access.
 An access may cross adjacent mappings after checking the complete range.
 Writes preflight all permissions before mutation. There is no page-table/MMU
-model, shared backing/alias model, SP alignment-control model, exclusive
+model, SP alignment-control model, exclusive
 monitor or privileged exception state yet. Guest threads share this checked
 address space through a deterministic single host executor.
 

@@ -13,7 +13,7 @@ The original Rust engine loads six of our own static NRO programs and executes
 them through an A64 interpreter subset. They exercise debug output, service
 discovery/IPC, shared cloned-session lifetimes, events, thread scheduling,
 blocking waits, joins, virtual timeouts and cancellation.
-The Android lab now embeds this engine and runs these programs alongside six
+The Android lab embeds this engine, two GPU memory/command reference cases and six
 native Vulkan checks: image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
@@ -25,8 +25,10 @@ translation, broader synchronization/services, most CPU instructions and the gam
 are still to be implemented. The GPU Lab uses our native host shaders; it does
 not execute guest graphics or run Z-A.
 An original [GPU framing parser](docs/gpu-command-framing.md) now decodes bounded
-GPFIFO entries and method packets separately; it is not connected to guest
-submission or rendering yet.
+GPFIFO entries and method packets. Shared CPU/GPU backing, GPU virtual mappings
+and immutable decoded command batches now preserve ownership across unmaps and
+address reuse. See [GPU memory and submission ownership](docs/gpu-memory-submission.md).
+NV service submission, method execution and rendering remain separate work.
 
 No existing emulator core is linked or copied into the implementation. Earlier
 Eden/Lemon checkouts under `upstream/` are historical references, ignored by
@@ -84,7 +86,7 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 
 | Path | Implemented responsibility |
 | --- | --- |
-| `crates/memory` | Bounded owned mappings, reservation/commit/protect/unmap, transactional mapping and cross-region R/W/X checks |
+| `crates/memory` | Shared owned backing, aliases/pinned views, resident budgets, transactional mappings and cross-region R/W/X checks |
 | `crates/a64` | Registers, instruction decoding/execution, arithmetic flags, explicit faults and SVC events |
 | `crates/loader` | Bounded static NRO validation, segments, permissions and BSS |
 | `crates/ipc` | Bounded HIPC/CMIF v0 request parsing and reply encoding |
@@ -92,9 +94,9 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/services` | Minimal CMIF service manager and our `emu:test` diagnostic counter |
 | `crates/session` | Process entry state, guarded stack, guest TLS and resumable execution budgets |
 | `crates/texture` | Original bounded BC1 RGBA UNORM reference decoder |
-| `crates/gpu` | Bounded original GPFIFO entry and Maxwell pushbuffer framing decoder; no execution yet |
+| `crates/gpu` | GPU virtual mappings, pinned resources, bounded GPFIFO/Maxwell framing and owned decoded batches; no method execution |
 | `crates/cli` | NRO/raw-program execution and demo |
-| `crates/android-ffi` | Bounded value-only C ABI that executes six original guest programs |
+| `crates/android-ffi` | Bounded C reports for six guest programs and two GPU memory/command cases |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
 | `examples/homebrew` | Six original homebrew sources and assembled NRO fixtures |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
@@ -112,12 +114,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android engine and GPU lab
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.6.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.7.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.6.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.6.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.7.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.7.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. GitHub redirects downloads to temporary signed asset
@@ -148,8 +150,8 @@ The APK includes arm64-v8a and x86_64 libraries. Install it, select **Run engine
 and GPU checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. The report separates six actual guest interpreter checks from six
-host GPU checks. See [the Android engine boundary](docs/android-engine.md)
+devices. Schema 3 separates six guest checks (`engine`), two GPU memory/command
+cases (`gpuCore`) and six host Vulkan checks (`gpu`). See [the Android boundary](docs/android-engine.md)
 for its build, report schema and verification limits.
 
 ## Validation
@@ -169,7 +171,7 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has 84 Rust tests and 17 independently assembled fixtures
+The current suite has 94 Rust tests and 17 independently assembled fixtures
 (11 raw A64 programs and six NROs).
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
 All six Vulkan workloads passed on desktop llvmpipe with zero validation
@@ -182,12 +184,16 @@ the Android AVD; upgrade invalidation, exact JSON export and cold restoration
 passed. The [user-supplied 0.4.0-dev phone report](docs/validation/g720-engine.md)
 also passes all four previous engine cases on ARM64. The later
 [0.5.0-dev phone report](docs/validation/g720-scheduling.md) passes the two-thread
-scheduling case as well. The newer cancellation case needs its own phone report.
+scheduling case as well. The [0.6.0-dev phone report](docs/validation/g720-cancellation.md)
+also passes cancellation, closing all six guest-program device checkpoints.
+The two new GPU-core cases need their own phone report.
 The [0.5.0-dev Android AVD checkpoint](docs/validation/android-scheduling.md)
 passes all five guest checks plus six Vulkan checks, with exact report export
 and cold restoration.
 The [0.6.0-dev AVD checkpoint](docs/validation/android-cancellation.md) adds
 passing cancellation checks, for six guest programs plus six Vulkan workloads.
+The [0.7.0-dev AVD checkpoint](docs/validation/android-gpu-ownership.md) passes
+all fourteen cases, including GPU-core ownership, exact export and restoration.
 These results cover the owned workloads; guest graphics, sustained
 performance and 16 KiB Android runtime behavior remain untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).

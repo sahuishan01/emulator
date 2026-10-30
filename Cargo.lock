@@ -13,6 +13,8 @@ dependencies = [
 name = "emulator-android-ffi"
 version = "0.1.0"
 dependencies = [
+ "emulator-gpu",
+ "emulator-memory",
  "emulator-session",
 ]
 
@@ -29,6 +31,9 @@ dependencies = [
 [[package]]
 name = "emulator-gpu"
 version = "0.1.0"
+dependencies = [
+ "emulator-memory",
+]
 
 [[package]]
 name = "emulator-ipc"

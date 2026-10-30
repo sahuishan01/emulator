@@ -1,11 +1,12 @@
 # Android original-engine checks
 
-Version 0.6.0-dev embeds the original Rust engine into the existing Android
+Version 0.7.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
 The app's worker calls Rust once to execute six original NRO fixtures
-described in [kernel-ipc.md](kernel-ipc.md), then calls the unchanged six-test
+described in [kernel-ipc.md](kernel-ipc.md), separately runs two actual GPU-core
+memory/command cases, then calls the unchanged six-test
 C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
 counts, guest memory results and zero remaining handles after process exit.
 The result is not hardcoded successful output. Each native group reports its
@@ -14,8 +15,8 @@ own failure; one failed group does not discard the other's diagnostic report.
 ## Native boundary
 
 `crates/android-ffi` builds as a static library, linked into the existing
-`libemulator_gpu_lab.so`. Its sole C export is
-`emulator_run_reference_guests() -> EngineReport`. The C/Rust layout is a
+`libemulator_gpu_lab.so`. C exports are `emulator_run_reference_guests()` and
+`emulator_run_gpu_core_checks()`, each returning EngineReport. The C/Rust layout is a
 4104-byte, 4-byte-aligned value: u32 ABI version, u32 byte length, and 4096
 initialized payload bytes. Rust returns owned bytes by value, so callers never
 receive a Rust pointer or allocation and need no free callback. JNI validates
@@ -52,6 +53,7 @@ verify signature, ARM64/x86_64 ELF identity and 16 KiB ELF/ZIP alignment:
 ```sh
 python3 tools/verify_gpu_apk.py android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk
 cargo run --offline -p emulator-android-ffi --example reference_report
+cargo run --offline -p emulator-android-ffi --example reference_report -- gpu-core
 ```
 
 The host example executes the same checks without JNI. Passing it does not
@@ -61,8 +63,8 @@ validate the Android C ABI or either Android runtime architecture.
 
 The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
 installations update in place. Select **Run engine and GPU checks**, then
-**Export report**. Schema version 2, workload version 6, has separate `engine`
-and `gpu` objects and combined `allPassed`. The embedded GPU suite retains
+**Export report**. Schema 3/workload 7 separates `engine`, `gpuCore` and `gpu`,
+with combined `allPassed` requiring all three. The embedded Vulkan suite retains
 its own workload version 3. Engine reports record host/guest architecture,
 six per-case outcomes, instruction/IPC counts, output, handle cleanup and
 thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 3
@@ -76,10 +78,11 @@ SwiftShader results do not establish ARM64/Mali behavior. The physical G720
 0.4.0-dev report passed the four engine checks through the ARM64 C ABI as well
 as all six unchanged GPU checks. See [physical evidence](validation/g720-engine.md).
 The [0.5.0-dev physical report](validation/g720-scheduling.md) also passes the
-fifth, scheduling/blocking-wait fixture. The sixth, cancellation case is the
-new device checkpoint. The separate GPU framing parser has host tests only
-and is not called by these Android reference programs.
+fifth, scheduling/blocking-wait fixture. The [0.6.0-dev report](validation/g720-cancellation.md)
+also passes cancellation. The new `gpuCore` suite 1 verifies shared CPU/GPU
+aliases and queued-command capture/resource lifetimes through Rust/JNI. These
+are direct engine API checks, not NRO or NV-service submissions. Its two cases
+are the new device checkpoint; framing/mappings now run on Android too.
 
-Neither group emulates guest GPU commands, translates guest shaders, presents
-guest frames or boots a commercial title. Pokémon Legends: Z-A remains a
-later compatibility target.
+Guest GPU method execution, shader translation, guest-frame presentation and
+commercial startup remain open. Pokémon Legends: Z-A is a later target.
