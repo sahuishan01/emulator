@@ -98,6 +98,18 @@ the [GPU Lab development prerelease](https://github.com/sahuishan01/emulator/rel
 in this private repository. The APK is a host Vulkan diagnostic; it does not
 run Switch games.
 
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.1.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.1.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+
+Open these links in a browser signed into the GitHub account with access to
+this private repository. GitHub redirects downloads to temporary signed asset
+URLs. If a saved download fails, start again from one of the permanent links
+above rather than retrying its old `release-assets.githubusercontent.com` URL.
+The ZIP contains the same APK, checksum, verification report and installation
+notes. If both downloads fail only on the phone, the browser/network path to
+GitHub's asset host still needs investigation; a server-side pass cannot prove
+that path works.
+
 Build instructions and the exact workloads are in
 [native/gpu-lab/README.md](native/gpu-lab/README.md). With the pinned Android
 toolchain installed:

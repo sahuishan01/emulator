@@ -95,6 +95,14 @@ artifact README are attached to the `v0.1.0-dev` prerelease. APK binaries and
 private reports remain outside source control. This is a prototype snapshot,
 not a production release or a Switch compatibility claim.
 
+A phone browser later reported ERR_INVALID_RESPONSE at a temporary GitHub
+asset redirect. The supplied URL was expired at investigation time. A fresh
+authenticated asset request returned HTTP 302 followed by HTTP 200 with the
+expected APK hash. This does not establish the browser/network root cause.
+The same private prerelease now includes `emulator-gpu-lab.zip` and its SHA-256
+file as an alternative download. README links use permanent GitHub asset URLs;
+never preserve or publish temporary signed redirects.
+
 Rust/Cargo 1.85, LLVM/Clang 19, Vulkan headers/loader, Mesa llvmpipe,
 Khronos validation layers, glslangValidator and spirv-val are available.
 Android SDK is under ~/Android/Sdk. JDK 21 is installed; the build targets
