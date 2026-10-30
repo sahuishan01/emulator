@@ -21,9 +21,10 @@ crate adds original BC1 RGBA UNORM reference decoding and a reproducible fixture
 
 The separate Android GPU Lab APK builds and passes lint, signature and native
 packaging checks. Six host workloads pass on llvmpipe with zero Vulkan
-validation errors and on an Android 15 SwiftShader AVD. The original four, including
-BC1 conversion, passed in the user's supplied physical G720 0.2.0-dev report.
-This closes the conversion corpus checkpoint, not texture sampling or guest
+validation errors and on an Android 15 SwiftShader AVD. All six, including
+BC1 conversion, sampling and update/resampling, passed in the user's supplied
+physical G720 0.3.0-dev report. This closes the owned host corpus checkpoint,
+not guest
 graphics. APK export/state retention are exercised
 separately from graphics;
 there is no guest GPU, shader translator, scheduler/IPC or commercial game
@@ -54,9 +55,11 @@ The next checkpoint is sampling the converted image in a draw, with reference
 readback, synchronization, update/lifetime and resource-peak evidence.
 The 0.3.0-dev native suite now implements sampled draws and changed-content
 reuse in one submission, with a CPU reference and Vulkan allocation counters.
-Its two new physical results remain pending. These are host workloads, not M4.
-M3 onward is
-unimplemented.
+All six now pass in the supplied physical G720 report. These are host
+workloads, not M4. The next main-engine slice is original handles and bounded
+IPC exercised by owned guest homebrew, then scheduling and guest GPU-facing
+service work. Broader host format/tiling/presentation work remains open.
+M3 onward is unimplemented.
 
 M1B is deliberately early. The project must learn what the real Mali driver can
 do before assuming a shader or texture strategy. A native Android triangle

@@ -75,16 +75,16 @@ root-cause diagnosis for our code. No commercial game runs in this implementatio
   the copied development APK and hash are under ignored artifacts/.
 
 No physical phone is connected through ADB. The user supplied GPU Lab
-0.1.0-dev and 0.2.0-dev reports from Mali-G720-Immortalis MC12 / realme RMX5061 /
-Android 16 / Vulkan 1.3.247, with matching device and driver identity. The new
-0.2.0-dev report records all four checks passing, including BC1-to-RGBA8
-conversion without native BC support. BC1/3/7 queries remain unsupported,
-ASTC LDR and geometry/tessellation remain advertised. Validation was disabled.
-See docs/validation/g720-initial.md and docs/validation/g720-bc1.md. This closes
-the physical conversion-corpus checkpoint; sampling and commercial gameplay
-are not established by the report.
-New 0.3.0-dev checks add sampled draws and in-place decoded-image reuse. Their
-physical results are pending, with workload version 3 preventing stale reports.
+0.1.0-dev, 0.2.0-dev and 0.3.0-dev reports from Mali-G720-Immortalis MC12 /
+realme RMX5061 / Android 16 / Vulkan 1.3.247, with matching device and driver
+identity. The 0.3.0-dev report records all six checks passing, including
+converted BC1 texture sampling and update/resampling in one submission without
+native BC support. It reports 254688 requested Vulkan bytes / 19 allocations,
+excluding driver/pipeline and host heap usage. Validation was disabled. BC1/3/7
+remain unsupported natively; ASTC LDR and geometry/tessellation are advertised.
+See docs/validation/g720-sampling.md and the earlier validation records.
+The physical sampling/update corpus checkpoint is complete. This does not
+establish guest graphics, sustained performance or commercial-game support.
 
 ## Next implementation work
 
@@ -94,12 +94,14 @@ static NRO fixture gate; general homebrew compatibility remains open. M1B has
 an initial lab, with its physical-device gate and additional experiments open.
 M3 onward is unimplemented.
 
-1. Inspect a 0.3.0-dev phone report for the two new sampled-draw/update tests.
-   The four original checks passed physically; the expanded suite has six.
-2. Extend conversion/cache and memory-peak evidence, then other required
-   BC formats, guest tiling, shader-stage experiments and Android presentation.
-3. Add original threads, handles, events, waits, timers and bounded IPC with
-   owned guest workloads. Expand ISA and loaders only as required by them.
+1. Begin the next original engine slice: kernel handles and bounded IPC
+   request/response exercised through owned guest homebrew. Unsupported
+   operations must remain explicit errors. Expand ISA as the fixture needs it.
+2. Extend that slice with scheduling, events/waits and timeouts, then actual
+   guest GPU service submission. The six-test host/physical baseline is known;
+   do not ask the user to repeat the unchanged suite.
+3. Continue conversion/cache/resource-peak evidence, required BC formats,
+   guest tiling, shader-stage experiments and Android presentation separately.
 4. Implement guest GPU memory/submission/services, bounded command decoding
    and our shader decoder/IR/SPIR-V path. A native host draw is not this work.
 5. Integrate the Rust engine into the Android gameplay host, then add the

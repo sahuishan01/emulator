@@ -32,7 +32,8 @@ The user's supplied 0.2.0-dev report records this GPU conversion passing on the
 physical Mali-G720 driver while native BC support is false. See the
 [physical checkpoint](validation/g720-bc1.md). Sampling the resulting RGBA8
 image in a draw is covered by the new [0.3.0-dev sampling workloads](bc1-sampling.md),
-which still require a physical phone run. The original corpus checks conversion/readback.
+which pass in the user's supplied [0.3.0-dev physical report](validation/g720-sampling.md).
+The original corpus checks conversion/readback.
 
 BC1 RGB-only interpretation, sRGB, BC2-BC7, pitched/block-linear guest layouts,
 mips/arrays/3D and guest graphics integration are unsupported. Sampling is

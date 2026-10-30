@@ -7,9 +7,9 @@ acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, a debug-output/exit kernel slice and a CLI session. The separate
 Android Vulkan laboratory builds and passes software-driver checks. The user
-supplied a physical G720 0.2.0-dev report passing the initial four workloads,
-including BC1 conversion. New sampled-draw/update workloads pass desktop checks
-and require physical testing. Android presentation remains unimplemented.
+supplied a physical G720 0.3.0-dev report passing all six current workloads,
+including BC1 conversion, sampling and updates. Guest graphics and Android
+presentation remain unimplemented.
 An original Rust BC1
 reference decoder is implemented separately from guest GPU emulation.
 
@@ -114,7 +114,7 @@ crates/
   android-ffi/        planned audited Android interface
 android/
   app/                planned user application
-  gpu-lab/            four-test physical report; new sampling/update tests implemented
+  gpu-lab/            six-test physical report; guest graphics/presentation planned
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/

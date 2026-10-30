@@ -1,8 +1,8 @@
 # Converted BC1 sampling and image reuse
 
 GPU Lab 0.3.0-dev adds two workloads to the four-test suite already recorded
-in the user's physical G720 report. These new tests require a separate phone
-run. They use our host shaders and owned fixtures; guest GPU/shader emulation
+in the user's physical G720 report. The subsequent 0.3.0-dev report records all
+six passing on the same physical driver. They use our host shaders and owned fixtures; guest GPU/shader emulation
 and Android swapchain presentation remain unimplemented.
 
 ## Workloads
@@ -59,8 +59,9 @@ checks pass and the update/resample check fails without any Vulkan validation
 errors. This verifies that unchanged pixels cannot pass the update oracle.
 The control source/binary stays under ignored reports/ and is not shipped.
 The Android 15 SwiftShader AVD also passes all six workloads, and upgrading
-from 0.2.0-dev invalidates its old cached report. The new physical G720 run is
-still pending.
+from 0.2.0-dev invalidates its old cached report. The user's supplied physical
+G720 0.3.0-dev report passes all six, with validation disabled. See the
+[physical checkpoint](validation/g720-sampling.md).
 Filtering, sRGB, other BC formats, guest tiling, save/game execution and
 sustained physical-device performance remain separate checkpoints.
 

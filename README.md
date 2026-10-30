@@ -13,11 +13,10 @@ The original Rust engine now loads our own static NRO homebrew, executes it
 through an A64 interpreter subset, emits debug output through an implemented
 kernel call, and exits. A separate Android Vulkan GPU Lab APK exercises image
 transfers, depth testing, compute-to-draw visibility, BC1 conversion, sampled
-draws and converted-image updates. The initial four checks passed in the
-user's supplied physical G720 0.2.0-dev report,
-including BC1 conversion without native BC support. See the
-[device evidence and its limits](docs/validation/g720-bc1.md).
-The new 0.3.0-dev sampled-draw/update checks need their own phone run.
+draws and converted-image updates. All six checks passed in the user's supplied
+physical G720 0.3.0-dev report, including converted-texture sampling and updates
+without native BC support. See the
+[device evidence and its limits](docs/validation/g720-sampling.md).
 
 The engine does not run commercial Switch games. Guest GPU commands, shader
 translation, threads/IPC, most CPU instructions and the gameplay application
@@ -151,10 +150,10 @@ python3 tools/assemble_a64_fixtures.py --check
 The current suite has 40 Rust tests and 11 independently assembled A64 fixtures.
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
 All six Vulkan workloads passed on desktop llvmpipe with zero validation
-errors and on an Android 15 SwiftShader AVD. A deliberately stale update in a temporary control build fails the
-update test while the preceding five pass. The initial four workloads passed
-in the user's supplied physical G720 report, with validation disabled. APK
+errors and on an Android 15 SwiftShader AVD. A deliberately stale update in a
+temporary control build fails the update test while the preceding five pass.
+All six passed in the user's supplied physical G720 report, with validation disabled. APK
 build, lint, signature, native architectures and 16 KiB ELF/ZIP alignment were
-verified. The new sampled-draw/update checks require physical testing;
-16 KiB Android runtime behavior remains untested.
+verified. These results cover the owned workloads; guest graphics, sustained
+performance and 16 KiB Android runtime behavior remain untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).
