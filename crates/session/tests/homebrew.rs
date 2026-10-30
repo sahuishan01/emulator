@@ -6,6 +6,60 @@ use emulator_session::{
 const HELLO: &[u8] = include_bytes!("../../../examples/homebrew/hello.nro");
 
 #[test]
+fn owned_homebrew_connects_initializes_sends_messages_and_closes_handles() {
+    let mut session =
+        Session::from_nro(include_bytes!("../../../examples/homebrew/ipc-counter.nro")).unwrap();
+    for _ in 0..2000 {
+        if !session.debug_records().is_empty() {
+            break;
+        }
+        assert_eq!(session.run(1).unwrap(), RunOutcome::BudgetExhausted);
+    }
+    assert_eq!(
+        session.debug_records(),
+        &[b"Guest IPC counter reached 42; handles closed.\n".to_vec()]
+    );
+    assert_eq!(session.kernel().live_handle_count(), 1); // Main thread only.
+    assert_eq!(session.memory().read_u64(LOAD_BASE + 0x2000).unwrap(), 42);
+    let commands: Vec<_> = session
+        .kernel()
+        .ipc_records()
+        .iter()
+        .map(|r| r.command_id)
+        .collect();
+    assert_eq!(commands, [0, 1, 0, 0, 1]);
+    assert_eq!(session.run(10).unwrap(), RunOutcome::Exited);
+    assert_eq!(session.kernel().live_handle_count(), 0);
+}
+
+#[test]
+fn owned_guest_clone_survives_original_close_and_events_have_real_state() {
+    for (bytes, expected, value, offset) in [
+        (
+            include_bytes!("../../../examples/homebrew/ipc-clone.nro").as_slice(),
+            "Guest IPC clone retained counter=43 after close.\n",
+            43,
+            0x2000,
+        ),
+        (
+            include_bytes!("../../../examples/homebrew/events.nro").as_slice(),
+            "Guest events signaled, waited, reset and closed.\n",
+            7,
+            0x2008,
+        ),
+    ] {
+        let mut session = Session::from_nro(bytes).unwrap();
+        assert_eq!(session.run(5000).unwrap(), RunOutcome::Exited);
+        assert_eq!(session.debug_records(), &[expected.as_bytes().to_vec()]);
+        assert_eq!(
+            session.memory().read_u64(LOAD_BASE + offset).unwrap(),
+            value
+        );
+        assert_eq!(session.kernel().live_handle_count(), 0);
+    }
+}
+
+#[test]
 fn original_homebrew_prints_and_exits_through_real_svc_dispatch() {
     let mut session = Session::from_nro(HELLO).unwrap();
     assert_eq!(session.state(), SessionState::Loaded);

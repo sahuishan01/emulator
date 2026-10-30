@@ -4,10 +4,12 @@ This is the proposed design for the original emulator. It supplements
 [architecture.md](architecture.md); planned interfaces are not implemented APIs.
 
 Current implemented slice: bounded region memory, static NRO loading, A64
-interpreter execution, debug-output/process-exit dispatch and a single-process
-session. The separate Kotlin/C++ GPU Lab runs host Vulkan workloads and exports
-reports. Shared backing/aliases, scheduling, IPC, guest graphics and the full
-Android engine boundary below remain planned.
+interpreter execution, bounded handles/IPC, session cloning, events/polling and
+a single-process session. The Kotlin/JNI lab runs four original Rust guest
+programs plus six host Vulkan workloads and exports reports. Shared memory
+backing/aliases, scheduling, blocking waits, guest graphics and the gameplay
+Android API remain planned. See [kernel-ipc.md](kernel-ipc.md) and
+[android-engine.md](android-engine.md) for the implemented contracts.
 
 ## 1. Process, addresses and memory
 
@@ -85,6 +87,13 @@ can share the same bug. Native guest execution is a later research option,
 not an assumed shortcut around services, memory or GPU emulation.
 
 ## 4. Kernel, services and guest time
+
+The current subset has one main thread, a 256-entry handle table and an owned
+guest TLS message buffer. CMIF requests execute on isolated service snapshots;
+reply bounds, guest write permissions and returned handles are checked before
+publishing state. Cloned handles share a session identity. Manual-reset event
+polls validate every handle; an unsignaled wait with a nonzero timeout explicitly
+faults until scheduling exists. This implements part of the following design.
 
 The kernel owns processes, threads, handle lifetimes, synchronization objects,
 memory operations, timeouts and SVC dispatch. Begin with one host CPU executor

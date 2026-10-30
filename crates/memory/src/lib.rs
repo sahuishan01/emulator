@@ -404,6 +404,18 @@ impl AddressSpace {
         Ok(spans)
     }
 
+    pub fn check_access(
+        &self,
+        address: u64,
+        size: usize,
+        access: Access,
+    ) -> Result<(), MemoryError> {
+        if size == 0 {
+            return Ok(());
+        }
+        self.covered(address, size, Some(access)).map(|_| ())
+    }
+
     pub fn read(&self, address: u64, output: &mut [u8]) -> Result<(), MemoryError> {
         if output.is_empty() {
             return Ok(());

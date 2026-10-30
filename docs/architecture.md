@@ -5,8 +5,9 @@ Design baseline: 2026-10-30. This document defines the system boundaries;
 [implementation-plan.md](implementation-plan.md) defines delivery order and
 acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
-interpreter, a debug-output/exit kernel slice and a CLI session. The separate
-Android Vulkan laboratory builds and passes software-driver checks. The user
+interpreter, handles, HIPC/CMIF v0, cloned sessions, event polling and CLI
+sessions. Android embeds the same Rust engine for four original guest checks
+alongside the Vulkan laboratory. The user
 supplied a physical G720 0.3.0-dev report passing all six current workloads,
 including BC1 conversion, sampling and updates. Guest graphics and Android
 presentation remain unimplemented.
@@ -76,7 +77,8 @@ separate events rather than a universal `runFrame()` loop.
 Generic bindings, assemblers and audio libraries may be used; an existing
 emulator CPU/GPU/HLE engine may not. Dependencies will be pinned when added.
 The current workspace has no external crate dependencies. Core crates keep
-`unsafe_code = forbid`; future Vulkan/JNI/JIT boundary crates must isolate and
+`unsafe_code = forbid`; the current Android boundary permits the exported-symbol
+attribute only, with no unsafe blocks or raw-pointer arguments. Future Vulkan/JIT boundary crates must isolate and
 document the unsafe operations those interfaces require rather than weakening
 that rule across the entire engine.
 
@@ -104,21 +106,22 @@ crates/
   a64/                implemented interpreter subset
   cli/                implemented NRO/raw-program runner
   loader/             implemented static NRO subset
-  kernel/             implemented debug/exit SVCs; threads/handles/IPC planned
-  services/           planned guest service implementations
+  ipc/                implemented bounded HIPC/CMIF v0 subset
+  kernel/             implemented SVCs, handles, cloned sessions and event polling
+  services/           implemented minimal SM and emulator-owned diagnostic service
   shader/             planned original GPU shader decoder / IR
   gpu/                planned guest commands and GPU address space
   renderer-vulkan/    planned host backend
   session/            implemented single-process bounded execution
   texture/            implemented linear BC1 RGBA UNORM reference decoding
-  android-ffi/        planned audited Android interface
+  android-ffi/        implemented reference-program C ABI; gameplay API planned
 android/
   app/                planned user application
-  gpu-lab/            six-test physical report; guest graphics/presentation planned
+  gpu-lab/            four guest checks plus six host GPU checks; presentation planned
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/
-  homebrew/           implemented original static NRO fixture
+  homebrew/           four implemented original static NRO fixtures
 tests/
   gpu-workloads/      planned command, shader and reference-image tests
 ```
@@ -130,11 +133,11 @@ tests/
 | Guest memory | Guest addresses, ownership, access checks; later shared backing/aliases | Bounded transactional mappings, reservation/commit/protect/unmap and cross-region accesses implemented |
 | CPU | A64 registers, decode/execute, exceptions/SVC boundary; later SIMD/atomics/JIT | Small tested interpreter subset |
 | Loader | Validate executable bounds/segments and construct guest process | Static uncompressed NRO0 v0 subset; no linking or modules |
-| Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Debug-output/exit only; other operations fail explicitly |
-| Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | Planned |
+| Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Handles, transactional IPC, cloned sessions, manual-reset events and polling; scheduling/blocking waits planned |
+| Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | CMIF v0 SM Initialize/GetService for `emu:test`; system device services planned |
 | Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shader translation | Planned |
 | Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Six offscreen native workloads, including BC1 conversion, sampling and updates; guest backend/presentation planned |
-| Android host | Lifecycle, surface, input, audio and diagnostics | GPU Lab and JSON export implemented; engine integration planned |
+| Android host | Lifecycle, surface, input, audio and diagnostics | Engine reference checks, GPU Lab and JSON export implemented; gameplay integration planned |
 | CLI | Bounded interpreter execution with explicit unsupported-operation errors | Implemented |
 
 Share generic infrastructure when future consoles need it, but keep their CPU,
@@ -157,7 +160,7 @@ model, shared backing/alias model, SP alignment-control model, exclusive
 monitor, guest threading or privileged exception state yet.
 
 SVC produces a host-visible event after advancing the guest PC. The NRO
-session dispatches only OutputDebugString and ExitProcess; the raw harness
+session dispatches the [implemented SVC/IPC subset](kernel-ipc.md); the raw harness
 reports the event. Unsupported calls fail explicitly. Unknown instructions
 and memory faults preserve the instruction's prior CPU state.
 

@@ -2,7 +2,8 @@
 
 The implemented path is `NroImage` -> process mappings -> `Session` -> original
 A64 interpreter -> `Kernel::dispatch`. It runs the self-authored
-`examples/homebrew/hello.nro`, assembled and linked from `hello.S` by LLVM.
+four `examples/homebrew/*.nro` fixtures, assembled and linked from their `.S`
+sources by LLVM.
 No existing emulator code or console binaries are involved.
 
 Supported format: static, uncompressed NRO0 version 0 with zero flags, a text
@@ -18,20 +19,23 @@ address space. File input is limited to 64 MiB, and the image's committed guest
 memory to 128 MiB. These are prototype resource limits, not console specifications.
 
 The session currently uses a fixed layout (no ASLR): image at `0x100000`,
-read-only entry configuration at `0x7fff0000`, and a 64 KiB stack at
+read-only entry configuration at `0x7fff0000`, an RW TLS page at `0x7ffe0000`, and a 64 KiB stack at
 `0x80000000`. Reserved guard pages surround the stack. The config supplies a
-single main-thread identity, application type, an availability hint for the
-two implemented SVCs, and an end marker. X0 points to config, X1 is all ones,
-LR is zero, and SP is 16-byte aligned. There is no handle/scheduler implementation
-beyond the identity of this sole executing context; thread/handle operations
-still fail as unsupported.
+single main-thread handle, application type, two 64-bit SVC availability masks,
+and an end marker. X0 points to config, X1 is all ones, LR is zero, and SP is
+16-byte aligned. Guest MRS TPIDRRO_EL0 reads `0x7ffe0200`; its first 256 bytes
+form the IPC buffer. This does not read any host thread register. Handles and
+event polling are implemented; there is still no thread scheduler.
 
 Implemented calls:
 
 - SVC `0x27`, OutputDebugString: reads X0/X1 as guest address/byte count,
   preserves the bytes in bounded host records and returns W0=0 on success.
 - SVC `0x07`, ExitProcess: ends the process without a fabricated guest exit-code
-  argument or returning to the following instruction.
+  argument or returning to the following instruction, and releases its handles.
+- ConnectToNamedPort, SendSyncRequest and CloseHandle; CreateEvent, SignalEvent,
+  ClearEvent, ResetSignal and polling WaitSynchronization. Their supported
+  behavior and error boundaries are documented in [kernel-ipc.md](kernel-ipc.md).
 
 The debug path allows at most 16 KiB per message, 1 MiB total and 4096 records.
 An invalid buffer, exceeded limit or unsupported SVC faults this strict initial

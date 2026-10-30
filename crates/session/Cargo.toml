@@ -10,6 +10,7 @@ emulator-a64 = { path = "../a64" }
 emulator-memory = { path = "../memory" }
 emulator-loader = { path = "../loader" }
 emulator-kernel = { path = "../kernel" }
+emulator-services = { path = "../services" }
 
 [lints]
 workspace = true

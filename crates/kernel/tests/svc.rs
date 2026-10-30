@@ -16,7 +16,7 @@ fn debug_output_reads_guest_bytes_and_returns_success_only_after_validation() {
     let mut kernel = Kernel::default();
     assert_eq!(
         kernel
-            .dispatch(SVC_OUTPUT_DEBUG_STRING, &mut cpu, &memory)
+            .dispatch(SVC_OUTPUT_DEBUG_STRING, &mut cpu, &mut memory)
             .unwrap(),
         KernelEvent::Continue
     );
@@ -26,20 +26,20 @@ fn debug_output_reads_guest_bytes_and_returns_success_only_after_validation() {
 
 #[test]
 fn invalid_pointer_and_oversized_output_do_not_create_partial_records() {
-    let memory = AddressSpace::default();
+    let mut memory = AddressSpace::default();
     let mut cpu = Cpu::new(0, 0);
     cpu.x[0] = 0x1000;
     cpu.x[1] = 4;
     let original = cpu.clone();
     let mut kernel = Kernel::default();
     assert!(matches!(
-        kernel.dispatch(SVC_OUTPUT_DEBUG_STRING, &mut cpu, &memory),
+        kernel.dispatch(SVC_OUTPUT_DEBUG_STRING, &mut cpu, &mut memory),
         Err(KernelError::InvalidDebugBuffer(_))
     ));
     assert_eq!(cpu, original);
     cpu.x[1] = u64::MAX;
     assert_eq!(
-        kernel.dispatch(SVC_OUTPUT_DEBUG_STRING, &mut cpu, &memory),
+        kernel.dispatch(SVC_OUTPUT_DEBUG_STRING, &mut cpu, &mut memory),
         Err(KernelError::DebugLimit)
     );
     assert!(kernel.debug_records().is_empty());
@@ -47,25 +47,25 @@ fn invalid_pointer_and_oversized_output_do_not_create_partial_records() {
 
 #[test]
 fn exit_process_has_no_return_value_and_unknown_calls_are_not_stubbed() {
-    let memory = AddressSpace::default();
+    let mut memory = AddressSpace::default();
     let mut cpu = Cpu::new(0, 0);
     cpu.x[0] = 123;
     let mut kernel = Kernel::default();
     assert_eq!(
-        kernel.dispatch(0x42, &mut cpu, &memory),
+        kernel.dispatch(0x42, &mut cpu, &mut memory),
         Err(KernelError::UnsupportedSupervisorCall(0x42))
     );
     assert_eq!(cpu.x[0], 123);
     assert_eq!(
         kernel
-            .dispatch(SVC_EXIT_PROCESS, &mut cpu, &memory)
+            .dispatch(SVC_EXIT_PROCESS, &mut cpu, &mut memory)
             .unwrap(),
         KernelEvent::ProcessExited
     );
     assert!(kernel.exited());
     assert_eq!(cpu.x[0], 123);
     assert_eq!(
-        kernel.dispatch(SVC_EXIT_PROCESS, &mut cpu, &memory),
+        kernel.dispatch(SVC_EXIT_PROCESS, &mut cpu, &mut memory),
         Err(KernelError::ProcessAlreadyExited)
     );
 }

@@ -62,6 +62,9 @@ impl Width {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Instruction {
     Nop,
+    ReadThreadLocal {
+        rd: u8,
+    },
     Movz {
         width: Width,
         rd: u8,
@@ -157,6 +160,7 @@ pub struct Cpu {
     pub sp: u64,
     pub pc: u64,
     pub nzcv: Nzcv,
+    pub tpidrro_el0: u64,
 }
 
 impl Cpu {
@@ -205,6 +209,7 @@ impl Cpu {
         let mut event = StepEvent::Continue;
         match instruction {
             Instruction::Nop => {}
+            Instruction::ReadThreadLocal { rd } => self.write_zero(rd, self.tpidrro_el0),
             Instruction::Movz { width, rd, value } => self.write_zero(rd, value & width.mask()),
             Instruction::MoveWide {
                 width,
@@ -329,6 +334,9 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
     let rn = ((word >> 5) & 31) as u8;
     if word == 0xd503_201f {
         return Ok(Instruction::Nop);
+    }
+    if word & 0xffff_ffe0 == 0xd53b_d060 {
+        return Ok(Instruction::ReadThreadLocal { rd });
     }
     if word & 0x1f00_0000 == 0x1000_0000 {
         let immediate = ((word >> 5) & 0x7ffff) << 2 | ((word >> 29) & 3);

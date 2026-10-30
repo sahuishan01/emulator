@@ -9,17 +9,18 @@ The project plan is split into [architecture](docs/architecture.md),
 [implementation milestones](docs/implementation-plan.md). These distinguish
 the implemented components from the remaining Switch/Android work.
 
-The original Rust engine now loads our own static NRO homebrew, executes it
-through an A64 interpreter subset, emits debug output through an implemented
-kernel call, and exits. A separate Android Vulkan GPU Lab APK exercises image
-transfers, depth testing, compute-to-draw visibility, BC1 conversion, sampled
-draws and converted-image updates. All six checks passed in the user's supplied
+The original Rust engine loads four of our own static NRO programs and executes
+them through an A64 interpreter subset. They exercise debug output, service
+discovery and IPC, shared cloned-session lifetimes, and event signaling/polling.
+The Android lab now embeds this engine and runs these programs alongside six
+native Vulkan checks: image transfers, depth testing, compute-to-draw visibility,
+BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
 [device evidence and its limits](docs/validation/g720-sampling.md).
 
 The engine does not run commercial Switch games. Guest GPU commands, shader
-translation, threads/IPC, most CPU instructions and the gameplay application
+translation, thread scheduling/blocking waits, most CPU instructions and the gameplay application
 are still to be implemented. The GPU Lab uses our native host shaders; it does
 not execute guest graphics or run Z-A.
 
@@ -47,8 +48,10 @@ Guest process exited after 5 instructions.
 The bounded loader validates the supported NRO0 header, maps RX/R/RW
 segments, zeroes BSS and supplies a guarded stack and minimal homebrew entry
 configuration. See [the exact supported format and ABI](docs/nro-loader.md).
-Only debug-output and process-exit SVCs are implemented. Unsupported operations
-produce explicit errors.
+Handles, bounded HIPC/CMIF v0, session cloning and manual-reset events are also
+implemented. Run `ipc-counter.nro`, `ipc-clone.nro` or `events.nro` through the
+same command to exercise them. See [the kernel/IPC subset](docs/kernel-ipc.md)
+for exact behavior and limits. Unsupported operations produce explicit errors.
 
 The raw CPU regression demo remains available:
 
@@ -77,33 +80,36 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/memory` | Bounded owned mappings, reservation/commit/protect/unmap, transactional mapping and cross-region R/W/X checks |
 | `crates/a64` | Registers, instruction decoding/execution, arithmetic flags, explicit faults and SVC events |
 | `crates/loader` | Bounded static NRO validation, segments, permissions and BSS |
-| `crates/kernel` | Debug output, process exit and minimal homebrew configuration |
-| `crates/session` | Process entry state, guarded stack and resumable execution budgets |
+| `crates/ipc` | Bounded HIPC/CMIF v0 request parsing and reply encoding |
+| `crates/kernel` | SVC dispatch, bounded handles, IPC transactions, session cloning and event polling |
+| `crates/services` | Minimal CMIF service manager and our `emu:test` diagnostic counter |
+| `crates/session` | Process entry state, guarded stack, guest TLS and resumable execution budgets |
 | `crates/texture` | Original bounded BC1 RGBA UNORM reference decoder |
 | `crates/cli` | NRO/raw-program execution and demo |
+| `crates/android-ffi` | Bounded value-only C ABI that executes four original guest programs |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
-| `examples/homebrew` | Our homebrew source and assembled NRO fixture |
+| `examples/homebrew` | Four original homebrew sources and assembled NRO fixtures |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
-| `android/gpu-lab` | Native Android diagnostics application and JSON export |
+| `android/gpu-lab` | Original engine and native GPU diagnostics with retained JSON/export |
 | `tools/collect_android_gpu.py` | Optional read-only Android capability/exit-history capture |
 | `docs/architecture.md` | Original emulator design and staged milestones |
 
 Implemented instruction forms: NOP; ADR/ADRP; MOVN/MOVZ/MOVK W/X; immediate ADD/SUB with optional
-flags; B/BL; B.cond; CBZ/CBNZ W/X; RET; unsigned-immediate LDR/STR W/X; SVC.
+flags; B/BL; B.cond; CBZ/CBNZ W/X; RET; unsigned-immediate LDR/STR W/X; MRS TPIDRRO_EL0; SVC.
 Other forms fail explicitly. The interpreter is single-threaded and does not
 implement the full A64 ISA, floating point/SIMD, atomics, privileged exceptions,
 or a page-table/MMU model. Memory accesses may cross adjacent mappings when
 every part permits the operation; failed writes leave the entire range intact.
 
-## Android GPU Lab
+## Android engine and GPU lab
 
 The verified development APK, checksum and packaging report are attached to
-the [GPU Lab development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.3.0-dev)
-in this private repository. The APK is a host Vulkan diagnostic; it does not
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.4.0-dev)
+in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.3.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.3.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.4.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.4.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. GitHub redirects downloads to temporary signed asset
@@ -116,7 +122,13 @@ that path works.
 
 Build instructions and the exact workloads are in
 [native/gpu-lab/README.md](native/gpu-lab/README.md). With the pinned Android
-toolchain installed:
+toolchain installed, also install the pinned Rust Android targets:
+
+```sh
+rustup toolchain install 1.85.1 --profile minimal --target aarch64-linux-android --target x86_64-linux-android
+```
+
+Then build (the Gradle task cross-compiles the Rust engine automatically):
 
 ```sh
 cd android
@@ -124,11 +136,13 @@ cd android
 ```
 
 Output: `android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`.
-The APK includes arm64-v8a and x86_64 libraries. Install it, select **Run GPU
-checks**, then **Export report** to save its JSON through Android's file
+The APK includes arm64-v8a and x86_64 libraries. Install it, select **Run engine
+and GPU checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. The APK is a development diagnostic, separate from the Rust runner.
+devices. The report separates four actual guest interpreter checks from six
+host GPU checks. See [the Android engine boundary](docs/android-engine.md)
+for its build, report schema and verification limits.
 
 ## Validation
 
@@ -147,13 +161,17 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has 40 Rust tests and 11 independently assembled A64 fixtures.
+The current suite has 60 Rust tests and 15 independently assembled fixtures
+(11 raw A64 programs and four NROs).
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
 All six Vulkan workloads passed on desktop llvmpipe with zero validation
 errors and on an Android 15 SwiftShader AVD. A deliberately stale update in a
 temporary control build fails the update test while the preceding five pass.
 All six passed in the user's supplied physical G720 report, with validation disabled. APK
 build, lint, signature, native architectures and 16 KiB ELF/ZIP alignment were
-verified. These results cover the owned workloads; guest graphics, sustained
+verified. In 0.4.0-dev, all four Rust guest checks also passed through JNI in
+the Android AVD; upgrade invalidation, exact JSON export and cold restoration
+passed. Physical ARM64 engine execution still needs the new phone report.
+These results cover the owned workloads; guest graphics, sustained
 performance and 16 KiB Android runtime behavior remain untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).

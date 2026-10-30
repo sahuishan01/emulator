@@ -3,8 +3,8 @@
 This is original host-side diagnostic code shared between a desktop CLI and
 the Android GPU Lab application. It does not emulate Tegra commands, translate
 guest shaders or run Switch games. The C++ implementation uses the NDK/system
-Vulkan interfaces; the emulation engine remains the separate original Rust
-workspace.
+Vulkan interfaces. The Android package also links the original Rust workspace
+for CPU/kernel/IPC reference checks; the desktop Vulkan runner remains independent.
 
 Six bounded offscreen workloads (workload version 3):
 
@@ -74,6 +74,11 @@ Android CLI, missing native packages can be installed using
 `android sdk install ndk/28.2.13676358` and `android sdk install cmake/3.22.1`.
 Older SDK managers use their corresponding semicolon package IDs.
 
+The Android package also embeds our original Rust engine. Install rustup's
+`1.85.1` toolchain with `aarch64-linux-android` and `x86_64-linux-android` targets.
+Gradle runs `tools/build_android_engine.py` before CMake; that helper currently
+supports Linux hosts. See [the Android boundary](../../docs/android-engine.md).
+
 ```sh
 cd android
 ./gradlew :gpu-lab:assembleDebug :gpu-lab:lintDebug --no-daemon
@@ -84,6 +89,9 @@ separate package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
+Version 0.4.0-dev uses schema version 2: `engine` contains four actual guest
+reference-program results, while `gpu` contains these six unchanged native
+Vulkan results. Top-level `allPassed` requires both groups to pass.
 The last completed report is retained across activity recreation.
 Reports from an older workload version are not displayed as current results;
 after upgrading from an earlier workload version, run the updated checks again.

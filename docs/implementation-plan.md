@@ -13,13 +13,14 @@ GT 7 Dream Edition / Immortalis-G720 as the first physical graphics target.
 The eventual title target is the original Switch version of Pokémon Legends:
 Z-A. Success claims must name the build, device, driver, title version and scene.
 
-Current foundation: seven original Rust crates implement bounded guest memory,
-a small A64 interpreter, a static NRO subset, debug-output/exit SVCs and a CLI
-session. Our NRO prints its known message and exits after five instructions.
-All 40 Rust tests and 11 independent LLVM fixture comparisons pass. The texture
-crate adds original BC1 RGBA UNORM reference decoding and a reproducible fixture.
+Current foundation: ten original Rust crates implement bounded guest memory,
+a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
+service sessions, event polling and CLI/Android reference execution. Four owned
+NROs exercise the implemented behavior. All 60 Rust tests and 15 independent
+LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
+reference decoding and a reproducible fixture.
 
-The separate Android GPU Lab APK builds and passes lint, signature and native
+The Android engine/GPU Lab APK builds and passes lint, signature and native
 packaging checks. Six host workloads pass on llvmpipe with zero Vulkan
 validation errors and on an Android 15 SwiftShader AVD. All six, including
 BC1 conversion, sampling and update/resampling, passed in the user's supplied
@@ -27,7 +28,7 @@ physical G720 0.3.0-dev report. This closes the owned host corpus checkpoint,
 not guest
 graphics. APK export/state retention are exercised
 separately from graphics;
-there is no guest GPU, shader translator, scheduler/IPC or commercial game
+there is no guest GPU, shader translator, thread scheduler or commercial game
 support yet.
 
 ## Milestones and dependency gates
@@ -51,15 +52,16 @@ commercial startup compatibility. M1B has a buildable laboratory and initial
 offscreen workloads and an initial physical-device report. Its expanded
 texture, shader-stage and presentation experiments below remain open. BC1
 reference/GPU conversion is implemented and its initial physical corpus passed.
-The next checkpoint is sampling the converted image in a draw, with reference
-readback, synchronization, update/lifetime and resource-peak evidence.
-The 0.3.0-dev native suite now implements sampled draws and changed-content
+The 0.3.0-dev native suite implements sampled draws and changed-content
 reuse in one submission, with a CPU reference and Vulkan allocation counters.
 All six now pass in the supplied physical G720 report. These are host
-workloads, not M4. The next main-engine slice is original handles and bounded
-IPC exercised by owned guest homebrew, then scheduling and guest GPU-facing
-service work. Broader host format/tiling/presentation work remains open.
-M3 onward is unimplemented.
+workloads, not M4. M3 now has verified handles, bounded CMIF requests/replies,
+cloned-session identity/lifetime, manual-reset events and zero-timeout polling,
+exercised through owned guest NROs. The Android lab embeds that exact engine
+for device testing. M3 remains incomplete: thread creation/scheduling, blocking
+waits, virtual timeouts and multithreaded guest evidence are next. Guest
+GPU-facing service work follows the necessary kernel foundations. Broader host
+format/tiling/presentation work remains open; M4 onward is unimplemented.
 
 M1B is deliberately early. The project must learn what the real Mali driver can
 do before assuming a shader or texture strategy. A native Android triangle

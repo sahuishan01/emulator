@@ -3,6 +3,23 @@ use emulator_memory::{Access, AddressSpace, MemoryError, Permissions};
 
 const CODE: u64 = 0x10_0000;
 
+#[test]
+fn thread_local_register_is_guest_owned_and_other_system_registers_fault() {
+    let (mut cpu, mut memory) = machine(include_bytes!("../../../examples/a64/thread-local.bin"));
+    cpu.tpidrro_el0 = 0x7ffe_0200;
+    let flags = cpu.nzcv;
+    assert_eq!(next_svc(&mut cpu, &mut memory), (0x42, 3));
+    assert_eq!(cpu.x[0], 0x7ffe_0200);
+    assert_eq!(cpu.sp, 0x8000);
+    assert_eq!(cpu.nzcv, flags);
+    let saved = cpu.clone();
+    assert!(matches!(
+        cpu.step(&mut memory),
+        Err(ExecutionError::UnsupportedInstruction { .. })
+    ));
+    assert_eq!(cpu, saved);
+}
+
 fn machine(program: &[u8]) -> (Cpu, AddressSpace) {
     let mut memory = AddressSpace::default();
     memory

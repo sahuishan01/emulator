@@ -1,0 +1,18 @@
+[package]
+name = "emulator-android-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+emulator-session = { path = "../session" }
+
+# Audited exception for the exported symbol attribute only. This boundary has
+# no raw pointer arguments, borrowed outputs or unsafe blocks. Engine crates
+# retain the workspace unsafe_code=forbid policy.
+[lints.rust]
+unsafe_code = "allow"

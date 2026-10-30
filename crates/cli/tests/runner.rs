@@ -47,3 +47,22 @@ fn nro_command_executes_the_loaded_homebrew() {
     assert!(output.contains("Hello from original Switch homebrew!"));
     assert!(output.contains("Guest process exited after 5 instructions"));
 }
+
+#[test]
+fn ipc_guest_runs_through_the_same_public_nro_command() {
+    let image = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/homebrew/ipc-counter.nro"
+    );
+    let result = Command::new(env!("CARGO_BIN_EXE_emulator-cli"))
+        .args(["run-nro", image])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout)
+        .contains("Guest IPC counter reached 42; handles closed."));
+}

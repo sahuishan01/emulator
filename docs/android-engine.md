@@ -1,0 +1,79 @@
+# Android original-engine checks
+
+Version 0.4.0-dev embeds the original Rust engine into the existing Android
+diagnostic app. The CPU backend interprets guest A64 instructions on both host
+architectures. It does not execute guest bytes as host machine code.
+
+The app's worker calls Rust once to execute the four original NRO fixtures
+described in [kernel-ipc.md](kernel-ipc.md), then calls the unchanged six-test
+C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
+counts, guest memory results and zero remaining handles after process exit.
+The result is not hardcoded successful output. Each native group reports its
+own failure; one failed group does not discard the other's diagnostic report.
+
+## Native boundary
+
+`crates/android-ffi` builds as a static library, linked into the existing
+`libemulator_gpu_lab.so`. Its sole C export is
+`emulator_run_reference_guests() -> EngineReport`. The C/Rust layout is a
+4104-byte, 4-byte-aligned value: u32 ABI version, u32 byte length, and 4096
+initialized payload bytes. Rust returns owned bytes by value, so callers never
+receive a Rust pointer or allocation and need no free callback. JNI validates
+ABI version/capacity before creating the Java byte array.
+
+Core crates still forbid unsafe Rust. This boundary permits the no-mangle
+export attribute only and contains no unsafe blocks or raw-pointer arguments.
+Rust panics are caught at the exported function and produce a bounded failed
+report. Allocation failure or a process/driver crash is not isolated by this
+mechanism. A future gameplay API needs lifecycle/session/surface ownership;
+the reference-report ABI is deliberately smaller.
+
+## Build
+
+The Gradle task builds both Android Rust archives before configuring CMake.
+Pins: Rust 1.85.1; NDK 28.2.13676358; Android minimum API 31; Gradle 8.9,
+AGP 8.7.3, Kotlin 2.0.21, CMake 3.22.1, compile/target SDK 35 and build-tools
+34.0.0. JDK 17 or 21 works. The cross-build helper currently supports Linux
+hosts and uses two Cargo jobs. It sets RUSTC explicitly to the named rustup
+toolchain, even when the system compiler appears first in PATH. It does not
+change the user's global Rust default.
+
+```sh
+rustup toolchain install 1.85.1 --profile minimal --target aarch64-linux-android --target x86_64-linux-android
+cd android
+./gradlew :gpu-lab:assembleDebug :gpu-lab:lintDebug --no-daemon
+```
+
+The SDK defaults to `~/Android/Sdk`, with ANDROID_SDK_ROOT/ANDROID_HOME overrides.
+Archives are under `target/android-engine/<abi>/`; the APK is
+`android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`. Packaging checks
+verify signature, ARM64/x86_64 ELF identity and 16 KiB ELF/ZIP alignment:
+
+```sh
+python3 tools/verify_gpu_apk.py android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk
+cargo run --offline -p emulator-android-ffi --example reference_report
+```
+
+The host example executes the same checks without JNI. Passing it does not
+validate the Android C ABI or either Android runtime architecture.
+
+## Report and device checkpoint
+
+The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
+installations update in place. Select **Run engine and GPU checks**, then
+**Export report**. Schema version 2, workload version 4, has separate `engine`
+and `gpu` objects and combined `allPassed`. The embedded GPU suite retains
+its own workload version 3. Engine reports record host/guest architecture,
+four per-case outcomes, instruction/IPC counts, output and handle cleanup.
+The top level adds device, Android and application identity. Previous
+workload-version reports are not shown as current results after an upgrade.
+
+The isolated Android 15/API 35 x86_64 AVD is the software QA target; its
+SwiftShader results do not establish ARM64/Mali behavior. The physical G720
+0.3.0-dev report already passed all six unchanged GPU checks. The new physical
+checkpoint is execution of the Rust CPU/kernel/IPC suite through the ARM64 C
+ABI on that phone. A new report is needed for this evidence.
+
+Neither group emulates guest GPU commands, translates guest shaders, presents
+guest frames or boots a commercial title. Pokémon Legends: Z-A remains a
+later compatibility target.

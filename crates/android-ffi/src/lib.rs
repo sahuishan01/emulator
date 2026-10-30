@@ -1,0 +1,152 @@
+//! Fixed-size value-only C ABI for original guest reference workloads.
+//! C callers receive initialized bytes, never Rust pointers or allocations.
+use emulator_session::{RunOutcome, Session, LOAD_BASE};
+use std::fmt::Write;
+
+pub const REPORT_CAPACITY: usize = 4096;
+#[repr(C)]
+pub struct EngineReport {
+    pub abi_version: u32,
+    pub length: u32,
+    pub bytes: [u8; REPORT_CAPACITY],
+}
+
+fn quote(text: &str) -> String {
+    let mut result = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            c if c < ' ' => write!(result, "\\u{:04x}", c as u32).expect("String formatting"),
+            c => result.push(c),
+        }
+    }
+    result.push('"');
+    result
+}
+
+struct Case {
+    name: &'static str,
+    image: &'static [u8],
+    message: &'static str,
+    instructions: u64,
+    ipc_calls: usize,
+    memory: Option<(u64, u64)>,
+}
+fn reference_checks() -> String {
+    let cases = [
+        Case {
+            name: "static-nro-debug-exit",
+            image: include_bytes!("../../../examples/homebrew/hello.nro"),
+            message: "Hello from original Switch homebrew!\n",
+            instructions: 5,
+            ipc_calls: 0,
+            memory: None,
+        },
+        Case {
+            name: "guest-service-manager-ipc",
+            image: include_bytes!("../../../examples/homebrew/ipc-counter.nro"),
+            message: "Guest IPC counter reached 42; handles closed.\n",
+            instructions: 384,
+            ipc_calls: 5,
+            memory: Some((0x2000, 42)),
+        },
+        Case {
+            name: "guest-cloned-session-lifetime",
+            image: include_bytes!("../../../examples/homebrew/ipc-clone.nro"),
+            message: "Guest IPC clone retained counter=43 after close.\n",
+            instructions: 529,
+            ipc_calls: 7,
+            memory: Some((0x2000, 43)),
+        },
+        Case {
+            name: "guest-event-signaling-polling",
+            image: include_bytes!("../../../examples/homebrew/events.nro"),
+            message: "Guest events signaled, waited, reset and closed.\n",
+            instructions: 87,
+            ipc_calls: 0,
+            memory: Some((0x2008, 7)),
+        },
+    ];
+    let mut all_passed = true;
+    let mut tests = Vec::new();
+    for case in cases {
+        let mut instructions = 0;
+        let mut ipc_calls = 0;
+        let mut handles = 0;
+        let mut debug = String::new();
+        let check = (|| -> Result<(), String> {
+            let mut session = Session::from_nro(case.image).map_err(|e| e.to_string())?;
+            let outcome = session.run(10000).map_err(|e| e.to_string())?;
+            instructions = session.instructions();
+            ipc_calls = session.kernel().ipc_records().len();
+            handles = session.kernel().live_handle_count();
+            for record in session.debug_records() {
+                debug.push_str(&String::from_utf8_lossy(record));
+            }
+            if outcome != RunOutcome::Exited
+                || instructions != case.instructions
+                || ipc_calls != case.ipc_calls
+                || handles != 0
+                || session.debug_records() != [case.message.as_bytes().to_vec()]
+            {
+                return Err("Reference guest output, lifetime or execution trace mismatch".into());
+            }
+            if let Some((offset, value)) = case.memory {
+                if session
+                    .memory()
+                    .read_u64(LOAD_BASE + offset)
+                    .map_err(|e| e.to_string())?
+                    != value
+                {
+                    return Err("Reference guest memory result mismatch".into());
+                }
+            }
+            Ok(())
+        })();
+        let passed = check.is_ok();
+        all_passed &= passed;
+        tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"handlesAfterExit\":{},\"debugOutput\":{},\"error\":{}}}",
+            quote(case.name),passed,instructions,ipc_calls,handles,quote(&debug),quote(&check.err().unwrap_or_default())));
+    }
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":1,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+        quote(std::env::consts::ARCH),tests.join(","),all_passed)
+}
+
+/// The sole exported symbol. C ABI layout is mirrored/checked in jni.cpp.
+/// Panics never unwind through C; output has no pointers and needs no free call.
+#[no_mangle]
+pub extern "C" fn emulator_run_reference_guests() -> EngineReport {
+    let mut json=std::panic::catch_unwind(reference_checks).unwrap_or_else(|_|String::from("{\"scope\":\"original-guest-reference-programs\",\"allPassed\":false,\"error\":\"Engine panic\"}"));
+    if json.len() > REPORT_CAPACITY {
+        json=String::from("{\"scope\":\"original-guest-reference-programs\",\"allPassed\":false,\"error\":\"Report capacity exceeded\"}");
+    }
+    let mut report = EngineReport {
+        abi_version: 1,
+        length: json.len() as u32,
+        bytes: [0; REPORT_CAPACITY],
+    };
+    report.bytes[..json.len()].copy_from_slice(json.as_bytes());
+    report
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn c_abi_returns_bounded_initialized_reference_results() {
+        assert_eq!(std::mem::size_of::<EngineReport>(), 4104);
+        assert_eq!(std::mem::align_of::<EngineReport>(), 4);
+        let result = emulator_run_reference_guests();
+        assert_eq!(result.abi_version, 1);
+        let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
+        assert!(text.ends_with("\"allPassed\":true}"));
+        assert_eq!(text.matches("\"passed\":true").count(), 4);
+        assert!(result.bytes[result.length as usize..]
+            .iter()
+            .all(|b| *b == 0));
+    }
+}

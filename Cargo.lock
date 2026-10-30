@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "emulator-android-ffi"
+version = "0.1.0"
+dependencies = [
+ "emulator-session",
+]
+
+[[package]]
 name = "emulator-cli"
 version = "0.1.0"
 dependencies = [
@@ -20,10 +27,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "emulator-ipc"
+version = "0.1.0"
+
+[[package]]
 name = "emulator-kernel"
 version = "0.1.0"
 dependencies = [
  "emulator-a64",
+ "emulator-ipc",
  "emulator-memory",
 ]
 
@@ -39,6 +51,14 @@ name = "emulator-memory"
 version = "0.1.0"
 
 [[package]]
+name = "emulator-services"
+version = "0.1.0"
+dependencies = [
+ "emulator-ipc",
+ "emulator-kernel",
+]
+
+[[package]]
 name = "emulator-session"
 version = "0.1.0"
 dependencies = [
@@ -46,6 +66,7 @@ dependencies = [
  "emulator-kernel",
  "emulator-loader",
  "emulator-memory",
+ "emulator-services",
 ]
 
 [[package]]

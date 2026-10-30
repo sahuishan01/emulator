@@ -19,10 +19,11 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 3
+        private const val WORKLOAD_VERSION = 4
     }
 
     private external fun runGpuChecks(): ByteArray
+    private external fun runEngineChecks(): ByteArray
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var output: TextView
     private lateinit var runButton: Button
@@ -47,12 +48,12 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
         })
         layout.addView(TextView(this).apply {
-            text = "Native Vulkan diagnostics for the original emulator. Runs offscreen image and synchronization checks."
+            text = "Original guest CPU, kernel and IPC checks, plus native Vulkan rendering diagnostics."
             textSize = 15f
             setPadding(0, padding / 2, 0, padding / 2)
         })
         runButton = Button(this).apply {
-            text = "Run GPU checks"
+            text = "Run engine and GPU checks"
             setOnClickListener { runChecks() }
         }
         exportButton = Button(this).apply {
@@ -98,10 +99,28 @@ class MainActivity : Activity() {
     private fun runChecks() {
         runButton.isEnabled = false
         exportButton.isEnabled = false
-        output.text = "Running native GPU checks…"
+        output.text = "Running original engine and GPU checks…"
         worker.execute {
             val result = try {
-                JSONObject(String(runGpuChecks(), Charsets.UTF_8)).apply {
+                val engine = try {
+                    JSONObject(String(runEngineChecks(), Charsets.UTF_8))
+                } catch (error: Exception) {
+                    JSONObject().put("scope", "original-guest-reference-programs").put("allPassed", false)
+                        .put("error", error.message ?: error.javaClass.simpleName)
+                }
+                val gpu = try {
+                    JSONObject(String(runGpuChecks(), Charsets.UTF_8))
+                } catch (error: Exception) {
+                    JSONObject().put("scope", "host-vulkan-only").put("allPassed", false)
+                        .put("error", error.message ?: error.javaClass.simpleName)
+                }
+                JSONObject().apply {
+                    put("schemaVersion", 2)
+                    put("workloadVersion", WORKLOAD_VERSION)
+                    put("scope", "original-engine-and-host-vulkan")
+                    put("engine", engine)
+                    put("gpu", gpu)
+                    put("allPassed", engine.optBoolean("allPassed", false) && gpu.optBoolean("allPassed", false))
                     put("phoneModel", Build.MODEL)
                     put("manufacturer", Build.MANUFACTURER)
                     put("socModel", Build.SOC_MODEL)
@@ -111,7 +130,7 @@ class MainActivity : Activity() {
                     put("capturedAtEpochMs", System.currentTimeMillis())
                 }.toString(2)
             } catch (error: Exception) {
-                JSONObject().put("scope", "host-vulkan-only").put("allPassed", false)
+                JSONObject().put("scope", "original-engine-and-host-vulkan").put("allPassed", false)
                     .put("error", error.message ?: error.javaClass.simpleName).toString(2)
             }
             try { filesDir.resolve("last-report.json").writeText(result) } catch (_: Exception) { }

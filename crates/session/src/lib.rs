@@ -10,6 +10,8 @@ pub const LOAD_BASE: u64 = 0x10_0000;
 pub const CONFIG_BASE: u64 = 0x7fff_0000;
 pub const STACK_BASE: u64 = 0x8000_0000;
 pub const STACK_SIZE: usize = 64 * 1024;
+pub const TLS_PAGE: u64 = 0x7ffe_0000;
+pub const TLS_BASE: u64 = TLS_PAGE + 0x200;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionState {
@@ -81,13 +83,24 @@ impl Session {
         memory
             .commit(STACK_BASE, vec![0; STACK_SIZE], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        memory
+            .map(TLS_PAGE, vec![0; 4096], Permissions::READ_WRITE)
+            .map_err(SessionError::Memory)?;
         let mut cpu = Cpu::new(image.entry, STACK_BASE + STACK_SIZE as u64);
+        cpu.tpidrro_el0 = TLS_BASE;
         cpu.x[0] = CONFIG_BASE;
         cpu.x[1] = u64::MAX;
+        let mut kernel = Kernel::default();
+        kernel
+            .register_named_port(
+                "sm:",
+                Box::new(emulator_services::ServiceManager::default()),
+            )
+            .map_err(SessionError::Kernel)?;
         Ok(Self {
             cpu,
             memory,
-            kernel: Kernel::default(),
+            kernel,
             image,
             state: SessionState::Loaded,
             instructions: 0,
@@ -112,6 +125,9 @@ impl Session {
     pub fn debug_records(&self) -> &[Vec<u8>] {
         self.kernel.debug_records()
     }
+    pub fn kernel(&self) -> &Kernel {
+        &self.kernel
+    }
 
     pub fn run(&mut self, budget: u64) -> Result<RunOutcome, SessionError> {
         if !matches!(self.state, SessionState::Loaded | SessionState::Paused) {
@@ -128,7 +144,10 @@ impl Session {
             };
             self.instructions = self.instructions.saturating_add(1);
             if let StepEvent::SupervisorCall { immediate } = event {
-                match self.kernel.dispatch(immediate, &mut self.cpu, &self.memory) {
+                match self
+                    .kernel
+                    .dispatch(immediate, &mut self.cpu, &mut self.memory)
+                {
                     Ok(KernelEvent::Continue) => {}
                     Ok(KernelEvent::ProcessExited) => {
                         self.state = SessionState::Exited;
