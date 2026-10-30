@@ -1,0 +1,147 @@
+//! Composition of original NRO loading, CPU execution and the minimal kernel.
+
+use emulator_a64::{Cpu, ExecutionError, StepEvent};
+use emulator_kernel::{homebrew_config, Kernel, KernelError, KernelEvent};
+use emulator_loader::{LoadError, LoadedImage, NroImage};
+use emulator_memory::{AddressSpace, MemoryError, Permissions};
+use std::fmt;
+
+pub const LOAD_BASE: u64 = 0x10_0000;
+pub const CONFIG_BASE: u64 = 0x7fff_0000;
+pub const STACK_BASE: u64 = 0x8000_0000;
+pub const STACK_SIZE: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionState {
+    Loaded,
+    Running,
+    Paused,
+    Exited,
+    Faulted,
+}
+
+#[derive(Debug)]
+pub enum SessionError {
+    Load(LoadError),
+    Memory(MemoryError),
+    Cpu(ExecutionError),
+    Kernel(KernelError),
+    InvalidState(SessionState),
+}
+
+impl fmt::Display for SessionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Load(error) => error.fmt(f),
+            Self::Memory(error) => error.fmt(f),
+            Self::Cpu(error) => error.fmt(f),
+            Self::Kernel(error) => error.fmt(f),
+            Self::InvalidState(state) => write!(f, "cannot execute session in state {state:?}"),
+        }
+    }
+}
+impl std::error::Error for SessionError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunOutcome {
+    Exited,
+    BudgetExhausted,
+}
+
+pub struct Session {
+    cpu: Cpu,
+    memory: AddressSpace,
+    kernel: Kernel,
+    image: LoadedImage,
+    state: SessionState,
+    instructions: u64,
+}
+
+impl Session {
+    pub fn from_nro(bytes: &[u8]) -> Result<Self, SessionError> {
+        let nro = NroImage::parse(bytes).map_err(SessionError::Load)?;
+        let mut memory = AddressSpace::default();
+        let image = nro
+            .map_into(&mut memory, LOAD_BASE)
+            .map_err(SessionError::Load)?;
+        let mut config = homebrew_config();
+        config.resize(4096, 0);
+        memory
+            .map(CONFIG_BASE, config, Permissions::READ)
+            .map_err(SessionError::Memory)?;
+        memory
+            .reserve(STACK_BASE - 4096, 4096)
+            .map_err(SessionError::Memory)?;
+        memory
+            .reserve(STACK_BASE + STACK_SIZE as u64, 4096)
+            .map_err(SessionError::Memory)?;
+        memory
+            .reserve(STACK_BASE, STACK_SIZE)
+            .map_err(SessionError::Memory)?;
+        memory
+            .commit(STACK_BASE, vec![0; STACK_SIZE], Permissions::READ_WRITE)
+            .map_err(SessionError::Memory)?;
+        let mut cpu = Cpu::new(image.entry, STACK_BASE + STACK_SIZE as u64);
+        cpu.x[0] = CONFIG_BASE;
+        cpu.x[1] = u64::MAX;
+        Ok(Self {
+            cpu,
+            memory,
+            kernel: Kernel::default(),
+            image,
+            state: SessionState::Loaded,
+            instructions: 0,
+        })
+    }
+
+    pub fn state(&self) -> SessionState {
+        self.state
+    }
+    pub fn cpu(&self) -> &Cpu {
+        &self.cpu
+    }
+    pub fn memory(&self) -> &AddressSpace {
+        &self.memory
+    }
+    pub fn image(&self) -> LoadedImage {
+        self.image
+    }
+    pub fn instructions(&self) -> u64 {
+        self.instructions
+    }
+    pub fn debug_records(&self) -> &[Vec<u8>] {
+        self.kernel.debug_records()
+    }
+
+    pub fn run(&mut self, budget: u64) -> Result<RunOutcome, SessionError> {
+        if !matches!(self.state, SessionState::Loaded | SessionState::Paused) {
+            return Err(SessionError::InvalidState(self.state));
+        }
+        self.state = SessionState::Running;
+        for _ in 0..budget {
+            let event = match self.cpu.step(&mut self.memory) {
+                Ok(event) => event,
+                Err(error) => {
+                    self.state = SessionState::Faulted;
+                    return Err(SessionError::Cpu(error));
+                }
+            };
+            self.instructions = self.instructions.saturating_add(1);
+            if let StepEvent::SupervisorCall { immediate } = event {
+                match self.kernel.dispatch(immediate, &mut self.cpu, &self.memory) {
+                    Ok(KernelEvent::Continue) => {}
+                    Ok(KernelEvent::ProcessExited) => {
+                        self.state = SessionState::Exited;
+                        return Ok(RunOutcome::Exited);
+                    }
+                    Err(error) => {
+                        self.state = SessionState::Faulted;
+                        return Err(SessionError::Kernel(error));
+                    }
+                }
+            }
+        }
+        self.state = SessionState::Paused;
+        Ok(RunOutcome::BudgetExhausted)
+    }
+}

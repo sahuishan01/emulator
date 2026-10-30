@@ -1,0 +1,67 @@
+# Initial original NRO execution
+
+The implemented path is `NroImage` -> process mappings -> `Session` -> original
+A64 interpreter -> `Kernel::dispatch`. It runs the self-authored
+`examples/homebrew/hello.nro`, assembled and linked from `hello.S` by LLVM.
+No existing emulator code or console binaries are involved.
+
+Supported format: static, uncompressed NRO0 version 0 with zero flags, a text
+segment containing the start/header, and guest-page-aligned file segments.
+Text is RX, rodata is R, and data plus zero-initialized BSS is RW. A file can
+have trailing homebrew assets, but they are not mounted or interpreted.
+MOD0/module relocation, dynamic/embedded metadata, additional/compressed
+headers, NSO and full homebrew runtimes are explicitly unsupported.
+
+The parser validates the complete supported header and segment layout before
+mapping. A batch mapping is transactional, including conflicts with an existing
+address space. File input is limited to 64 MiB, and the image's committed guest
+memory to 128 MiB. These are prototype resource limits, not console specifications.
+
+The session currently uses a fixed layout (no ASLR): image at `0x100000`,
+read-only entry configuration at `0x7fff0000`, and a 64 KiB stack at
+`0x80000000`. Reserved guard pages surround the stack. The config supplies a
+single main-thread identity, application type, an availability hint for the
+two implemented SVCs, and an end marker. X0 points to config, X1 is all ones,
+LR is zero, and SP is 16-byte aligned. There is no handle/scheduler implementation
+beyond the identity of this sole executing context; thread/handle operations
+still fail as unsupported.
+
+Implemented calls:
+
+- SVC `0x27`, OutputDebugString: reads X0/X1 as guest address/byte count,
+  preserves the bytes in bounded host records and returns W0=0 on success.
+- SVC `0x07`, ExitProcess: ends the process without a fabricated guest exit-code
+  argument or returning to the following instruction.
+
+The debug path allows at most 16 KiB per message, 1 MiB total and 4096 records.
+An invalid buffer, exceeded limit or unsupported SVC faults this strict initial
+session. Complete Horizon error-result and exception delivery semantics are
+not implemented. CLI display escapes non-printing control characters; kernel
+records retain the original bytes.
+
+An instruction budget pauses execution, which can resume without repeating
+already committed output. An exited/faulted session cannot be executed again.
+Guest CPU faults and unsupported calls have separate typed errors.
+
+Memory now supports transactional batches, reserved/committed regions,
+cross-region access, protection and unmapping. Entire write ranges are checked
+before mutation. The current reference implementation copies affected memory
+layouts during protection/unmapping; shared physical backing/aliases, page
+tables and optimized backing management are future work.
+
+Run:
+
+```sh
+cargo run --offline -p emulator-cli -- run-nro examples/homebrew/hello.nro
+```
+
+Expected output:
+
+```text
+Hello from original Switch homebrew!
+Guest process exited after 5 instructions.
+```
+
+Public interface references: [NRO](https://www.switchbrew.org/wiki/NRO),
+[homebrew entry ABI](https://switchbrew.org/wiki/Homebrew_ABI),
+[SVC interfaces](https://www.switchbrew.org/wiki/SVC).

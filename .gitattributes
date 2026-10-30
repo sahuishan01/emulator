@@ -1,0 +1,6 @@
+* text=auto
+*.bat text eol=crlf
+android/gradlew text eol=lf
+*.bin binary
+*.nro binary
+*.jar binary

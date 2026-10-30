@@ -1,0 +1,15 @@
+#version 450
+layout(local_size_x = 36) in;
+layout(std430, binding = 0) buffer Vertices { float values[]; };
+const float data[36] = float[](
+    -0.8, -0.8, 0.2, 0.0, 1.0, 0.0,
+     0.8, -0.8, 0.2, 0.0, 1.0, 0.0,
+     0.0,  0.8, 0.2, 0.0, 1.0, 0.0,
+    -0.8, -0.8, 0.7, 1.0, 0.0, 0.0,
+     0.8, -0.8, 0.7, 1.0, 0.0, 0.0,
+     0.0,  0.8, 0.7, 1.0, 0.0, 0.0
+);
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index < 36) values[index] = data[index];
+}

@@ -1,0 +1,13 @@
+[package]
+name = "emulator-kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+emulator-a64 = { path = "../a64" }
+emulator-memory = { path = "../memory" }
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+{
+  "purpose": "historical references only; not implementation or runtime dependencies",
+  "checked_on": "2026-10-30",
+  "sources": [
+    {
+      "name": "eden",
+      "role": "historical-reference",
+      "url": "https://git.eden-emu.dev/eden-emu/eden.git",
+      "commit": "035f4611cb8f369d11e97651aff1988e60e8a120",
+      "path": "upstream/eden",
+      "license": "GPL-3.0-or-later"
+    },
+    {
+      "name": "lemon",
+      "role": "historical-reference",
+      "url": "https://git.lemon-emu.org/lemon/Lemon-Project.git",
+      "commit": "891be721eea35e0c075ed0d99e6b4f48a0a7843e",
+      "path": "upstream/lemon",
+      "license": "GPL-3.0-or-later"
+    }
+  ]
+}

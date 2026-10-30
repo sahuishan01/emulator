@@ -1,0 +1,145 @@
+package com.algosculptor.emulator.gpulab
+
+import android.app.Activity
+import android.content.Intent
+import android.graphics.Typeface
+import android.os.Build
+import android.os.Bundle
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import org.json.JSONObject
+import java.util.concurrent.Executors
+
+class MainActivity : Activity() {
+    companion object {
+        init { System.loadLibrary("emulator_gpu_lab") }
+        private const val EXPORT_REQUEST = 10
+    }
+
+    private external fun runGpuChecks(): ByteArray
+    private val worker = Executors.newSingleThreadExecutor()
+    private lateinit var output: TextView
+    private lateinit var runButton: Button
+    private lateinit var exportButton: Button
+    private var report: String? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val padding = (20 * resources.displayMetrics.density).toInt()
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, padding, padding, padding)
+            setOnApplyWindowInsetsListener { view, insets ->
+                val system = insets.getInsets(WindowInsets.Type.systemBars())
+                view.setPadding(padding + system.left, padding + system.top, padding + system.right, padding + system.bottom)
+                insets
+            }
+        }
+        layout.addView(TextView(this).apply {
+            text = "Emulator GPU Lab"
+            textSize = 24f
+            setTypeface(null, Typeface.BOLD)
+        })
+        layout.addView(TextView(this).apply {
+            text = "Native Vulkan diagnostics for the original emulator. Runs offscreen image and synchronization checks."
+            textSize = 15f
+            setPadding(0, padding / 2, 0, padding / 2)
+        })
+        runButton = Button(this).apply {
+            text = "Run GPU checks"
+            setOnClickListener { runChecks() }
+        }
+        exportButton = Button(this).apply {
+            text = "Export report"
+            isEnabled = false
+            setOnClickListener {
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_TITLE, "emulator-gpu-report.json")
+                }, EXPORT_REQUEST)
+            }
+        }
+        layout.addView(runButton)
+        layout.addView(exportButton)
+        output = TextView(this).apply {
+            text = "Ready. Tests use the device's system Vulkan driver."
+            textSize = 13f
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+        }
+        layout.addView(ScrollView(this).apply { addView(output) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(layout)
+        window.insetsController?.setSystemBarsAppearance(
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+        )
+        try {
+            val previous = filesDir.resolve("last-report.json")
+            if (previous.exists()) {
+                val saved = previous.readText()
+                JSONObject(saved)
+                report = saved
+                output.text = saved
+                exportButton.isEnabled = true
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun runChecks() {
+        runButton.isEnabled = false
+        exportButton.isEnabled = false
+        output.text = "Running native GPU checks…"
+        worker.execute {
+            val result = try {
+                JSONObject(String(runGpuChecks(), Charsets.UTF_8)).apply {
+                    put("phoneModel", Build.MODEL)
+                    put("manufacturer", Build.MANUFACTURER)
+                    put("socModel", Build.SOC_MODEL)
+                    put("androidVersion", Build.VERSION.RELEASE)
+                    put("androidSdk", Build.VERSION.SDK_INT)
+                    put("appVersion", packageManager.getPackageInfo(packageName, 0).versionName)
+                    put("capturedAtEpochMs", System.currentTimeMillis())
+                }.toString(2)
+            } catch (error: Exception) {
+                JSONObject().put("scope", "host-vulkan-only").put("allPassed", false)
+                    .put("error", error.message ?: error.javaClass.simpleName).toString(2)
+            }
+            try { filesDir.resolve("last-report.json").writeText(result) } catch (_: Exception) { }
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    report = result
+                    output.text = result
+                    runButton.isEnabled = true
+                    exportButton.isEnabled = true
+                }
+            }
+        }
+    }
+
+    @Deprecated("Activity result compatibility for this minimal lab")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == EXPORT_REQUEST && resultCode == RESULT_OK) {
+            val text = report ?: return
+            val uri = data?.data ?: return
+            try {
+                contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                    ?: error("Could not open report destination")
+                Toast.makeText(this, "Report exported", Toast.LENGTH_SHORT).show()
+            } catch (error: Exception) {
+                Toast.makeText(this, "Export failed: ${error.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        worker.shutdown()
+        super.onDestroy()
+    }
+}
