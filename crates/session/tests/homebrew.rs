@@ -197,3 +197,34 @@ fn guest_nv_initialization_retains_copied_memory_and_restores_on_final_close() {
     assert_eq!(session.kernel().live_transfer_memory_count(), 0);
     assert_eq!(session.memory().lent_bytes(), 0);
 }
+
+#[test]
+fn guest_nvmap_uses_shared_fd_and_buffered_ioctls_then_releases_arena() {
+    let mut session =
+        Session::from_nro(include_bytes!("../../../examples/homebrew/nvmap.nro")).unwrap();
+    assert_eq!(session.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(session.instructions(), 719);
+    assert_eq!(
+        session.debug_records(),
+        &[b"Guest NVMap created, queried and freed; descriptors closed.\n".to_vec()]
+    );
+    assert_eq!(session.memory().read_u64(LOAD_BASE + 0x3030).unwrap(), 4096);
+    assert_eq!(session.memory().read_u64(LOAD_BASE + 0x2000).unwrap(), 42);
+    let records = session.kernel().ipc_records();
+    assert_eq!(
+        records.iter().map(|r| r.command_id).collect::<Vec<_>>(),
+        [0, 1, 3, 0, 2, 1, 1, 1, 2]
+    );
+    assert_eq!(
+        (
+            records.iter().map(|r| r.send_buffers).sum::<usize>(),
+            records.iter().map(|r| r.receive_buffers).sum::<usize>(),
+            records.iter().map(|r| r.buffer_bytes).sum::<usize>(),
+            records.iter().map(|r| r.copy_handles).sum::<usize>()
+        ),
+        (4, 3, 98, 2)
+    );
+    assert_eq!(session.kernel().live_handle_count(), 0);
+    assert_eq!(session.kernel().live_transfer_memory_count(), 0);
+    assert_eq!(session.memory().lent_bytes(), 0);
+}

@@ -151,6 +151,18 @@ fn reference_checks() -> String {
             ipc_buffers: (0, 0, 0),
             copy_handles: 2,
         },
+        Case {
+            name: "guest-nvmap-device-ioctls",
+            image: include_bytes!("../../../examples/homebrew/nvmap.nro"),
+            message: "Guest NVMap created, queried and freed; descriptors closed.\n",
+            instructions: 719,
+            ipc_calls: 9,
+            memory: Some((0x3030, 4096)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (4, 3, 98),
+            copy_handles: 2,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -251,7 +263,7 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":6,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":7,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -303,7 +315,7 @@ mod tests {
         assert_eq!(result.abi_version, 1);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 9);
+        assert_eq!(text.matches("\"passed\":true").count(), 10);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

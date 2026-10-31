@@ -93,7 +93,9 @@ descriptors and GPU addresses, preserving descriptor rights. Each GetService
 creates fresh state.
 The emu:* protocols are separate from device services. nvdrv Initialize (3) now
 adopts a validated process-owned transfer arena through two copied handles;
-other NV/device commands remain explicit faults. Unsupported operations never
+Open/Close and three unallocated NVMap ioctls are described in
+[nvmap-devices.md](nvmap-devices.md). Allocation/import, GPU mapping and other
+NV commands remain unsupported. Unsupported operations never
 fabricate success.
 
 ## Evidence
@@ -111,6 +113,7 @@ Run each with `cargo run --offline -p emulator-cli -- run-nro <file>`.
 | `cancellation.nro` | Deferred and active cancellation, coalescing, preserved indices, event state and readable clear | 106 | 0 |
 | `gpu-dma.nro` | Discover emu:gpu, submit actual commands, verify two dependent copies/counters and close sessions | 338 | 4 |
 | `gpu-buffers.nro` | Grant three A/one B descriptors, submit DMA, verify returned bytes/counters and close sessions | 327 | 4 |
+| `nvmap.nro` | Open a device, clone the session, Create/SIZE/Free an unallocated NVMap object, close and verify restored memory | 719 | 9 |
 | `nv-initialize.nro` | Lend transfer memory, Initialize nvdrv with copied objects, retain through sender/receiver closes, verify restored CPU rights | 317 | 4 |
 
 Tests also cover truncated wire prefixes, PID replacement, malformed layouts,

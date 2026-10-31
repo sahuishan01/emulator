@@ -2,9 +2,10 @@
 
 Version 0.11.0-dev adds original transfer-memory lending, copied process/transfer
 handles and nvdrv command 3. This is resource ownership for the standard
-Initialize request, not a working NV device stack. Open, Close-device, ioctls,
-Aruid setup, CloneCurrentObjectEx, remote transfer mappings and shaders/rendering
-remain explicit unsupported paths. The generic CMIF CloneCurrentObject (2)
+Initialize request. Version 0.12.0-dev adds [device descriptors and unallocated
+NVMap metadata ioctls](nvmap-devices.md). Backing allocation/import, Aruid setup,
+CloneCurrentObjectEx, remote transfer mappings and shaders/rendering remain
+explicit unsupported paths. The generic CMIF CloneCurrentObject (2)
 continues to share a session identity.
 
 Public ABI references: [CreateTransferMemory](https://switchbrew.org/wiki/SVC#CreateTransferMemory),

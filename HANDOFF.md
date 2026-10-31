@@ -50,14 +50,18 @@ implementation, with no unsafe blocks or pointer arguments.
   No caller handle is consumed. nvdrv command 3 adopts a checked NONE-permission
   arena on the service snapshot; final receiver close restores CPU rights.
   Static/exchange/non-normal buffers, incoming moves/other copied object types,
-  domains/TIPC, full NV bootstrap/device ioctls and remote transfer maps remain open.
+  domains/TIPC, full NV bootstrap and remote transfer maps remain open. NV Open,
+  Close and three buffered unallocated NVMap metadata ioctls now use bounded
+  per-client fds/per-device handles, isolated snapshots and prepared B writes.
+  Rejected replies preserve IDs, object state and output. See nvmap-devices.md.
+  Allocation/import, GPU address spaces and NV submission remain open.
 - Scheduler: one host executor, up to 16 lifetime guest threads, core 0/default,
   priority/FIFO selection, 64-instruction quanta, separate registers/flags/TLS,
   sleep/yield, blocking events/joins, virtual deadlines, bounded Blocked outcome.
   One virtual ns per instruction is a reference model, not console frequency.
   Cancellation interrupts active waits or coalesces a deferred flag; polls,
   immediate results and argument errors retain it. SleepThread is not woken.
-- Nine original LLVM NROs: hello (5 instructions), counter (384/5 IPC), clone
+- Ten original LLVM NROs: hello (5 instructions), counter (384/5 IPC), clone
   (529/7 IPC), events (87), threads (97/2 threads/4 switches/3 waits/1 timeout/
   1680 virtual ns), cancellation (106/2 threads/4 switches/2 waits/2 interrupts/
   0 timeouts/1091 ns), gpu-dma (338 instructions/4 IPC/10 methods/2 launches/
@@ -65,7 +69,9 @@ implementation, with no unsafe blocks or pointer arguments.
   bytes/7 methods/1 launch/8 copied bytes). All exit with expected output/memory
   and zero handles. nv-initialize adds 317 instructions/4 IPC/2 copied handles,
   receiver retention/clone cleanup and restored source value 42. IPC traces
-  include successful buffer/copy counts and bytes.
+  include successful buffer/copy counts and bytes. nvmap adds 719 instructions/
+  9 IPC/2 copies/4 A/3 B/98 descriptor bytes, cloned-session device lifetime,
+  Create/SIZE/Free and result 4096 at image offset 0x3030.
 - GPU: bounded 40-bit GPFIFO and four modern method-packet forms; owned GPU
   mappings importing granted MemoryViews; atomic range access; stable mapping
   IDs. Address-space-bound decode queues capture immutable command bytes and
@@ -80,7 +86,7 @@ implementation, with no unsafe blocks or pointer arguments.
   prepare_front consumes a queue into a pinned owned transaction; drop cancels,
   commit executes once/returns the updated queue. An original NRO now reaches
   this engine through emu:gpu, an emulator-owned one-shot CMIF diagnostic with
-  fresh GPU class state per call. NV device objects/ioctls, shaders, fences
+  fresh GPU class state per call. NV backing allocation/mapping/submission, shaders, fences
   and rendering remain open. emu:gpu command 2 now uses A commands/source/entries
   and B output with narrow grants; it cannot read B or write A. See
   docs/hipc-buffers.md, guest-gpu-bridge.md and gpu-dma-methods.md.
@@ -88,22 +94,22 @@ implementation, with no unsafe blocks or pointer arguments.
   Vulkan lab: six offscreen transfer/depth/compute-to-draw/BC1 conversion/sampling/
   update checks. Native shaders, no guest GPU execution. Allocations count Vulkan
   backing requests only, excluding pipeline/driver and process heap overhead.
-- Android schema 3/workload 11: engine has nine actual guest NROs (suite 6),
+- Android schema 3/workload 12: engine has ten actual guest NROs (suite 7),
   gpuCore has three direct ownership/DMA cases (suite 2), gpu has six unchanged
   native Vulkan cases (workload 3). Combined allPassed requires all three.
   Both Rust exports return initialized value-only 4104-byte reports (4096
   payload bytes), caught panics, no borrowed allocations. JSON is retained and
-  exported via Android's document picker. Guest JSON is now about 3.4 KiB; watch
+  exported via Android's document picker. Guest JSON is now 3800 bytes; watch
   the 4096-byte cap when adding cases/fields (C/Rust ABI changes must match).
   No network/storage permission.
 
 ## Evidence
 
-- 137 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
+- 143 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
   malformed input, rollback, shared memory/alias visibility, pinned resident
   caps, GPU mappings, entry-spanning packets, immutable capture, queue ownership,
   atomic admission failure and ordered release, alongside prior guest behavior.
-- All 20 independent LLVM fixtures match: 11 raw A64 plus nine NROs.
+- All 21 independent LLVM fixtures match: 11 raw A64 plus ten NROs.
 - ARM64/x86_64 Rust cross-build, Gradle build/lint, signature/ELF architecture and
   16 KiB ELF/ZIP packaging checks pass. Not a 16 KiB Android runtime test.
 - GPU-core host reference cases pass: shared aliases survive protect/unmap/
@@ -124,6 +130,10 @@ implementation, with no unsafe blocks or pointer arguments.
   the new NV case has 317 instructions/4 IPC/2 copied handles/zero remaining
   handles, transfer objects or lent bytes. See android-nv-initialization.md under
   docs/validation/. Its final APK includes the W3-width regression fix.
+  Android 0.12.0-dev passes all nineteen checks, upgrade invalidation, exact
+  export and cold restore. NVMap matches 719 instructions/9 IPC/2 copies/4 A/
+  3 B/98 bytes/zero handles. System UI startup ANR needed XML-derived Wait; no
+  app crash/ANR was captured. See docs/validation/android-nvmap.md.
 - Prior Android AVD runs pass their current suites, upgrade invalidation, exact
   export and cold restore. System UI can show a startup ANR: dismiss only its
   Wait action using current XML, then re-dump before tapping. Never dismiss an
@@ -140,15 +150,14 @@ implementation, with no unsafe blocks or pointer arguments.
 
 ## Next work
 
-1. Verify suite 6 guest-nv-transfer-memory-lifetime on the phone with 0.11.0-dev:
-   317 instructions/4 IPC/2 copyHandles/expected restored-memory output/zero
-   handles. The fixture checks final receiver close and FFI checks no remaining
-   transfer objects/lent bytes. Prior seventeen checks passed physically.
-2. Implement NV device descriptor/object/ioctl semantics; Initialize currently
-   adopts only the actual checked process-owned arena. Open/device Close/ioctls,
-   Aruid and CloneCurrentObjectEx/remote transfer maps remain explicit faults.
-   Extend buffer/handle variants from owned workload needs. emu:gpu remains a
-   diagnostic bridge; synchronous DMA is not host Vulkan or guest fence timing.
+1. Verify suite 7 on the phone with 0.12.0-dev: guest-nvmap-device-ioctls expects
+   719 instructions/9 IPC/2 copies/4 A/3 B/98 bytes/zero handles. The previous
+   transfer-memory case also needs phone verification (317 instructions/4 IPC/
+   2 copies). Prior seventeen checks passed physically through workload 10.
+2. Implement NVMAP_ALLOC/backing import and lifecycle, then NV GPU mapping/
+   submission with original command execution. Current Create/SIZE/Free operate
+   on unallocated object metadata only. Aruid/CloneCurrentObjectEx/remote maps
+   remain open. emu:gpu remains the diagnostic path for synchronous original DMA.
 3. Implement original shader decode/IR/SPIR-V and renderer integration. M4's
    complete guest-program-to-image gate remains open. Presentation/audio/input,
    broader content/services and performance follow their actual dependencies.
@@ -156,7 +165,7 @@ implementation, with no unsafe blocks or pointer arguments.
 ## Repository and environment
 
 Private GitHub repository: https://github.com/sahuishan01/emulator, main.
-The 0.11.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
+The 0.12.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
 packaging report and notes; older snapshots are retained. Source and artifacts
 must match the recorded commit. These are prototypes, not production releases;
 use agent-tasks notifications only. Use permanent /releases/download/<tag>/...

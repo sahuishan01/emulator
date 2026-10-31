@@ -1,10 +1,10 @@
 # Android original-engine checks
 
-Version 0.11.0-dev embeds the original Rust engine into the existing Android
+Version 0.12.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
-The app's worker calls Rust once to execute nine original NRO fixtures
+The app's worker calls Rust once to execute ten original NRO fixtures
 described in [kernel-ipc.md](kernel-ipc.md), separately runs three actual GPU-core
 memory/command cases, including original DMA execution, then calls the unchanged six-test
 C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
@@ -63,12 +63,14 @@ validate the Android C ABI or either Android runtime architecture.
 
 The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
 installations update in place. Select **Run engine and GPU checks**, then
-**Export report**. Schema 3/workload 11 separates `engine`, `gpuCore` and `gpu`,
+**Export report**. Schema 3/workload 12 separates `engine`, `gpuCore` and `gpu`,
 with combined `allPassed` requiring all three. The embedded Vulkan suite retains
 its own workload version 3. Engine reports record host/guest architecture,
-nine per-case outcomes, instruction/IPC counts, output, handle cleanup and
-thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 6
-adds copyHandles and the transfer-memory/NV initialization fixture (317
+ten per-case outcomes, instruction/IPC counts, output, handle cleanup and
+thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 7 adds a 719-instruction/nine-IPC NVMap guest
+(four A/three B/98 bytes/two copied handles), validating device lifecycle and
+unallocated-object Create/SIZE/Free. See [the device subset](nvmap-devices.md).
+Suite 6 adds copyHandles and the transfer-memory/NV initialization fixture (317
 instructions/four IPC calls/two copied handles/restored CPU rights). Suite 5
 adds successful IPC sendBuffers/receiveBuffers/bufferBytes and a buffered DMA
 fixture (327 instructions/four IPC calls/three A/one B/80 bytes). Earlier suite 4
