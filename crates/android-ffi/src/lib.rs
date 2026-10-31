@@ -4,7 +4,7 @@ use emulator_session::{RunOutcome, Session, LOAD_BASE};
 use std::fmt::Write;
 mod gpu_core;
 
-pub const REPORT_CAPACITY: usize = 4096;
+pub const REPORT_CAPACITY: usize = 8192;
 #[repr(C)]
 pub struct EngineReport {
     pub abi_version: u32,
@@ -163,6 +163,18 @@ fn reference_checks() -> String {
             ipc_buffers: (4, 3, 98),
             copy_handles: 2,
         },
+        Case {
+            name: "guest-nvmap-backing-import",
+            image: include_bytes!("../../../examples/homebrew/nvmap-alloc.nro"),
+            message: "Guest NVMap imported backing, queried alignment and freed.\n",
+            instructions: 817,
+            ipc_calls: 10,
+            memory: Some((0x4000, 77)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (5, 4, 162),
+            copy_handles: 2,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -263,19 +275,19 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":7,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":8,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
 /// C ABI layout is mirrored/checked in jni.cpp.
 /// Panics never unwind through C; output has no pointers and needs no free call.
 #[no_mangle]
-pub extern "C" fn emulator_run_reference_guests() -> EngineReport {
+pub extern "C" fn emulator_run_reference_guests_v2() -> EngineReport {
     encode_report(reference_checks, "original-guest-reference-programs")
 }
 
 #[no_mangle]
-pub extern "C" fn emulator_run_gpu_core_checks() -> EngineReport {
+pub extern "C" fn emulator_run_gpu_core_checks_v2() -> EngineReport {
     encode_report(
         gpu_core::report,
         "original-gpu-memory-and-command-reference",
@@ -296,7 +308,7 @@ fn encode_report(run: fn() -> String, scope: &str) -> EngineReport {
         );
     }
     let mut report = EngineReport {
-        abi_version: 1,
+        abi_version: 2,
         length: json.len() as u32,
         bytes: [0; REPORT_CAPACITY],
     };
@@ -309,21 +321,21 @@ mod tests {
     use super::*;
     #[test]
     fn c_abi_returns_bounded_initialized_reference_results() {
-        assert_eq!(std::mem::size_of::<EngineReport>(), 4104);
+        assert_eq!(std::mem::size_of::<EngineReport>(), 8200);
         assert_eq!(std::mem::align_of::<EngineReport>(), 4);
-        let result = emulator_run_reference_guests();
-        assert_eq!(result.abi_version, 1);
+        let result = emulator_run_reference_guests_v2();
+        assert_eq!(result.abi_version, 2);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 10);
+        assert_eq!(text.matches("\"passed\":true").count(), 11);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));
     }
     #[test]
     fn gpu_core_checks_use_actual_shared_memory_and_retire_all_resources() {
-        let report = emulator_run_gpu_core_checks();
-        assert_eq!(report.abi_version, 1);
+        let report = emulator_run_gpu_core_checks_v2();
+        assert_eq!(report.abi_version, 2);
         let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
         assert_eq!(text.matches("\"passed\":true").count(), 3);

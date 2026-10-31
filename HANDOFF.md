@@ -51,17 +51,21 @@ implementation, with no unsafe blocks or pointer arguments.
   arena on the service snapshot; final receiver close restores CPU rights.
   Static/exchange/non-normal buffers, incoming moves/other copied object types,
   domains/TIPC, full NV bootstrap and remote transfer maps remain open. NV Open,
-  Close and three buffered unallocated NVMap metadata ioctls now use bounded
+  Close and buffered NVMap metadata/import ioctls now use bounded
   per-client fds/per-device handles, isolated snapshots and prepared B writes.
   Rejected replies preserve IDs, object state and output. See nvmap-devices.md.
-  Allocation/import, GPU address spaces and NV submission remain open.
+  Alloc imports existing guest backing with READ/RW capabilities and stable
+  lifetime across CPU unmap/address reuse. Per-client limits: 64 MiB logical
+  imported bytes/4096 backing spans across all fds. Free/Close/final receiver
+  release pins; failed replies preserve live pins/bytes. Fresh allocation, GPU
+  address spaces and NV submission remain open.
 - Scheduler: one host executor, up to 16 lifetime guest threads, core 0/default,
   priority/FIFO selection, 64-instruction quanta, separate registers/flags/TLS,
   sleep/yield, blocking events/joins, virtual deadlines, bounded Blocked outcome.
   One virtual ns per instruction is a reference model, not console frequency.
   Cancellation interrupts active waits or coalesces a deferred flag; polls,
   immediate results and argument errors retain it. SleepThread is not woken.
-- Ten original LLVM NROs: hello (5 instructions), counter (384/5 IPC), clone
+- Eleven original LLVM NROs: hello (5 instructions), counter (384/5 IPC), clone
   (529/7 IPC), events (87), threads (97/2 threads/4 switches/3 waits/1 timeout/
   1680 virtual ns), cancellation (106/2 threads/4 switches/2 waits/2 interrupts/
   0 timeouts/1091 ns), gpu-dma (338 instructions/4 IPC/10 methods/2 launches/
@@ -71,7 +75,9 @@ implementation, with no unsafe blocks or pointer arguments.
   receiver retention/clone cleanup and restored source value 42. IPC traces
   include successful buffer/copy counts and bytes. nvmap adds 719 instructions/
   9 IPC/2 copies/4 A/3 B/98 descriptor bytes, cloned-session device lifetime,
-  Create/SIZE/Free and result 4096 at image offset 0x3030.
+  Create/SIZE/Free and result 4096 at image offset 0x3030. nvmap-alloc adds
+  817 instructions/10 IPC/2 copies/5 A/4 B/162 bytes, Alloc/ALIGNMENT/Free
+  address checks, 4096 at 0x3030 and preserved/updated source 77 at 0x4000.
 - GPU: bounded 40-bit GPFIFO and four modern method-packet forms; owned GPU
   mappings importing granted MemoryViews; atomic range access; stable mapping
   IDs. Address-space-bound decode queues capture immutable command bytes and
@@ -86,7 +92,7 @@ implementation, with no unsafe blocks or pointer arguments.
   prepare_front consumes a queue into a pinned owned transaction; drop cancels,
   commit executes once/returns the updated queue. An original NRO now reaches
   this engine through emu:gpu, an emulator-owned one-shot CMIF diagnostic with
-  fresh GPU class state per call. NV backing allocation/mapping/submission, shaders, fences
+  fresh GPU class state per call. NV fresh allocation/mapping/submission, shaders, fences
   and rendering remain open. emu:gpu command 2 now uses A commands/source/entries
   and B output with narrow grants; it cannot read B or write A. See
   docs/hipc-buffers.md, guest-gpu-bridge.md and gpu-dma-methods.md.
@@ -94,22 +100,23 @@ implementation, with no unsafe blocks or pointer arguments.
   Vulkan lab: six offscreen transfer/depth/compute-to-draw/BC1 conversion/sampling/
   update checks. Native shaders, no guest GPU execution. Allocations count Vulkan
   backing requests only, excluding pipeline/driver and process heap overhead.
-- Android schema 3/workload 12: engine has ten actual guest NROs (suite 7),
+- Android schema 3/workload 13: engine has eleven actual guest NROs (suite 8),
   gpuCore has three direct ownership/DMA cases (suite 2), gpu has six unchanged
   native Vulkan cases (workload 3). Combined allPassed requires all three.
-  Both Rust exports return initialized value-only 4104-byte reports (4096
+  Both ABI 2 Rust exports return initialized value-only 8200-byte reports (8192
   payload bytes), caught panics, no borrowed allocations. JSON is retained and
-  exported via Android's document picker. Guest JSON is now 3800 bytes; watch
-  the 4096-byte cap when adding cases/fields (C/Rust ABI changes must match).
+  exported via Android's document picker. Guest JSON is now 4173 bytes on x86_64; watch
+  the 8192-byte cap when adding cases/fields (C/Rust ABI changes must match).
+  Exports use _v2 symbols to make stale ABI 1 callers fail at link time.
   No network/storage permission.
 
 ## Evidence
 
-- 143 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
+- 151 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
   malformed input, rollback, shared memory/alias visibility, pinned resident
   caps, GPU mappings, entry-spanning packets, immutable capture, queue ownership,
   atomic admission failure and ordered release, alongside prior guest behavior.
-- All 21 independent LLVM fixtures match: 11 raw A64 plus ten NROs.
+- All 22 independent LLVM fixtures match: 11 raw A64 plus eleven NROs.
 - ARM64/x86_64 Rust cross-build, Gradle build/lint, signature/ELF architecture and
   16 KiB ELF/ZIP packaging checks pass. Not a 16 KiB Android runtime test.
 - GPU-core host reference cases pass: shared aliases survive protect/unmap/
@@ -134,30 +141,37 @@ implementation, with no unsafe blocks or pointer arguments.
   export and cold restore. NVMap matches 719 instructions/9 IPC/2 copies/4 A/
   3 B/98 bytes/zero handles. System UI startup ANR needed XML-derived Wait; no
   app crash/ANR was captured. See docs/validation/android-nvmap.md.
+  Android 0.13.0-dev passes all twenty checks, upgrade invalidation, exact
+  export and cold restore. New backing import matches 817 instructions/10 IPC/
+  2 copies/5 A/4 B/162 bytes/zero handles. ABI 2 is verified through JNI and both
+  packaged architectures have _v2 exports only. System UI needed startup Wait;
+  no app crash/ANR captured. See docs/validation/android-nvmap-backing.md.
 - Prior Android AVD runs pass their current suites, upgrade invalidation, exact
   export and cold restore. System UI can show a startup ANR: dismiss only its
   Wait action using current XML, then re-dump before tapping. Never dismiss an
   app ANR as infrastructure. Details are under docs/validation/.
-- Supplied physical reports through 0.10.0-dev pass all seventeen guest/GPU-core/
-  host Vulkan cases on ARM64/G720. Buffered DMA matches 327 instructions/4 IPC/
-  3 A/1 B/80 descriptor bytes/expected output/zero handles. Device and driver
-  match. See docs/validation/g720-hipc-buffers.md and earlier records.
-  Android 16/API 36, Vulkan 1.3.247, raw driver 184553472; validation
-  disabled, native BC false. No physical phone is connected through ADB.
+- Supplied physical 0.12.0-dev report passes all nineteen guest/GPU-core/host
+  Vulkan cases. All engine/core fields match freshly executed 0.12 reference
+  results except host architecture. This closes transfer-memory ownership and
+  unallocated NVMap phone checkpoints. See docs/validation/g720-nvmap.md.
+  Device: realme RMX5061/MT6989/Android16 API36/Mali-G720-Immortalis MC12,
+  Vulkan1.3.247/raw driver184553472, validation off/native BC false. No physical
+  ADB connection. The new backing-import guest awaits phone evidence.
 - Earlier physical BC1 conversion/sampling/update results do not establish guest
   graphics, sustained performance, shader stages or Z-A compatibility. Raw JSON,
   captures, native extracts, games/firmware/keys and APKs remain ignored.
 
 ## Next work
 
-1. Verify suite 7 on the phone with 0.12.0-dev: guest-nvmap-device-ioctls expects
-   719 instructions/9 IPC/2 copies/4 A/3 B/98 bytes/zero handles. The previous
-   transfer-memory case also needs phone verification (317 instructions/4 IPC/
-   2 copies). Prior seventeen checks passed physically through workload 10.
-2. Implement NVMAP_ALLOC/backing import and lifecycle, then NV GPU mapping/
-   submission with original command execution. Current Create/SIZE/Free operate
-   on unallocated object metadata only. Aruid/CloneCurrentObjectEx/remote maps
-   remain open. emu:gpu remains the diagnostic path for synchronous original DMA.
+1. Verify suite 8 backing import on the phone with 0.13.0-dev: 817 instructions/
+   10 IPC/2 copies/5 A/4 B/162 bytes/zero handles. Prior nineteen cases passed
+   physically through workload 12. New ABI 2 expands the report payload to 8192;
+   ARM64 and x86_64 Rust/JNI must use the same new layout and _v2 export names.
+2. Implement NV GPU address-space objects/mapping of retained NVMap backing,
+   then channels/submission through original command execution. Current Alloc
+   imports existing guest backing only; fresh allocation, sharing IDs, cache
+   control and GPU fences remain open. Aruid/CloneCurrentObjectEx/remote maps
+   remain open. emu:gpu is the diagnostic path for synchronous original DMA.
 3. Implement original shader decode/IR/SPIR-V and renderer integration. M4's
    complete guest-program-to-image gate remains open. Presentation/audio/input,
    broader content/services and performance follow their actual dependencies.
@@ -165,7 +179,7 @@ implementation, with no unsafe blocks or pointer arguments.
 ## Repository and environment
 
 Private GitHub repository: https://github.com/sahuishan01/emulator, main.
-The 0.12.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
+The 0.13.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
 packaging report and notes; older snapshots are retained. Source and artifacts
 must match the recorded commit. These are prototypes, not production releases;
 use agent-tasks notifications only. Use permanent /releases/download/<tag>/...

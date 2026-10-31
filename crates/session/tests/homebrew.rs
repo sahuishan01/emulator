@@ -228,3 +228,43 @@ fn guest_nvmap_uses_shared_fd_and_buffered_ioctls_then_releases_arena() {
     assert_eq!(session.kernel().live_transfer_memory_count(), 0);
     assert_eq!(session.memory().lent_bytes(), 0);
 }
+
+#[test]
+fn guest_nvmap_imports_existing_backing_and_reports_alignment_and_free_address() {
+    let mut session =
+        Session::from_nro(include_bytes!("../../../examples/homebrew/nvmap-alloc.nro")).unwrap();
+    assert_eq!(session.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(session.instructions(), 817);
+    assert_eq!(
+        session.debug_records(),
+        &[b"Guest NVMap imported backing, queried alignment and freed.\n".to_vec()]
+    );
+    for (offset, value) in [(0x2000, 42), (0x3030, 4096), (0x4000, 77)] {
+        assert_eq!(
+            session.memory().read_u64(LOAD_BASE + offset).unwrap(),
+            value
+        );
+    }
+    assert_eq!(
+        session
+            .kernel()
+            .ipc_records()
+            .iter()
+            .map(|r| r.command_id)
+            .collect::<Vec<_>>(),
+        [0, 1, 3, 0, 2, 1, 1, 1, 1, 2]
+    );
+    let records = session.kernel().ipc_records();
+    assert_eq!(
+        (
+            records.iter().map(|r| r.send_buffers).sum::<usize>(),
+            records.iter().map(|r| r.receive_buffers).sum::<usize>(),
+            records.iter().map(|r| r.buffer_bytes).sum::<usize>(),
+            records.iter().map(|r| r.copy_handles).sum::<usize>()
+        ),
+        (5, 4, 162, 2)
+    );
+    assert_eq!(session.kernel().live_handle_count(), 0);
+    assert_eq!(session.kernel().live_transfer_memory_count(), 0);
+    assert_eq!(session.memory().lent_bytes(), 0);
+}

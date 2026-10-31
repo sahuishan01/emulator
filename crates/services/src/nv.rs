@@ -1,6 +1,8 @@
 //! Original standard nvdrv Initialize subset. It adopts a real process-owned
 //! transfer arena; nvmap device metadata ioctls are bounded separately.
-use crate::nvmap::{NvMap, BAD_PARAMETER, NOT_SUPPORTED, NO_MEMORY};
+use crate::nvmap::{
+    ImportBudget, NvMap, BAD_PARAMETER, IMPORT_BYTES, IMPORT_SPANS, NOT_SUPPORTED, NO_MEMORY,
+};
 use emulator_ipc::Request;
 use emulator_kernel::{
     service::{PreparedServiceEffect, Service, ServiceContext, ServiceError, ServiceReply},
@@ -127,6 +129,15 @@ impl NvDriver {
         }
         let fd = input_word(request, 0);
         let code = input_word(request, 4);
+        let (used_bytes, used_spans) = self
+            .devices
+            .iter()
+            .map(|d| d.nvmap.imported_usage())
+            .fold((0, 0), |(bytes, spans), (b, s)| (bytes + b, spans + s));
+        let budget = ImportBudget {
+            bytes: IMPORT_BYTES - used_bytes,
+            spans: IMPORT_SPANS - used_spans,
+        };
         let Some(device) = self.devices.iter_mut().find(|d| d.fd == fd) else {
             return Ok(reply(&[BAD_PARAMETER]));
         };
@@ -140,7 +151,11 @@ impl NvDriver {
         }
         let mut bytes = vec![0; size];
         input.read(0, &mut bytes).map_err(ServiceError::Memory)?;
-        match device.nvmap.ioctl(code, &bytes) {
+        match device
+            .nvmap
+            .ioctl(code, &bytes, budget, |address, size, permissions| {
+                context.pin(address, size, permissions).ok()
+            }) {
             Err(error) => Ok(reply(&[error])),
             Ok(bytes) => {
                 let ranges = output.backing_ranges().collect();

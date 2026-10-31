@@ -9,12 +9,12 @@ The project plan is split into [architecture](docs/architecture.md),
 [implementation milestones](docs/implementation-plan.md). These distinguish
 the implemented components from the remaining Switch/Android work.
 
-The original Rust engine loads ten of our own static NRO programs and executes
+The original Rust engine loads eleven of our own static NRO programs and executes
 them through an A64 interpreter subset. They exercise debug output, service
 discovery/IPC, shared cloned-session lifetimes, events, thread scheduling,
 blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
-standard nvdrv Initialize and unallocated NVMap device metadata ioctls.
+standard nvdrv Initialize, NVMap metadata ioctls and existing-backing imports.
 The Android lab embeds this engine, three GPU memory/command reference cases and six
 native Vulkan checks: image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
@@ -38,7 +38,8 @@ now carry granted inputs/outputs to a second guest DMA fixture.
 [Transfer memory and nvdrv Initialize](docs/nv-initialization.md) now retain
 copied process-owned arenas and restore CPU rights on final release.
 [NV device descriptors and metadata ioctls](docs/nvmap-devices.md) now support
-unallocated NVMap Create/SIZE/Free. Backing allocation/import, NV GPU mapping,
+NVMap Create/Alloc/SIZE/ALIGNMENT/KIND/Free with retained guest backing.
+Fresh backing allocation, NV GPU mapping,
 shaders and rendering remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
@@ -75,8 +76,9 @@ use `emu:gpu`, not the standard nvdrv ABI. Unsupported operations
 produce explicit errors. `nv-initialize.nro` uses the standard Initialize RPC
 and checks transfer-memory restoration. `nvmap.nro` opens a device, creates,
 queries and frees an unallocated NVMap object through buffered ioctls. See
-[the exact device subset](docs/nvmap-devices.md); backing allocation, GPU mapping
-and full NV bootstrap remain open.
+[the exact device subset](docs/nvmap-devices.md). `nvmap-alloc.nro` imports existing
+backing, queries alignment and verifies the Free address/byte preservation. Fresh
+allocation, GPU mapping and full NV bootstrap remain open.
 The [reference scheduler](docs/scheduling.md) switches guest contexts, preserves
 per-thread TLS and advances virtual deadlines without sleeping the host.
 
@@ -109,12 +111,12 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/loader` | Bounded static NRO validation, segments, permissions and BSS |
 | `crates/ipc` | Bounded HIPC/CMIF v0, normal A/B descriptors, incoming copy IDs and reply encoding |
 | `crates/kernel` | SVCs, transfer-memory lending, copied objects, IPC, cloned sessions, threads and waits |
-| `crates/services` | SM, `emu:test`, `emu:gpu`, nvdrv Initialize and unallocated NVMap metadata |
+| `crates/services` | SM, `emu:test`, `emu:gpu`, nvdrv Initialize, NVMap metadata and retained backing imports |
 | `crates/session` | Process entry state, guarded stack, guest TLS and resumable execution budgets |
 | `crates/texture` | Original bounded BC1 RGBA UNORM reference decoder |
 | `crates/gpu` | GPU virtual mappings, pinned resources, bounded GPFIFO/Maxwell framing and owned decoded batches and linear DMA method execution |
 | `crates/cli` | NRO/raw-program execution and demo |
-| `crates/android-ffi` | Bounded C reports for ten guest programs and three GPU memory/command cases |
+| `crates/android-ffi` | Bounded C reports for eleven guest programs and three GPU memory/command cases |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
 | `examples/homebrew` | Nine original homebrew sources and assembled NRO fixtures |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
@@ -132,16 +134,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android engine and GPU lab
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.12.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.13.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.12.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.12.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.13.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.13.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.12.0-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.13.0-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.
@@ -170,7 +172,7 @@ The APK includes arm64-v8a and x86_64 libraries. Install it, select **Run engine
 and GPU checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. Schema 3 separates ten guest checks (`engine`), three GPU memory/command
+devices. Schema 3 separates eleven guest checks (`engine`), three GPU memory/command
 cases (`gpuCore`) and six host Vulkan checks (`gpu`). See [the Android boundary](docs/android-engine.md)
 for its build, report schema and verification limits.
 
@@ -191,8 +193,8 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has 143 Rust tests and 21 independently assembled fixtures
-(11 raw A64 programs and ten NROs).
+The current suite has 151 Rust tests and 22 independently assembled fixtures
+(11 raw A64 programs and eleven NROs).
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
 All six Vulkan workloads passed on desktop llvmpipe with zero validation
 errors and on an Android 15 SwiftShader AVD. A deliberately stale update in a
@@ -210,7 +212,9 @@ The [0.7.0-dev phone report](docs/validation/g720-gpu-ownership.md) also passes
 both GPU-core ownership cases. The [0.8.0-dev phone report](docs/validation/g720-dma.md)
 also passes the original DMA case. The [0.9.0-dev phone report](docs/validation/g720-guest-dma.md)
 also passes guest DMA submission. The [0.10.0-dev phone report](docs/validation/g720-hipc-buffers.md)
-also passes buffered DMA, closing all seventeen prior device checkpoints.
+also passes buffered DMA. The [0.12.0-dev phone report](docs/validation/g720-nvmap.md)
+also passes transfer-memory ownership and NVMap metadata, closing all nineteen
+prior phone checkpoints.
 The [0.5.0-dev Android AVD checkpoint](docs/validation/android-scheduling.md)
 passes all five guest checks plus six Vulkan checks, with exact report export
 and cold restoration.
@@ -230,6 +234,9 @@ exact export and cold restoration.
 The [0.12.0-dev checkpoint](docs/validation/android-nvmap.md) passes all
 nineteen cases, including NV descriptors and unallocated NVMap metadata ioctls,
 exact export and cold restoration.
+The [0.13.0-dev checkpoint](docs/validation/android-nvmap-backing.md) passes all
+twenty cases, including retained NVMap backing imports and ABI 2, exact export
+and cold restoration.
 These results cover the owned workloads; guest graphics, sustained
 performance and 16 KiB Android runtime behavior remain untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).

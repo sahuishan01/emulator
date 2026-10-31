@@ -341,12 +341,12 @@ fn nvmap_rejects_unknown_devices_ioctls_handles_sizes_and_malformed_buffers() {
         assert_eq!(r.m.read_u32(0x6004).unwrap(), 77);
     }
     assert_eq!(r.ioctl(999, 0xc0080101, &[4096, 77], 1), 4);
-    assert_eq!(r.ioctl(fd, 0xc0200104, &[1, 2, 3, 4, 5, 6, 7, 8], 1), 2);
+    assert_eq!(r.ioctl(fd, 0xc008010e, &[1, 2, 3, 4, 5, 6, 7, 8], 1), 2);
     assert_eq!(r.m.read_u32(0x601c).unwrap(), 8);
     assert_eq!(r.ioctl(fd, 0xc0080101, &[4096, 77], 1), 0);
     let handle = r.m.read_u32(0x6004).unwrap();
     assert_eq!(handle, 1);
-    assert_eq!(r.ioctl(fd, 0xc00c0109, &[handle, 2, 77], 1), 2);
+    assert_eq!(r.ioctl(fd, 0xc00c0109, &[handle, 3, 77], 1), 2);
     assert_eq!(r.m.read_u32(0x6008).unwrap(), 77);
     assert_eq!(r.ioctl(fd, 0xc0180105, &[handle, 1, 0, 0, 0, 0], 1), 4);
     assert_eq!(r.ioctl(fd, 0xc00c0109, &[handle, 1, 77], 1), 0);
@@ -499,4 +499,114 @@ fn nvmap_ioctl_writes_only_granted_b_and_rejects_mismatched_sizes_without_alloca
     let mut input = [0; 8];
     r.m.read(0x6000, &mut input).unwrap();
     assert_eq!(input.as_slice(), original);
+}
+
+#[test]
+fn nvmap_import_and_free_rejected_replies_preserve_pin_lifetimes_and_output() {
+    let mut r = Rig::device_rig(Box::new(FailedDeviceReply::default()));
+    let fd = r.open_device(b"/dev/nvmap", 0).0;
+    r.m.map(0x8000, vec![0; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    assert_eq!(r.ioctl(fd, 0xc0080101, &[4096, 0], 1), 0);
+    let args = words(&[1, 0, 1, 0, 0, 0, 0x8000, 0]);
+    r.m.write(0x6000, &args).unwrap();
+    assert!(matches!(
+        r.call(&message(
+            101,
+            &[fd, 0xc0200104],
+            Some((0x6000, 32)),
+            Some((0x6000, 32))
+        )),
+        Err(KernelError::Ipc(_))
+    ));
+    let mut actual = [0; 32];
+    r.m.read(0x6000, &mut actual).unwrap();
+    assert_eq!(actual.as_slice(), args);
+    let lease = r.m.lend(0x8000, 4096, Permissions::NONE).unwrap();
+    drop(lease);
+    assert_eq!(
+        r.ioctl(fd, 0xc0200104, &[1, 0, 1, 0, 0, 0, 0x8000, 0], 1),
+        0
+    );
+    assert!(r.m.lend(0x8000, 4096, Permissions::NONE).is_err());
+    r.m.write(0x6000, &words(&[1, 0, 77, 77, 77, 77])).unwrap();
+    assert!(matches!(
+        r.call(&message(
+            101,
+            &[fd, 0xc0180105],
+            Some((0x6000, 24)),
+            Some((0x6000, 24))
+        )),
+        Err(KernelError::Ipc(_))
+    ));
+    assert_eq!(r.m.read_u64(0x6008).unwrap(), 0x4d0000004d);
+    assert!(r.m.lend(0x8000, 4096, Permissions::NONE).is_err());
+    assert!(matches!(
+        r.call(&message(102, &[fd], None, None)),
+        Err(KernelError::Ipc(_))
+    ));
+    assert!(r.m.lend(0x8000, 4096, Permissions::NONE).is_err());
+    assert_eq!(r.ioctl(fd, 0xc0180105, &[1, 0, 0, 0, 0, 0], 1), 0);
+    assert_eq!(r.m.read_u64(0x6008).unwrap(), 0x8000);
+    let lease = r.m.lend(0x8000, 4096, Permissions::NONE).unwrap();
+    drop(lease);
+}
+#[test]
+fn nvmap_client_import_quota_counts_all_devices_and_free_and_close_reclaim_it() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let fd1 = r.open_device(b"/dev/nvmap", 0).0;
+    let fd2 = r.open_device(b"/dev/nvmap", 0).0;
+    r.m.map(0x100000, vec![0; 2 * 1024 * 1024], Permissions::READ_WRITE)
+        .unwrap();
+    for handle in 1..=32 {
+        assert_eq!(r.ioctl(fd1, 0xc0080101, &[2 * 1024 * 1024, 0], 1), 0);
+        assert_eq!(
+            r.ioctl(fd1, 0xc0200104, &[handle, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
+            0
+        );
+    }
+    assert_eq!(r.ioctl(fd2, 0xc0080101, &[2 * 1024 * 1024, 0], 1), 0);
+    assert_eq!(
+        r.ioctl(fd2, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
+        6
+    );
+    assert_eq!(r.ioctl(fd1, 0xc0180105, &[1, 0, 0, 0, 0, 0], 1), 0);
+    assert_eq!(
+        r.ioctl(fd2, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
+        0
+    );
+    let baseline = r.m.resident_bytes();
+    r.m.unmap(0x100000, 2 * 1024 * 1024).unwrap();
+    assert_eq!(r.m.resident_bytes(), baseline);
+    assert_eq!(r.close_fd(fd1), 0);
+    assert_eq!(r.m.resident_bytes(), baseline);
+    assert_eq!(r.close_fd(fd2), 0);
+    assert_eq!(r.m.resident_bytes(), baseline - 2 * 1024 * 1024);
+}
+
+#[test]
+fn final_nv_receiver_close_releases_imports_after_caller_close_and_session_clone() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let fd = r.open_device(b"/dev/nvmap", 0).0;
+    r.m.map(0x8000, vec![0; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    assert_eq!(r.ioctl(fd, 0xc0080101, &[4096, 0], 1), 0);
+    assert_eq!(
+        r.ioctl(fd, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x8000, 0], 1),
+        0
+    );
+    let mut clone = message(2, &[], None, None);
+    clone[..4].copy_from_slice(&5_u32.to_le_bytes());
+    r.call(&clone).unwrap();
+    let alias = r.m.read_u32(0x200c).unwrap();
+    r.close(r.tmem);
+    r.close(r.session);
+    assert!(r.m.read_u64(0x4000).is_err());
+    let resident = r.m.resident_bytes();
+    r.m.unmap(0x8000, 4096).unwrap();
+    assert_eq!(r.m.resident_bytes(), resident);
+    r.close(alias);
+    assert_eq!(r.m.resident_bytes(), resident - 4096);
+    assert_eq!(r.k.live_transfer_memory_count(), 0);
+    assert_eq!(r.m.read_u64(0x4000).unwrap(), 42);
 }

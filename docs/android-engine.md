@@ -1,10 +1,10 @@
 # Android original-engine checks
 
-Version 0.12.0-dev embeds the original Rust engine into the existing Android
+Version 0.13.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
-The app's worker calls Rust once to execute ten original NRO fixtures
+The app's worker calls Rust once to execute eleven original NRO fixtures
 described in [kernel-ipc.md](kernel-ipc.md), separately runs three actual GPU-core
 memory/command cases, including original DMA execution, then calls the unchanged six-test
 C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
@@ -15,12 +15,15 @@ own failure; one failed group does not discard the other's diagnostic report.
 ## Native boundary
 
 `crates/android-ffi` builds as a static library, linked into the existing
-`libemulator_gpu_lab.so`. C exports are `emulator_run_reference_guests()` and
-`emulator_run_gpu_core_checks()`, each returning EngineReport. The C/Rust layout is a
-4104-byte, 4-byte-aligned value: u32 ABI version, u32 byte length, and 4096
+`libemulator_gpu_lab.so`. C exports are `emulator_run_reference_guests_v2()` and
+`emulator_run_gpu_core_checks_v2()`, each returning EngineReport. The C/Rust layout is a
+8200-byte, 4-byte-aligned value: u32 ABI version, u32 byte length, and 8192
 initialized payload bytes. Rust returns owned bytes by value, so callers never
 receive a Rust pointer or allocation and need no free callback. JNI validates
-ABI version/capacity before creating the Java byte array.
+ABI version/capacity before creating the Java byte array. ABI 2 increases the
+payload from 4096 to 8192 bytes for the eleventh case. Both exports use `_v2`
+symbols, so stale ABI 1 callers fail to link instead of accepting an incompatible
+return layout. Rust/JNI rebuild together; size, alignment and offset are checked.
 
 Core crates still forbid unsafe Rust. This boundary permits the no-mangle
 export attribute only and contains no unsafe blocks or raw-pointer arguments.
@@ -63,11 +66,13 @@ validate the Android C ABI or either Android runtime architecture.
 
 The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
 installations update in place. Select **Run engine and GPU checks**, then
-**Export report**. Schema 3/workload 12 separates `engine`, `gpuCore` and `gpu`,
+**Export report**. Schema 3/workload 13 separates `engine`, `gpuCore` and `gpu`,
 with combined `allPassed` requiring all three. The embedded Vulkan suite retains
 its own workload version 3. Engine reports record host/guest architecture,
-ten per-case outcomes, instruction/IPC counts, output, handle cleanup and
-thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 7 adds a 719-instruction/nine-IPC NVMap guest
+eleven per-case outcomes, instruction/IPC counts, output, handle cleanup and
+thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 8 adds the 817-instruction/10-IPC backing-import guest
+(5 A/4 B/162 bytes/two copies) with Alloc/ALIGNMENT/Free checks.
+Engine suite 7 adds a 719-instruction/nine-IPC NVMap guest
 (four A/three B/98 bytes/two copied handles), validating device lifecycle and
 unallocated-object Create/SIZE/Free. See [the device subset](nvmap-devices.md).
 Suite 6 adds copyHandles and the transfer-memory/NV initialization fixture (317
@@ -96,8 +101,10 @@ checkpoint verified in the [0.8.0-dev phone report](validation/g720-dma.md).
 Guest DMA submission also passes in the
 [0.9.0-dev phone report](validation/g720-guest-dma.md). The new phone checkpoint
 was engine suite 5's buffered NRO, which passes in the
-[0.10.0-dev report](validation/g720-hipc-buffers.md). The new phone checkpoint is
-engine suite 6's ninth NRO; see [NV initialization](nv-initialization.md).
+[0.10.0-dev report](validation/g720-hipc-buffers.md). The
+[0.12.0-dev phone report](validation/g720-nvmap.md) also passes the transfer-memory
+and unallocated NVMap guests: all nineteen prior checks. The new phone checkpoint
+is suite 8 backing import; see [NVMap](nvmap-devices.md).
 
 Broader GPU method execution, shader translation, guest-frame presentation and
 commercial startup remain open. Pokémon Legends: Z-A is a later target.

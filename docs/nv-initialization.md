@@ -3,7 +3,8 @@
 Version 0.11.0-dev adds original transfer-memory lending, copied process/transfer
 handles and nvdrv command 3. This is resource ownership for the standard
 Initialize request. Version 0.12.0-dev adds [device descriptors and unallocated
-NVMap metadata ioctls](nvmap-devices.md). Backing allocation/import, Aruid setup,
+NVMap metadata ioctls](nvmap-devices.md); 0.13 adds imports of existing guest
+backing. Fresh allocation, Aruid setup,
 CloneCurrentObjectEx, remote transfer mappings and shaders/rendering remain
 explicit unsupported paths. The generic CMIF CloneCurrentObject (2)
 continues to share a session identity.
@@ -72,8 +73,8 @@ object, owner permission NONE and an uninitialized receiver. The candidate
 service retains the checked arena object; no device allocations or heap format
 are fabricated. Guest permission restriction persists after sender-handle close
 and through session clones until the final receiver reference closes. Other
-initialization steps, application/service permission masks and NV device/object
-semantics are not modeled. Request-state changes commit through the existing
+initialization steps and application/service permission masks remain open.
+NV device/object support is limited to the linked NVMap subset. Request-state changes commit through the existing
 reply-validation transaction; rejected replies drop candidate copied references.
 
 ## Evidence

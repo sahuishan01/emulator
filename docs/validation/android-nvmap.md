@@ -6,8 +6,8 @@
 Verified 143 Rust tests, formatting/Clippy with warnings denied, 21 independent
 LLVM fixtures (11 raw A64/ten NROs), pinned ARM64/x86_64 Rust builds, Gradle
 build/lint, signature/native identities and 16 KiB ELF/ZIP packaging alignment.
-This is not a 16 KiB Android runtime test. The host engine report is 3800 JSON
-bytes plus its example's newline, within the fixed 4096-byte payload.
+This is not a 16 KiB Android runtime test. The host engine report is 3801 JSON
+bytes without a trailing newline, within the fixed 4096-byte payload.
 
 On the isolated Android 15/API 35 x86_64 AVD, schema 3/workload 12 passes all
 nineteen checks: ten guest NROs (engine suite 7), three direct GPU-core cases
