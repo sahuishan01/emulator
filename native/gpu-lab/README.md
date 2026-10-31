@@ -89,12 +89,12 @@ separate package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version 0.9.0-dev uses schema 3/workload 9: `engine` has seven guest results,
+Version 0.10.0-dev uses schema 3/workload 10: `engine` has eight guest results,
 `gpuCore` has three Rust ownership/DMA cases, and `gpu` has these
 six unchanged native Vulkan results (suite version 3). Combined `allPassed`
 requires all three groups. GPU-core checks are direct engine calls, including
-CPU-executed linear DMA. Engine suite 4 adds a guest NRO submitting through
-the emulator-owned `emu:gpu` bridge. Standard NV services and guest rendering
+CPU-executed linear DMA. Engine suite 5 adds a guest NRO using normal HIPC A/B
+descriptors; suite 4 added inline submission through `emu:gpu`. Standard NV services and guest rendering
 remain open.
 The last completed report is retained across activity recreation.
 Reports from an older workload version are not displayed as current results;

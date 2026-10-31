@@ -131,3 +131,33 @@ fn original_guest_submits_dma_and_checks_dependent_copies_before_cleanup() {
     );
     assert_eq!(session.kernel().live_handle_count(), 0);
 }
+
+#[test]
+fn guest_hipc_buffers_grant_dma_input_and_output_and_record_exact_counts() {
+    let mut session =
+        Session::from_nro(include_bytes!("../../../examples/homebrew/gpu-buffers.nro")).unwrap();
+    assert_eq!(session.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(session.instructions(), 327);
+    assert_eq!(
+        session.debug_records(),
+        &[b"Guest HIPC buffers submitted DMA and returned bytes.\n".to_vec()]
+    );
+    for offset in [0x2010, 0x2020] {
+        assert_eq!(session.memory().read_u64(LOAD_BASE + offset).unwrap(), 42);
+    }
+    let records = session.kernel().ipc_records();
+    assert_eq!(records.len(), 4);
+    assert_eq!(
+        records.iter().map(|r| r.command_id).collect::<Vec<_>>(),
+        [0, 1, 2, 1]
+    );
+    assert_eq!(
+        (
+            records[2].send_buffers,
+            records[2].receive_buffers,
+            records[2].buffer_bytes
+        ),
+        (3, 1, 80)
+    );
+    assert_eq!(session.kernel().live_handle_count(), 0);
+}

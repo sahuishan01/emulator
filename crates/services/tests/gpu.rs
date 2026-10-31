@@ -177,3 +177,158 @@ fn read_only_reply_and_unknown_commands_cannot_submit_work() {
     assert_eq!(r.count(), 0);
     assert_eq!(r.memory.read_u64(0x3210).unwrap(), 99);
 }
+
+fn alias_descriptor(bytes: &mut [u8], at: usize, address: u64, size: u64) {
+    let fields = (((address >> 36) as u32) << 2)
+        | (((size >> 32) as u32) << 24)
+        | (((address >> 32) as u32 & 15) << 28);
+    for (index, value) in [size as u32, address as u32, fields]
+        .into_iter()
+        .enumerate()
+    {
+        bytes[at + index * 4..at + index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+}
+fn buffered_packet() -> [u8; 256] {
+    let mut bytes = [0; 256];
+    bytes[..4].copy_from_slice(&0x0130_0004_u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&14_u32.to_le_bytes());
+    for (at, address, size) in [
+        (8, 0x3000, 56),
+        (20, 0x3200, 8),
+        (32, 0x3100, 8),
+        (44, 0x3210, 8),
+    ] {
+        alias_descriptor(&mut bytes, at, address, size);
+    }
+    bytes[64..68].copy_from_slice(b"SFCI");
+    bytes[72..76].copy_from_slice(&2_u32.to_le_bytes());
+    for (index, value) in [0x1_0000_1000_u64, 0x2_0000_0000, 0x3_0000_0000]
+        .into_iter()
+        .enumerate()
+    {
+        bytes[80 + index * 8..88 + index * 8].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+fn call_buffered(r: &mut Rig, packet: &[u8]) -> Result<(), KernelError> {
+    r.memory.write(0x2000, packet).unwrap();
+    r.cpu.x[0] = u64::from(r.handle);
+    r.kernel
+        .dispatch(SVC_SEND_SYNC_REQUEST, &mut r.cpu, &mut r.memory)
+        .map(|_| ())
+}
+fn buffered_rig() -> Rig {
+    let mut r = Rig::new();
+    r.memory.write_u32(0x301c, 3).unwrap();
+    r.memory.write_u32(0x3024, 0).unwrap();
+    r
+}
+#[test]
+fn buffered_dma_uses_read_only_input_and_write_only_output_grants() {
+    let mut r = buffered_rig();
+    let oracle = r.memory.pin(0x3210, 8, Permissions::READ).unwrap();
+    r.memory.protect(0x3200, 8, Permissions::READ).unwrap();
+    r.memory.protect(0x3210, 8, Permissions::WRITE).unwrap();
+    call_buffered(&mut r, &buffered_packet()).unwrap();
+    let mut bytes = [0; 8];
+    oracle.read(0, &mut bytes).unwrap();
+    assert_eq!(u64::from_le_bytes(bytes), 42);
+    for (at, value) in [(0x2020, 7), (0x2028, 1), (0x2030, 8), (0x2038, 1)] {
+        assert_eq!(r.memory.read_u64(at).unwrap(), value);
+    }
+    assert_eq!(r.count(), 1);
+}
+#[test]
+fn dma_cannot_read_b_outputs_or_write_a_inputs_even_when_cpu_memory_is_rw() {
+    for (at, value) in [(0x300c, 3), (0x301c, 2)] {
+        let mut r = buffered_rig();
+        r.memory.write_u32(at, value).unwrap();
+        assert!(matches!(
+            call_buffered(&mut r, &buffered_packet()),
+            Err(KernelError::Service(ServiceError::DeviceFault(_)))
+        ));
+        assert_eq!(r.memory.read_u64(0x3210).unwrap(), 99);
+        assert_eq!(r.memory.read_u64(0x3200).unwrap(), 42);
+        assert_eq!(r.count(), 0);
+    }
+}
+#[test]
+fn late_invalid_buffers_and_dma_packets_publish_neither_bytes_nor_counter() {
+    for (at, address, size) in [
+        (44, 0x3ffc, 8),
+        (20, 0x3200, 0),
+        (20, 0x3200, 8 * 1024 * 1024),
+        (44, 0x3210, 1_u64 << 32),
+        (44, 0x3210, 4),
+    ] {
+        let mut r = buffered_rig();
+        let mut packet = buffered_packet();
+        alias_descriptor(&mut packet, at, address, size);
+        let resident = r.memory.resident_bytes();
+        assert!(call_buffered(&mut r, &packet).is_err());
+        assert_eq!(r.memory.resident_bytes(), resident);
+        assert_eq!(r.memory.read_u64(0x3210).unwrap(), 99);
+        assert_eq!(r.count(), 0);
+    }
+    let mut r = buffered_rig();
+    r.memory.write_u32(0x3038, 0x2001_0240).unwrap();
+    r.memory.write_u32(0x303c, 0).unwrap();
+    r.memory.write_u64(0x3100, 0x0000_4001_0000_1000).unwrap();
+    let mut packet = buffered_packet();
+    alias_descriptor(&mut packet, 8, 0x3000, 64);
+    assert!(call_buffered(&mut r, &packet).is_err());
+    assert_eq!(r.memory.read_u64(0x3210).unwrap(), 99);
+    assert_eq!(r.count(), 0);
+}
+#[test]
+fn b_buffers_must_not_alias_tls_and_unused_descriptors_are_not_ignored() {
+    let mut r = buffered_rig();
+    let alias = r.memory.pin(0x2000, 256, Permissions::READ_WRITE).unwrap();
+    r.memory
+        .map_alias(0x4000, &alias, Permissions::READ_WRITE)
+        .unwrap();
+    drop(alias);
+    let mut packet = buffered_packet();
+    alias_descriptor(&mut packet, 44, 0x4000, 8);
+    assert_eq!(
+        call_buffered(&mut r, &packet),
+        Err(KernelError::Service(ServiceError::ReplyBufferOverlap))
+    );
+    assert_eq!(r.memory.read_u32(0x2000).unwrap(), 0x0130_0004);
+    assert_eq!(r.count(), 0);
+    let mut packet = buffered_packet();
+    packet[72..76].copy_from_slice(&1_u32.to_le_bytes());
+    assert!(matches!(
+        call_buffered(&mut r, &packet),
+        Err(KernelError::Service(
+            ServiceError::InvalidBufferCounts { .. }
+        ))
+    ));
+    assert_eq!(r.count(), 0);
+}
+
+#[test]
+fn aggregate_buffer_span_budget_counts_overlapping_grants_and_releases_failed_pins() {
+    let mut r = buffered_rig();
+    for offset in 0..2049 {
+        r.memory
+            .map(0x1_0000 + offset, vec![7], Permissions::READ)
+            .unwrap();
+    }
+    let mut packet = [0; 256];
+    packet[..4].copy_from_slice(&0x0020_0004_u32.to_le_bytes());
+    packet[4..8].copy_from_slice(&8_u32.to_le_bytes());
+    alias_descriptor(&mut packet, 8, 0x1_0000, 2049);
+    alias_descriptor(&mut packet, 20, 0x1_0000, 2049);
+    packet[32..36].copy_from_slice(b"SFCI");
+    packet[40..44].copy_from_slice(&1_u32.to_le_bytes());
+    assert_eq!(
+        call_buffered(&mut r, &packet),
+        Err(KernelError::Service(ServiceError::BufferLimit))
+    );
+    let before = r.memory.resident_bytes();
+    r.memory.unmap(0x1_0000, 2049).unwrap();
+    assert_eq!(r.memory.resident_bytes(), before - 2049);
+    assert_eq!(r.count(), 0);
+}

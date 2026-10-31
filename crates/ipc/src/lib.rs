@@ -1,9 +1,10 @@
-//! Original bounded HIPC/CMIF v0 subset. Domains, buffers and incoming handles
-//! are deliberately rejected until their transfer semantics are implemented.
+//! Original bounded HIPC/CMIF v0 with normal A/B map-alias buffer descriptors.
+//! Static/exchange buffers, domains and incoming handles remain unsupported.
 
 use std::fmt;
 
 pub const IPC_BUFFER_SIZE: usize = 0x100;
+pub const MAX_ALIAS_BUFFERS: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IpcError {
@@ -15,6 +16,8 @@ pub enum IpcError {
     UnsupportedVersion(u32),
     UnsupportedContext,
     UnalignedPayload,
+    BufferLimit,
+    UnsupportedBufferMode(u8),
 }
 impl fmt::Display for IpcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -29,6 +32,14 @@ pub enum CommandType {
     Control,
 }
 
+/// Normal-mode HIPC map-alias descriptor: 58-bit address and 36-bit length.
+/// Wire decoding grants no memory rights; the kernel validates the whole range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BufferDescriptor {
+    pub address: u64,
+    pub size: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
     pub kind: CommandType,
@@ -36,6 +47,8 @@ pub struct Request {
     /// The kernel replaces this untrusted wire value with the sender's identity.
     pub pid: Option<u64>,
     pub data: Vec<u8>,
+    pub send_buffers: Vec<BufferDescriptor>,
+    pub receive_buffers: Vec<BufferDescriptor>,
 }
 
 fn word(input: &[u8], offset: usize) -> Result<u32, IpcError> {
@@ -49,7 +62,7 @@ pub fn parse_request(input: &[u8]) -> Result<Request, IpcError> {
     }
     let first = word(input, 0)?;
     let second = word(input, 4)?;
-    if first >> 16 != 0 || second & 0x7fff_fc00 != 0 {
+    if first & 0xf00f_0000 != 0 || second & 0x7fff_fc00 != 0 {
         return Err(IpcError::UnsupportedLayout);
     }
     let kind = match first as u16 {
@@ -57,6 +70,14 @@ pub fn parse_request(input: &[u8]) -> Result<Request, IpcError> {
         5 => CommandType::Control,
         other => return Err(IpcError::UnsupportedType(other)),
     };
+    let send_count = ((first >> 20) & 15) as usize;
+    let receive_count = ((first >> 24) & 15) as usize;
+    if send_count + receive_count > MAX_ALIAS_BUFFERS {
+        return Err(IpcError::BufferLimit);
+    }
+    if kind == CommandType::Control && send_count + receive_count != 0 {
+        return Err(IpcError::UnsupportedLayout);
+    }
     let mut raw_start = 8;
     let pid = if second >> 31 != 0 {
         let special = word(input, raw_start)?;
@@ -76,6 +97,27 @@ pub fn parse_request(input: &[u8]) -> Result<Request, IpcError> {
     } else {
         None
     };
+    let mut descriptors = |count: usize| -> Result<Vec<BufferDescriptor>, IpcError> {
+        let mut buffers = Vec::new();
+        for _ in 0..count {
+            let low_size = word(input, raw_start)?;
+            let low_address = word(input, raw_start + 4)?;
+            let fields = word(input, raw_start + 8)?;
+            if fields & 3 != 0 {
+                return Err(IpcError::UnsupportedBufferMode((fields & 3) as u8));
+            }
+            buffers.push(BufferDescriptor {
+                address: u64::from(low_address)
+                    | (u64::from(fields >> 28) << 32)
+                    | (u64::from((fields >> 2) & 0x3f_ffff) << 36),
+                size: u64::from(low_size) | (u64::from((fields >> 24) & 15) << 32),
+            });
+            raw_start += 12;
+        }
+        Ok(buffers)
+    };
+    let send_buffers = descriptors(send_count)?;
+    let receive_buffers = descriptors(receive_count)?;
     let raw_size = ((second & 0x3ff) as usize) * 4;
     if raw_size < 32 {
         return Err(IpcError::Truncated);
@@ -110,6 +152,8 @@ pub fn parse_request(input: &[u8]) -> Result<Request, IpcError> {
         command_id: word(input, cmif + 8)?,
         pid,
         data: input[payload_start..payload_end].to_vec(),
+        send_buffers,
+        receive_buffers,
     })
 }
 

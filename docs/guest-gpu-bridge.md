@@ -2,7 +2,8 @@
 
 Version 0.9.0-dev connects an original A64 NRO to the original DMA executor via
 SVC, HIPC/CMIF and `emu:gpu`. This emulator-owned protocol is deliberately
-separate from nvdrv. NV buffer descriptors, process/transfer-memory handles,
+separate from nvdrv. Version 0.10.0-dev adds normal
+[A/B buffer grants](hipc-buffers.md) and buffered command 2. Process/transfer-memory handles,
 object registration/ioctls, shaders and rendering remain open. No commercial
 program is expected to use this diagnostic service.
 
@@ -30,7 +31,9 @@ and prepares the front batch. It preserves source/destination backing pins until
 publication. Each call starts with fresh GPU class state; persistent channel/NV
 objects are not modeled. Command 0 returns four u64 values: method writes, copy
 launches, copied bytes and completed calls in this session. Command 1 accepts no
-payload and returns the completed-call counter. Cloned session handles share
+payload and returns the completed-call counter. Command 2 accepts standard A/B
+descriptors and three GPU addresses; its exact transport/limits are documented
+in [HIPC buffers](hipc-buffers.md). Cloned session handles share
 that counter; each separate GetService starts at zero. Unsupported requests
 produce typed host faults under the current kernel contract.
 
@@ -77,7 +80,7 @@ late unsupported commands, range/permission/budget failures, TLS aliases, and
 state/counter rollback. Kernel tests attach actual prepared writes to oversized
 reply and handle-exhaustion cases, proving those failures do not publish effects.
 
-Next: implement the HIPC buffer and kernel-object foundations required by the
+Next: extend buffer variants and implement kernel-object foundations required by the
 public [NV service interface](https://switchbrew.org/wiki/NV_services), then
 route the supported standard ioctl/object subset to this executor. The
 original guest-program-to-image/shader milestone remains open.

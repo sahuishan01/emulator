@@ -29,7 +29,8 @@ Only emulator-5580 was used, then shut down. Raw captures, reports, logs, APKs a
 QA helper scripts remain ignored.
 
 The [supplied 0.8.0-dev report](g720-dma.md) passes all fifteen prior ARM64/G720
-cases. This new guest-to-DMA case needs its own phone report. The bridge is
+cases. The guest-to-DMA case also passes in the
+[0.9.0-dev physical report](g720-guest-dma.md). The bridge is
 explicitly `emu:gpu`, not the nvdrv ABI; its copy engine runs synchronously on
 the CPU. Standard NV services, guest shaders/rendering, console timing/performance
 and commercial gameplay remain open. This is a debug-signed development diagnostic.

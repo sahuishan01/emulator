@@ -8,6 +8,8 @@ fn request(command: u32, data: &[u8], pid: Option<u64>) -> Request {
         command_id: command,
         pid,
         data: data.to_vec(),
+        send_buffers: Vec::new(),
+        receive_buffers: Vec::new(),
     }
 }
 

@@ -37,19 +37,24 @@ implementation, with no unsafe blocks or pointer arguments.
   Services can prepare pinned memory effects; reply/handle validation precedes
   commit and rejects effects that alias TLS reply backing. Oversized reply/
   handle exhaustion cancels effects and candidate state; trace space is reserved.
-  Incoming
-  handles/descriptors/domains/TIPC and system device services remain unsupported.
+  Normal HIPC A/B descriptors now grant READ inputs/WRITE outputs (four buffers,
+  8 MiB logical bytes/4096 backing spans, positive lengths); all ranges preflight
+  before service preparation, and B-to-TLS aliases fail. Default/legacy services
+  reject unused buffers. Static/exchange/non-normal buffers, incoming handles,
+  domains/TIPC and system device services remain unsupported.
 - Scheduler: one host executor, up to 16 lifetime guest threads, core 0/default,
   priority/FIFO selection, 64-instruction quanta, separate registers/flags/TLS,
   sleep/yield, blocking events/joins, virtual deadlines, bounded Blocked outcome.
   One virtual ns per instruction is a reference model, not console frequency.
   Cancellation interrupts active waits or coalesces a deferred flag; polls,
   immediate results and argument errors retain it. SleepThread is not woken.
-- Seven original LLVM NROs: hello (5 instructions), counter (384/5 IPC), clone
+- Eight original LLVM NROs: hello (5 instructions), counter (384/5 IPC), clone
   (529/7 IPC), events (87), threads (97/2 threads/4 switches/3 waits/1 timeout/
   1680 virtual ns), cancellation (106/2 threads/4 switches/2 waits/2 interrupts/
   0 timeouts/1091 ns), gpu-dma (338 instructions/4 IPC/10 methods/2 launches/
-  16 copied bytes). Each exits with expected output/memory and zero handles.
+  16 copied bytes), gpu-buffers (327 instructions/4 IPC/3 A/1 B/80 descriptor
+  bytes/7 methods/1 launch/8 copied bytes). All exit with expected output/memory
+  and zero handles. IPC traces now include successful buffer counts/bytes.
 - GPU: bounded 40-bit GPFIFO and four modern method-packet forms; owned GPU
   mappings importing granted MemoryViews; atomic range access; stable mapping
   IDs. Address-space-bound decode queues capture immutable command bytes and
@@ -65,12 +70,14 @@ implementation, with no unsafe blocks or pointer arguments.
   commit executes once/returns the updated queue. An original NRO now reaches
   this engine through emu:gpu, an emulator-owned one-shot CMIF diagnostic with
   fresh GPU class state per call. Standard NV objects/services, shaders, fences
-  and rendering remain open. See docs/guest-gpu-bridge.md and gpu-dma-methods.md.
+  and rendering remain open. emu:gpu command 2 now uses A commands/source/entries
+  and B output with narrow grants; it cannot read B or write A. See
+  docs/hipc-buffers.md, guest-gpu-bridge.md and gpu-dma-methods.md.
 - Original Rust BC1 RGBA UNORM decoder and generated GPU corpus. Original C++
   Vulkan lab: six offscreen transfer/depth/compute-to-draw/BC1 conversion/sampling/
   update checks. Native shaders, no guest GPU execution. Allocations count Vulkan
   backing requests only, excluding pipeline/driver and process heap overhead.
-- Android schema 3/workload 9: engine has seven actual guest NROs (suite 4),
+- Android schema 3/workload 10: engine has eight actual guest NROs (suite 5),
   gpuCore has three direct ownership/DMA cases (suite 2), gpu has six unchanged
   native Vulkan cases (workload 3). Combined allPassed requires all three.
   Both Rust exports return initialized value-only 4104-byte reports (4096
@@ -79,11 +86,11 @@ implementation, with no unsafe blocks or pointer arguments.
 
 ## Evidence
 
-- 110 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
+- 120 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
   malformed input, rollback, shared memory/alias visibility, pinned resident
   caps, GPU mappings, entry-spanning packets, immutable capture, queue ownership,
   atomic admission failure and ordered release, alongside prior guest behavior.
-- All 18 independent LLVM fixtures match: 11 raw A64 plus seven NROs.
+- All 19 independent LLVM fixtures match: 11 raw A64 plus eight NROs.
 - ARM64/x86_64 Rust cross-build, Gradle build/lint, signature/ELF architecture and
   16 KiB ELF/ZIP packaging checks pass. Not a 16 KiB Android runtime test.
 - GPU-core host reference cases pass: shared aliases survive protect/unmap/
@@ -97,15 +104,17 @@ implementation, with no unsafe blocks or pointer arguments.
   docs/validation/android-dma.md. Android 0.9.0-dev passes all sixteen cases,
   upgrade invalidation, exact export and cold restoration, with no captured app
   crash/ANR. The new guest has 338 instructions/4 IPC/zero handles. See
-  docs/validation/android-guest-dma.md.
+  docs/validation/android-guest-dma.md. Android 0.10.0-dev passes all seventeen
+  checks, upgrade invalidation, exact export and cold restoration, with no app
+  crash/ANR. See docs/validation/android-hipc-buffers.md.
 - Prior Android AVD runs pass their current suites, upgrade invalidation, exact
   export and cold restore. System UI can show a startup ANR: dismiss only its
   Wait action using current XML, then re-dump before tapping. Never dismiss an
   app ANR as infrastructure. Details are under docs/validation/.
-- Supplied physical reports through 0.8.0-dev pass all fifteen guest/ownership/
-  DMA/host Vulkan cases on ARM64/G720. Direct DMA counts are 1 batch/11 writes/
-  2 launches/16 copied bytes/zero retained backing. Device/driver identity matches
-  prior reports. See docs/validation/g720-dma.md and earlier records.
+- Supplied physical reports through 0.9.0-dev pass all sixteen guest/ownership/
+  DMA/host Vulkan cases on ARM64/G720. Guest DMA matches 338 instructions/4 IPC/
+  expected output/zero handles; direct DMA remains 11 writes/2 launches/16 bytes.
+  Device/driver identity matches. See docs/validation/g720-guest-dma.md.
   Android 16/API 36, Vulkan 1.3.247, raw driver 184553472; validation
   disabled, native BC false. No physical phone is connected through ADB.
 - Earlier physical BC1 conversion/sampling/update results do not establish guest
@@ -114,14 +123,13 @@ implementation, with no unsafe blocks or pointer arguments.
 
 ## Next work
 
-1. Verify engine suite 4 guest-gpu-dma-submission on the phone with 0.9.0-dev:
-   338 instructions/4 IPC/expected debug output/zero handles. The NRO checks
-   10 methods/2 launches/16 copied bytes internally; direct gpuCore DMA still has
-   11 writes due to its extra alias. Prior fifteen cases passed physically.
-2. Implement HIPC buffers and kernel process/transfer-memory handle foundations,
-   then standard NV service/ioctl/object registration. emu:gpu is an explicit
-   diagnostic protocol, not NV compatibility. Current synchronous DMA/capture
-   policies are not asynchronous timing, host Vulkan or guest fence completion.
+1. Verify engine suite 5 guest-hipc-buffered-dma on the phone with 0.10.0-dev:
+   327 instructions/4 IPC/3 sendBuffers/1 receiveBuffer/80 bufferBytes/expected
+   output/zero handles. Prior sixteen cases passed physically.
+2. Implement process/transfer-memory and incoming-handle foundations, then
+   standard NV service/ioctl/object registration. Extend static/exchange/optional
+   buffer variants when required. emu:gpu remains a diagnostic protocol; current
+   synchronous capture/DMA is not native Vulkan or guest fence completion.
 3. Implement original shader decode/IR/SPIR-V and renderer integration. M4's
    complete guest-program-to-image gate remains open. Presentation/audio/input,
    broader content/services and performance follow their actual dependencies.
@@ -129,13 +137,15 @@ implementation, with no unsafe blocks or pointer arguments.
 ## Repository and environment
 
 Private GitHub repository: https://github.com/sahuishan01/emulator, main.
-The 0.9.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
+The 0.10.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
 packaging report and notes; older snapshots are retained. Source and artifacts
 must match the recorded commit. These are prototypes, not production releases;
 use agent-tasks notifications only. Use permanent /releases/download/<tag>/...
 links plus the release page, never signed CDN redirects. An expired redirect
-previously produced ERR_INVALID_RESPONSE; a server download does not prove the
-phone's browser/network path.
+previously produced ERR_INVALID_RESPONSE. Private assets also return 404 to
+unauthenticated browsers: verified with 0.9.0-dev; authenticated downloads match
+checksums. Open the release in Chrome signed into the owner/access account.
+A server download does not prove the phone's browser/network path.
 
 Rust/Cargo, LLVM/Clang 19, llvmpipe, Vulkan/Khronos validation, glslangValidator
 and spirv-val are available. Android SDK: ~/Android/Sdk. Pins: Rust 1.85.1,
@@ -146,5 +156,6 @@ newer: identity allocation uses checked CAS compatible with both toolchains.
 
 The QA AVD lives under ignored reports/android-qa/avd. CPU-gate its background
 startup at >=80% idle; use only emulator-5580, await boot/command completion,
-use fresh XML-derived UI coordinates, capture/view screenshots/logs, and shut
+require a dump success message plus valid fresh XML (exit 0 can leave no file),
+use XML-derived coordinates, capture/view screenshots/logs, and shut
 it down/await its process after QA. Do not affect another emulator/device.

@@ -116,3 +116,26 @@ fn failed_backing_allocation_and_alias_publication_restore_accounting() {
         })
     ));
 }
+
+#[test]
+fn write_only_grants_cannot_read_or_widen_permissions_through_aliases() {
+    let mut cpu = emulator_memory::AddressSpace::with_limit(16);
+    cpu.map(0x1000, vec![1; 8], emulator_memory::Permissions::READ_WRITE)
+        .unwrap();
+    let view = cpu
+        .pin(0x1000, 8, emulator_memory::Permissions::WRITE)
+        .unwrap();
+    let mut bytes = [0xaa; 8];
+    assert!(view.read(0, &mut bytes).is_err());
+    assert_eq!(bytes, [0xaa; 8]);
+    view.write(0, &[42; 8]).unwrap();
+    assert!(cpu
+        .map_alias(0x2000, &view, emulator_memory::Permissions::READ_WRITE)
+        .is_err());
+    cpu.map_alias(0x2000, &view, emulator_memory::Permissions::WRITE)
+        .unwrap();
+    assert!(cpu.read(0x2000, &mut bytes).is_err());
+    cpu.write(0x2000, &[7; 8]).unwrap();
+    cpu.read(0x1000, &mut bytes).unwrap();
+    assert_eq!(bytes, [7; 8]);
+}

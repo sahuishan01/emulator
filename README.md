@@ -9,10 +9,11 @@ The project plan is split into [architecture](docs/architecture.md),
 [implementation milestones](docs/implementation-plan.md). These distinguish
 the implemented components from the remaining Switch/Android work.
 
-The original Rust engine loads seven of our own static NRO programs and executes
+The original Rust engine loads eight of our own static NRO programs and executes
 them through an A64 interpreter subset. They exercise debug output, service
 discovery/IPC, shared cloned-session lifetimes, events, thread scheduling,
-blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions.
+blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
+including normal HIPC input/output buffer grants.
 The Android lab embeds this engine, three GPU memory/command reference cases and six
 native Vulkan checks: image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
@@ -31,7 +32,8 @@ address reuse. See [GPU memory and submission ownership](docs/gpu-memory-submiss
 [Original DMA method execution](docs/gpu-dma-methods.md) now performs bounded
 linear copies with per-subchannel state and transactional validation.
 An [emulator-owned guest bridge](docs/guest-gpu-bridge.md) now lets an original
-NRO submit these commands through IPC. Standard NV services, shaders and
+NRO submit these commands through IPC. [HIPC A/B buffer descriptors](docs/hipc-buffers.md)
+now carry granted inputs/outputs to a second guest DMA fixture. Standard NV services, shaders and
 rendering remain separate work.
 
 No existing emulator core is linked or copied into the implementation. Earlier
@@ -63,7 +65,8 @@ implemented. Run `ipc-counter.nro`, `ipc-clone.nro`, `events.nro`, `threads.nro`
 or `cancellation.nro` through the
 same command to exercise them. See [the kernel/IPC subset](docs/kernel-ipc.md)
 for exact behavior and limits. `gpu-dma.nro` exercises the original guest-to-DMA
-bridge; it uses `emu:gpu`, not the standard nvdrv ABI. Unsupported operations
+bridge; `gpu-buffers.nro` uses normal HIPC A/B input/output descriptors. Both
+use `emu:gpu`, not the standard nvdrv ABI. Unsupported operations
 produce explicit errors.
 The [reference scheduler](docs/scheduling.md) switches guest contexts, preserves
 per-thread TLS and advances virtual deadlines without sleeping the host.
@@ -95,16 +98,16 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/memory` | Shared owned backing, aliases/pinned views, resident budgets, transactional mappings and cross-region R/W/X checks |
 | `crates/a64` | Registers, instruction decoding/execution, arithmetic flags, explicit faults and SVC events |
 | `crates/loader` | Bounded static NRO validation, segments, permissions and BSS |
-| `crates/ipc` | Bounded HIPC/CMIF v0 request parsing and reply encoding |
+| `crates/ipc` | Bounded HIPC/CMIF v0, normal A/B descriptor parsing and reply encoding |
 | `crates/kernel` | SVCs, handles, IPC, cloned sessions, threads, waits, deadlines and cancellation |
 | `crates/services` | Minimal CMIF service manager, `emu:test` counter and `emu:gpu` DMA bridge |
 | `crates/session` | Process entry state, guarded stack, guest TLS and resumable execution budgets |
 | `crates/texture` | Original bounded BC1 RGBA UNORM reference decoder |
 | `crates/gpu` | GPU virtual mappings, pinned resources, bounded GPFIFO/Maxwell framing and owned decoded batches and linear DMA method execution |
 | `crates/cli` | NRO/raw-program execution and demo |
-| `crates/android-ffi` | Bounded C reports for seven guest programs and three GPU memory/command cases |
+| `crates/android-ffi` | Bounded C reports for eight guest programs and three GPU memory/command cases |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
-| `examples/homebrew` | Seven original homebrew sources and assembled NRO fixtures |
+| `examples/homebrew` | Eight original homebrew sources and assembled NRO fixtures |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
 | `android/gpu-lab` | Original engine and native GPU diagnostics with retained JSON/export |
 | `tools/collect_android_gpu.py` | Optional read-only Android capability/exit-history capture |
@@ -120,15 +123,17 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android engine and GPU lab
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.9.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.10.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.9.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.9.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.10.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.10.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
-this private repository. GitHub redirects downloads to temporary signed asset
+this private repository. A 404 can mean the browser is not signed in or lacks
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.10.0-dev)
+in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.
 The ZIP contains the same APK, checksum, verification report and installation
@@ -156,7 +161,7 @@ The APK includes arm64-v8a and x86_64 libraries. Install it, select **Run engine
 and GPU checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. Schema 3 separates seven guest checks (`engine`), three GPU memory/command
+devices. Schema 3 separates eight guest checks (`engine`), three GPU memory/command
 cases (`gpuCore`) and six host Vulkan checks (`gpu`). See [the Android boundary](docs/android-engine.md)
 for its build, report schema and verification limits.
 
@@ -177,8 +182,8 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has 110 Rust tests and 18 independently assembled fixtures
-(11 raw A64 programs and seven NROs).
+The current suite has 120 Rust tests and 19 independently assembled fixtures
+(11 raw A64 programs and eight NROs).
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
 All six Vulkan workloads passed on desktop llvmpipe with zero validation
 errors and on an Android 15 SwiftShader AVD. A deliberately stale update in a
@@ -194,7 +199,8 @@ scheduling case as well. The [0.6.0-dev phone report](docs/validation/g720-cance
 also passes cancellation, closing all six guest-program device checkpoints.
 The [0.7.0-dev phone report](docs/validation/g720-gpu-ownership.md) also passes
 both GPU-core ownership cases. The [0.8.0-dev phone report](docs/validation/g720-dma.md)
-also passes the original DMA case, closing all fifteen prior device checkpoints.
+also passes the original DMA case. The [0.9.0-dev phone report](docs/validation/g720-guest-dma.md)
+also passes guest DMA submission, closing all sixteen prior device checkpoints.
 The [0.5.0-dev Android AVD checkpoint](docs/validation/android-scheduling.md)
 passes all five guest checks plus six Vulkan checks, with exact report export
 and cold restoration.
@@ -206,6 +212,8 @@ The [0.8.0-dev checkpoint](docs/validation/android-dma.md) passes all fifteen
 cases with original DMA execution, exact export and cold restoration.
 The [0.9.0-dev checkpoint](docs/validation/android-guest-dma.md) passes all
 sixteen checks, including the new guest-to-DMA NRO, exact export and cold restoration.
+The [0.10.0-dev checkpoint](docs/validation/android-hipc-buffers.md) passes all
+seventeen cases, including normal HIPC A/B grants, exact export and cold restoration.
 These results cover the owned workloads; guest graphics, sustained
 performance and 16 KiB Android runtime behavior remain untested.
 Current state and next steps are recorded in [HANDOFF.md](HANDOFF.md).

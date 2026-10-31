@@ -41,7 +41,7 @@ impl Service for DiagnosticGpu {
     }
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
-            0 => Err(ServiceError::MissingMemoryContext),
+            0 | 2 => Err(ServiceError::MissingMemoryContext),
             1 => {
                 super::payload(request, 0)?;
                 Ok(ServiceReply {
@@ -60,6 +60,10 @@ impl Service for DiagnosticGpu {
         request: &Request,
         context: &ServiceContext<'_>,
     ) -> Result<ServiceReply, ServiceError> {
+        if request.command_id == 2 {
+            return self.buffered(request, context);
+        }
+        context.require_buffers(0, 0)?;
         if request.command_id != 0 {
             return self.dispatch(request);
         }
@@ -83,10 +87,50 @@ impl Service for DiagnosticGpu {
         let mut space = GpuAddressSpace::new(MAX_COMMAND + MAX_DATA).map_err(device)?;
         space.map(GpuVa(values[1]), commands).map_err(device)?;
         space.map(GpuVa(values[4]), data).map_err(device)?;
-        let mut queue = SubmissionQueue::new(&space, QueueLimits::default()).map_err(device)?;
-        let id = queue.submit(&space, &bytes).map_err(device)?;
+        self.finish(&space, &bytes)
+    }
+}
+impl DiagnosticGpu {
+    fn buffered(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        context.require_buffers(3, 1)?;
+        super::payload(request, 24)?;
+        let addresses: Vec<u64> = request
+            .data
+            .chunks_exact(8)
+            .map(|b| u64::from_le_bytes(b.try_into().expect("eight bytes")))
+            .collect();
+        let commands = context.send_buffer(0)?;
+        let source = context.send_buffer(1)?;
+        let entries = context.send_buffer(2)?;
+        let target = context.receive_buffer(0)?;
+        size(commands.len() as u64, MAX_COMMAND)?;
+        size(source.len() as u64, MAX_DATA)?;
+        size(target.len() as u64, MAX_DATA)?;
+        size(entries.len() as u64, 256 * 8)?;
+        if commands.len() % 4 != 0 || entries.len() % 8 != 0 {
+            return Err(device("Diagnostic GPU command/entry alignment"));
+        }
+        let mut bytes = vec![0; entries.len()];
+        entries.read(0, &mut bytes).map_err(ServiceError::Memory)?;
+        let mut space = GpuAddressSpace::new(MAX_COMMAND + MAX_DATA * 2).map_err(device)?;
+        space.map(GpuVa(addresses[0]), commands).map_err(device)?;
+        space.map(GpuVa(addresses[1]), source).map_err(device)?;
+        space.map(GpuVa(addresses[2]), target).map_err(device)?;
+        self.finish(&space, &bytes)
+    }
+    fn finish(
+        &mut self,
+        space: &GpuAddressSpace,
+        bytes: &[u8],
+    ) -> Result<ServiceReply, ServiceError> {
+        let mut queue = SubmissionQueue::new(space, QueueLimits::default()).map_err(device)?;
+        let id = queue.submit(space, bytes).map_err(device)?;
         let submission = queue
-            .prepare_front(&space, id, ExecutionLimits::default())
+            .prepare_front(space, id, ExecutionLimits::default())
             .map_err(device)?;
         let stats = submission.stats();
         let writes = submission.write_ranges().collect();

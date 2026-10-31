@@ -116,6 +116,9 @@ pub struct IpcRecord {
     pub command_id: u32,
     pub request_bytes: usize,
     pub reply_bytes: usize,
+    pub send_buffers: usize,
+    pub receive_buffers: usize,
+    pub buffer_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -278,14 +281,13 @@ impl Kernel {
                 command_id: 2,
                 request_bytes: 0,
                 reply_bytes: 0,
+                send_buffers: 0,
+                receive_buffers: 0,
+                buffer_bytes: 0,
             });
             cpu.x[0] = 0;
             return Ok(());
         }
-        let mut candidate = service.borrow().clone_for_request();
-        let reply = candidate
-            .prepare(&request, &ServiceContext::new(memory))
-            .map_err(KernelError::Service)?;
         let reply_view = memory
             .pin(
                 cpu.tpidrro_el0,
@@ -293,6 +295,14 @@ impl Kernel {
                 emulator_memory::Permissions::READ_WRITE,
             )
             .map_err(KernelError::Memory)?;
+        let context = ServiceContext::new(memory, &request).map_err(KernelError::Service)?;
+        context
+            .validate_reply(&reply_view)
+            .map_err(KernelError::Service)?;
+        let mut candidate = service.borrow().clone_for_request();
+        let reply = candidate
+            .prepare(&request, &context)
+            .map_err(KernelError::Service)?;
         if let Some(effect) = &reply.effect {
             let writes = effect.write_ranges();
             if writes.len() > 4096
@@ -338,6 +348,14 @@ impl Kernel {
             command_id: request.command_id,
             request_bytes: request.data.len(),
             reply_bytes: reply.data.len(),
+            send_buffers: request.send_buffers.len(),
+            receive_buffers: request.receive_buffers.len(),
+            buffer_bytes: request
+                .send_buffers
+                .iter()
+                .chain(&request.receive_buffers)
+                .map(|d| d.size as usize)
+                .sum(),
         });
         cpu.x[0] = 0;
         Ok(())

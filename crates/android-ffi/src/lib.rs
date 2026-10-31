@@ -38,6 +38,7 @@ struct Case {
     memory: Option<(u64, u64)>,
     scheduler: (usize, u64, u64), // threads, blocking waits, timeouts
     cancellations: u64,
+    ipc_buffers: (usize, usize, usize),
 }
 fn reference_checks() -> String {
     let cases = [
@@ -50,6 +51,7 @@ fn reference_checks() -> String {
             memory: None,
             scheduler: (1, 0, 0),
             cancellations: 0,
+            ipc_buffers: (0, 0, 0),
         },
         Case {
             name: "guest-service-manager-ipc",
@@ -60,6 +62,7 @@ fn reference_checks() -> String {
             memory: Some((0x2000, 42)),
             scheduler: (1, 0, 0),
             cancellations: 0,
+            ipc_buffers: (0, 0, 0),
         },
         Case {
             name: "guest-cloned-session-lifetime",
@@ -70,6 +73,7 @@ fn reference_checks() -> String {
             memory: Some((0x2000, 43)),
             scheduler: (1, 0, 0),
             cancellations: 0,
+            ipc_buffers: (0, 0, 0),
         },
         Case {
             name: "guest-event-signaling-polling",
@@ -80,6 +84,7 @@ fn reference_checks() -> String {
             memory: Some((0x2008, 7)),
             scheduler: (1, 0, 0),
             cancellations: 0,
+            ipc_buffers: (0, 0, 0),
         },
         Case {
             name: "guest-thread-scheduling-and-blocking-waits",
@@ -90,6 +95,7 @@ fn reference_checks() -> String {
             memory: Some((0x2020, 42)),
             scheduler: (2, 3, 1),
             cancellations: 0,
+            ipc_buffers: (0, 0, 0),
         },
         Case {
             name: "guest-wait-cancellation",
@@ -100,6 +106,7 @@ fn reference_checks() -> String {
             memory: Some((0x2020, 42)),
             scheduler: (2, 2, 0),
             cancellations: 2,
+            ipc_buffers: (0, 0, 0),
         },
         Case {
             name: "guest-gpu-dma-submission",
@@ -110,6 +117,18 @@ fn reference_checks() -> String {
             memory: Some((0x2030, 42)),
             scheduler: (1, 0, 0),
             cancellations: 0,
+            ipc_buffers: (0, 0, 0),
+        },
+        Case {
+            name: "guest-hipc-buffered-dma",
+            image: include_bytes!("../../../examples/homebrew/gpu-buffers.nro"),
+            message: "Guest HIPC buffers submitted DMA and returned bytes.\n",
+            instructions: 327,
+            ipc_calls: 4,
+            memory: Some((0x2020, 42)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (3, 1, 80),
         },
     ];
     let mut all_passed = true;
@@ -117,6 +136,7 @@ fn reference_checks() -> String {
     for case in cases {
         let mut instructions = 0;
         let mut ipc_calls = 0;
+        let mut buffers = (0, 0, 0);
         let mut handles = 0;
         let mut debug = String::new();
         let mut scheduling = (0, 0, 0, 0, 0, 0);
@@ -125,6 +145,11 @@ fn reference_checks() -> String {
             let outcome = session.run(10000).map_err(|e| e.to_string())?;
             instructions = session.instructions();
             ipc_calls = session.kernel().ipc_records().len();
+            for record in session.kernel().ipc_records() {
+                buffers.0 += record.send_buffers;
+                buffers.1 += record.receive_buffers;
+                buffers.2 += record.buffer_bytes;
+            }
             handles = session.kernel().live_handle_count();
             let stats = session.kernel().scheduler_stats();
             scheduling = (
@@ -141,6 +166,7 @@ fn reference_checks() -> String {
             if outcome != RunOutcome::Exited
                 || instructions != case.instructions
                 || ipc_calls != case.ipc_calls
+                || buffers != case.ipc_buffers
                 || handles != 0
                 || session.debug_records() != [case.message.as_bytes().to_vec()]
                 || (stats.threads_created, stats.blocking_waits, stats.timeouts) != case.scheduler
@@ -196,10 +222,10 @@ fn reference_checks() -> String {
         })();
         let passed = check.is_ok();
         all_passed &= passed;
-        tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
-            quote(case.name),passed,instructions,ipc_calls,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
+        tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
+            quote(case.name),passed,instructions,ipc_calls,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":4,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":5,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -251,7 +277,7 @@ mod tests {
         assert_eq!(result.abi_version, 1);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 7);
+        assert_eq!(text.matches("\"passed\":true").count(), 8);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

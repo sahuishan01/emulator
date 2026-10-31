@@ -30,6 +30,11 @@ impl Permissions {
         write: false,
         execute: false,
     };
+    pub const WRITE: Self = Self {
+        read: false,
+        write: true,
+        execute: false,
+    };
     pub const READ_WRITE: Self = Self {
         read: true,
         write: true,

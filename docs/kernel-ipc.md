@@ -55,8 +55,11 @@ bounded raw data, 16-byte CMIF alignment/padding, and optional sender PID.
 An empty special header is valid. The kernel overwrites a requested sender
 identity with its owned guest PID 1; a guest cannot supply a host PID.
 
-Descriptors, receive buffers, incoming copy/move handles, domains, context
-variants, TIPC and other layouts are rejected explicitly. Replies are complete
+Normal A/B map-alias descriptors now grant read-only inputs/write-only outputs:
+up to four descriptors, 8 MiB logical bytes and 4096 spans, with complete range/
+permission checks and TLS reply alias rejection. See [HIPC buffers](hipc-buffers.md).
+X/C static and W exchange buffers, non-normal modes, incoming copy/move handles,
+domains, context variants, TIPC and other layouts remain explicit errors. Replies are complete
 zero-initialized 256-byte buffers with SFCO, result/data and up to 15 outgoing
 moved session handles. Unaligned/oversized payloads are rejected.
 
@@ -81,7 +84,9 @@ separate from cloning a service snapshot for transactional request handling.
 Registered services are emulator-owned diagnostics: `emu:test` Add (0) checks
 u64 overflow and returns the counter; Read (1) returns its value. `emu:gpu`
 RunDmaBatch (0) prepares actual GPFIFO/DMA commands from granted guest memory;
-ReadCompleted (1) returns committed calls. Each GetService creates fresh state.
+ReadCompleted (1) returns committed calls. BufferedDma (2) uses three A/one B
+descriptors and GPU addresses, preserving descriptor rights. Each GetService
+creates fresh state.
 These protocols are separate from Nintendo/NV device services. Unsupported
 operations never fabricate success.
 
@@ -99,6 +104,7 @@ Run each with `cargo run --offline -p emulator-cli -- run-nro <file>`.
 | `threads.nro` | Separate contexts/TLS, sleeping child, blocking event wait, join and finite timeout | 97 | 0 |
 | `cancellation.nro` | Deferred and active cancellation, coalescing, preserved indices, event state and readable clear | 106 | 0 |
 | `gpu-dma.nro` | Discover emu:gpu, submit actual commands, verify two dependent copies/counters and close sessions | 338 | 4 |
+| `gpu-buffers.nro` | Grant three A/one B descriptors, submit DMA, verify returned bytes/counters and close sessions | 327 | 4 |
 
 Tests also cover truncated wire prefixes, PID replacement, malformed layouts,
 reply capacity, read-only output, rollback after oversized replies, atomic

@@ -15,6 +15,9 @@ pub enum ServiceError {
     ArithmeticOverflow,
     MissingMemoryContext,
     InvalidEffect,
+    BufferLimit,
+    InvalidBufferCounts { send: usize, receive: usize },
+    ReplyBufferOverlap,
     DeviceFault(String),
     Memory(MemoryError),
 }
@@ -37,10 +40,82 @@ pub struct ServiceReply {
 /// No mutable address space or backing borrow escapes into a service.
 pub struct ServiceContext<'a> {
     memory: &'a AddressSpace,
+    send: Vec<MemoryView>,
+    receive: Vec<MemoryView>,
 }
 impl<'a> ServiceContext<'a> {
-    pub(crate) fn new(memory: &'a AddressSpace) -> Self {
-        Self { memory }
+    pub(crate) fn new(memory: &'a AddressSpace, request: &Request) -> Result<Self, ServiceError> {
+        let mut context = Self {
+            memory,
+            send: Vec::new(),
+            receive: Vec::new(),
+        };
+        let mut total = 0_u64;
+        let mut spans = 0;
+        for (descriptors, views, permissions) in [
+            (&request.send_buffers, &mut context.send, Permissions::READ),
+            (
+                &request.receive_buffers,
+                &mut context.receive,
+                Permissions::WRITE,
+            ),
+        ] {
+            for descriptor in descriptors {
+                total = total
+                    .checked_add(descriptor.size)
+                    .ok_or(ServiceError::BufferLimit)?;
+                if descriptor.size == 0 || total > 8 * 1024 * 1024 {
+                    return Err(ServiceError::BufferLimit);
+                }
+                let size =
+                    usize::try_from(descriptor.size).map_err(|_| ServiceError::BufferLimit)?;
+                let view = memory
+                    .pin(descriptor.address, size, permissions)
+                    .map_err(ServiceError::Memory)?;
+                spans += view.backing_ranges().count();
+                if spans > 4096 {
+                    return Err(ServiceError::BufferLimit);
+                }
+                views.push(view);
+            }
+        }
+        Ok(context)
+    }
+    pub(crate) fn validate_reply(&self, reply: &MemoryView) -> Result<(), ServiceError> {
+        if self.receive.iter().any(|view| {
+            view.backing_ranges().any(|a| {
+                reply.backing_ranges().any(|b| {
+                    a.id == b.id && a.offset < b.offset + b.length && b.offset < a.offset + a.length
+                })
+            })
+        }) {
+            return Err(ServiceError::ReplyBufferOverlap);
+        }
+        Ok(())
+    }
+    pub fn require_buffers(&self, send: usize, receive: usize) -> Result<(), ServiceError> {
+        if self.send.len() != send || self.receive.len() != receive {
+            return Err(self.buffer_error());
+        }
+        Ok(())
+    }
+    fn buffer_error(&self) -> ServiceError {
+        ServiceError::InvalidBufferCounts {
+            send: self.send.len(),
+            receive: self.receive.len(),
+        }
+    }
+    pub fn send_buffer(&self, index: usize) -> Result<MemoryView, ServiceError> {
+        self.send
+            .get(index)
+            .cloned()
+            .ok_or_else(|| self.buffer_error())
+    }
+    pub fn receive_buffer(&self, index: usize) -> Result<MemoryView, ServiceError> {
+        self.receive
+            .get(index)
+            .cloned()
+            .ok_or_else(|| self.buffer_error())
     }
     pub fn pin(
         &self,
@@ -70,8 +145,9 @@ pub trait Service: fmt::Debug {
     fn prepare(
         &mut self,
         request: &Request,
-        _context: &ServiceContext<'_>,
+        context: &ServiceContext<'_>,
     ) -> Result<ServiceReply, ServiceError> {
+        context.require_buffers(0, 0)?;
         self.dispatch(request)
     }
 }
