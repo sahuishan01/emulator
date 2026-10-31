@@ -1,5 +1,6 @@
 //! Original standard nvdrv Initialize subset. It adopts a real process-owned
 //! transfer arena; nvmap device metadata ioctls are bounded separately.
+use crate::nvas::NvAddressSpace;
 use crate::nvmap::{
     ImportBudget, NvMap, BAD_PARAMETER, IMPORT_BYTES, IMPORT_SPANS, NOT_SUPPORTED, NO_MEMORY,
 };
@@ -15,6 +16,7 @@ pub struct NvDriver {
     arena: Option<Rc<TransferMemory>>,
     devices: Vec<Device>,
     next_fd: u32,
+    nvmap: NvMap,
 }
 impl Default for NvDriver {
     fn default() -> Self {
@@ -22,13 +24,19 @@ impl Default for NvDriver {
             arena: None,
             devices: Vec::new(),
             next_fd: 1,
+            nvmap: NvMap::default(),
         }
     }
 }
 #[derive(Clone, Debug)]
 struct Device {
     fd: u32,
-    nvmap: NvMap,
+    object: DeviceObject,
+}
+#[derive(Clone, Debug)]
+enum DeviceObject {
+    NvMap,
+    AddressSpace(NvAddressSpace),
 }
 #[derive(Debug)]
 struct BufferWrite {
@@ -79,9 +87,11 @@ impl NvDriver {
         if bytes.iter().any(|b| !b.is_ascii() || *b == 0) {
             return Ok(reply(&[0, BAD_PARAMETER]));
         }
-        if bytes != b"/dev/nvmap" {
-            return Ok(reply(&[0, NOT_SUPPORTED]));
-        }
+        let object = match bytes.as_slice() {
+            b"/dev/nvmap" => DeviceObject::NvMap,
+            b"/dev/nvhost-as-gpu" => DeviceObject::AddressSpace(NvAddressSpace::default()),
+            _ => return Ok(reply(&[0, NOT_SUPPORTED])),
+        };
         if self.devices.len() >= 16 {
             return Ok(reply(&[0, NO_MEMORY]));
         }
@@ -93,10 +103,7 @@ impl NvDriver {
             return Ok(reply(&[0, NO_MEMORY]));
         };
         let fd = self.next_fd;
-        self.devices.push(Device {
-            fd,
-            nvmap: NvMap::default(),
-        });
+        self.devices.push(Device { fd, object });
         self.next_fd = next;
         Ok(reply(&[fd, 0]))
     }
@@ -114,6 +121,9 @@ impl NvDriver {
         let Some(at) = self.devices.iter().position(|d| d.fd == fd) else {
             return Ok(reply(&[BAD_PARAMETER]));
         };
+        if matches!(self.devices[at].object, DeviceObject::NvMap) {
+            self.nvmap.close_device(fd);
+        }
         self.devices.remove(at);
         Ok(reply(&[0]))
     }
@@ -122,49 +132,83 @@ impl NvDriver {
         request: &Request,
         context: &ServiceContext<'_>,
     ) -> Result<ServiceReply, ServiceError> {
-        context.require_buffers(1, 1)?;
         super::payload(request, 8)?;
+        let fd = input_word(request, 0);
+        let code = input_word(request, 4);
+        let send = usize::from(code & (1 << 30) != 0);
+        let receive = usize::from(code & (1 << 31) != 0);
+        context.require_buffers(send, receive)?;
         if self.arena.is_none() {
             return Ok(reply(&[3]));
         }
-        let fd = input_word(request, 0);
-        let code = input_word(request, 4);
-        let (used_bytes, used_spans) = self
-            .devices
-            .iter()
-            .map(|d| d.nvmap.imported_usage())
-            .fold((0, 0), |(bytes, spans), (b, s)| (bytes + b, spans + s));
-        let budget = ImportBudget {
-            bytes: IMPORT_BYTES - used_bytes,
-            spans: IMPORT_SPANS - used_spans,
-        };
-        let Some(device) = self.devices.iter_mut().find(|d| d.fd == fd) else {
+        let Some(at) = self.devices.iter().position(|d| d.fd == fd) else {
             return Ok(reply(&[BAD_PARAMETER]));
         };
-        let Some(size) = NvMap::argument_size(code) else {
+        let size = match &self.devices[at].object {
+            DeviceObject::NvMap => NvMap::argument_size(code),
+            DeviceObject::AddressSpace(_) => NvAddressSpace::argument_size(code),
+        };
+        let Some(size) = size else {
             return Ok(reply(&[NOT_SUPPORTED]));
         };
         let input = context.send_buffer(0)?;
-        let output = context.receive_buffer(0)?;
-        if input.len() != size || output.len() != size {
+        let output = if receive == 1 {
+            Some(context.receive_buffer(0)?)
+        } else {
+            None
+        };
+        if input.len() != size || output.as_ref().is_some_and(|v| v.len() != size) {
             return Ok(reply(&[BAD_PARAMETER]));
         }
         let mut bytes = vec![0; size];
         input.read(0, &mut bytes).map_err(ServiceError::Memory)?;
-        match device
-            .nvmap
-            .ioctl(code, &bytes, budget, |address, size, permissions| {
-                context.pin(address, size, permissions).ok()
-            }) {
+        let handle = if code == 0xc0180105 {
+            u32::from_le_bytes(bytes[..4].try_into().expect("free handle"))
+        } else {
+            0
+        };
+        let retained = self
+            .devices
+            .iter()
+            .any(|d| matches!(&d.object, DeviceObject::AddressSpace(space) if space.holds(handle)));
+        let (used_bytes, used_spans) = match &self.devices[at].object {
+            DeviceObject::NvMap => self.nvmap.imported_usage(),
+            DeviceObject::AddressSpace(_) => self
+                .devices
+                .iter()
+                .filter_map(|d| match &d.object {
+                    DeviceObject::AddressSpace(s) => Some(s.usage()),
+                    _ => None,
+                })
+                .fold((0, 0), |(b, s), (bytes, spans)| (b + bytes, s + spans)),
+        };
+        let budget = ImportBudget {
+            bytes: IMPORT_BYTES - used_bytes,
+            spans: IMPORT_SPANS - used_spans,
+        };
+        let result = match &mut self.devices[at].object {
+            DeviceObject::NvMap => self.nvmap.ioctl(fd, code, &bytes, budget, |a, s, p| {
+                context.pin(a, s, p).ok()
+            }),
+            DeviceObject::AddressSpace(space) => space.ioctl(code, &bytes, budget, |handle| {
+                self.nvmap.imported_view(handle)
+            }),
+        };
+        match result {
             Err(error) => Ok(reply(&[error])),
-            Ok(bytes) => {
-                let ranges = output.backing_ranges().collect();
+            Ok(mut bytes) => {
+                if code == 0xc0180105 && retained {
+                    bytes[8..16].fill(0);
+                }
                 let mut response = reply(&[0]);
-                response.effect = Some(Box::new(BufferWrite {
-                    view: output,
-                    bytes,
-                    ranges,
-                }));
+                if let Some(view) = output {
+                    let ranges = view.backing_ranges().collect();
+                    response.effect = Some(Box::new(BufferWrite {
+                        view,
+                        bytes,
+                        ranges,
+                    }));
+                }
                 Ok(response)
             }
         }

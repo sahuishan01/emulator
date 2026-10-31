@@ -244,3 +244,34 @@ fn queued_pins_cannot_bypass_the_originating_cpu_resident_limit() {
     queue.release_front(id).unwrap();
     cpu.map(0, vec![0; 4], Permissions::READ).unwrap();
 }
+
+#[test]
+fn speculative_mapping_snapshots_isolate_tables_and_never_reuse_canceled_ids() {
+    let mut memory = AddressSpace::default();
+    memory
+        .map(0x1000, vec![42; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    let view = memory.pin(0x1000, 4096, Permissions::READ_WRITE).unwrap();
+    let mut live = GpuAddressSpace::new(16384).unwrap();
+    let original = live.map(GpuVa(0x10000), view.clone()).unwrap();
+    let mut canceled = live.snapshot_for_transaction();
+    assert_eq!(canceled.id(), live.id());
+    canceled.unmap(original).unwrap();
+    let discarded = canceled.map(GpuVa(0x20000), view.clone()).unwrap();
+    assert_eq!(live.mapping_count(), 1);
+    let mut value = [0; 1];
+    live.read(GpuVa(0x10000), &mut value).unwrap();
+    assert_eq!(value, [42]);
+    assert!(live.read(GpuVa(0x20000), &mut value).is_err());
+    drop(canceled);
+    let mut candidate = live.snapshot_for_transaction();
+    let published = candidate.map(GpuVa(0x20000), view).unwrap();
+    assert_ne!(discarded, published);
+    assert!(candidate.unmap(discarded).is_err());
+    live = candidate;
+    assert_eq!(live.mapping_count(), 2);
+    assert_eq!(live.mapped_spans(), 2);
+    live.unmap(original).unwrap();
+    live.read(GpuVa(0x20000), &mut value).unwrap();
+    assert_eq!(value, [42]);
+}

@@ -1,10 +1,10 @@
 # Android original-engine checks
 
-Version 0.13.0-dev embeds the original Rust engine into the existing Android
+Version 0.14.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
-The app's worker calls Rust once to execute eleven original NRO fixtures
+The app's worker calls Rust once to execute twelve original NRO fixtures
 described in [kernel-ipc.md](kernel-ipc.md), separately runs three actual GPU-core
 memory/command cases, including original DMA execution, then calls the unchanged six-test
 C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
@@ -66,11 +66,13 @@ validate the Android C ABI or either Android runtime architecture.
 
 The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
 installations update in place. Select **Run engine and GPU checks**, then
-**Export report**. Schema 3/workload 13 separates `engine`, `gpuCore` and `gpu`,
+**Export report**. Schema 3/workload 14 separates `engine`, `gpuCore` and `gpu`,
 with combined `allPassed` requiring all three. The embedded Vulkan suite retains
 its own workload version 3. Engine reports record host/guest architecture,
-eleven per-case outcomes, instruction/IPC counts, output, handle cleanup and
-thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 8 adds the 817-instruction/10-IPC backing-import guest
+twelve per-case outcomes, instruction/IPC counts, output, handle cleanup and
+thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 9 adds the NV GPU mapping guest (3172 instructions/15 IPC/
+2 copies/9 A/6 B/372 bytes); see [the mapping subset](nv-gpu-address-space.md).
+Engine suite 8 adds the 817-instruction/10-IPC backing-import guest
 (5 A/4 B/162 bytes/two copies) with Alloc/ALIGNMENT/Free checks.
 Engine suite 7 adds a 719-instruction/nine-IPC NVMap guest
 (four A/three B/98 bytes/two copied handles), validating device lifecycle and
@@ -103,8 +105,9 @@ Guest DMA submission also passes in the
 was engine suite 5's buffered NRO, which passes in the
 [0.10.0-dev report](validation/g720-hipc-buffers.md). The
 [0.12.0-dev phone report](validation/g720-nvmap.md) also passes the transfer-memory
-and unallocated NVMap guests: all nineteen prior checks. The new phone checkpoint
-is suite 8 backing import; see [NVMap](nvmap-devices.md).
+and unallocated NVMap guests. The [0.13.0-dev phone report](validation/g720-nvmap-backing.md)
+also passes backing imports and ABI 2: all twenty prior cases. The new phone
+checkpoint is suite 9 NV GPU mapping.
 
 Broader GPU method execution, shader translation, guest-frame presentation and
 commercial startup remain open. Pokémon Legends: Z-A is a later target.

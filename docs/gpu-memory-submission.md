@@ -30,6 +30,15 @@ or 4096 backing spans fail. Reads/writes preflight every mapping before touching
 bytes. Execute access is unsupported. Unmapping requires the exact mapping ID;
 old pinned ranges cannot be redirected by reusing a GPU virtual address.
 
+## Speculative mapping snapshots
+
+0.14 adds snapshot_for_transaction for isolated mapping metadata of the same
+address space. Space identity is preserved; publish only one branch and do not
+write shared bytes while preparing a candidate. Mapping IDs now come from a
+non-reused host allocator across snapshots, so rejected candidates cannot recycle
+identities. Only mapping metadata/view references are cloned. Guest VA allocation
+and publication belong to the [NV address-space service](nv-gpu-address-space.md).
+
 ## Queue ownership and limits
 
 A queue is bound to one GPU address space. Admission validates GPFIFO entries,

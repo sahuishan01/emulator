@@ -94,7 +94,8 @@ creates fresh state.
 The emu:* protocols are separate from device services. nvdrv Initialize (3) now
 adopts a validated process-owned transfer arena through two copied handles;
 Open/Close, NVMap metadata and existing-backing Alloc are described in
-[nvmap-devices.md](nvmap-devices.md). Fresh allocation, GPU mapping and other
+[nvmap-devices.md](nvmap-devices.md). [NV address-space mapping](nv-gpu-address-space.md) now uses retained NVMap
+views and ioctl direction-specific grants. Fresh allocation, NV submission and other
 NV commands remain unsupported. Unsupported operations never
 fabricate success.
 
@@ -113,6 +114,7 @@ Run each with `cargo run --offline -p emulator-cli -- run-nro <file>`.
 | `cancellation.nro` | Deferred and active cancellation, coalescing, preserved indices, event state and readable clear | 106 | 0 |
 | `gpu-dma.nro` | Discover emu:gpu, submit actual commands, verify two dependent copies/counters and close sessions | 338 | 4 |
 | `gpu-buffers.nro` | Grant three A/one B descriptors, submit DMA, verify returned bytes/counters and close sessions | 327 | 4 |
+| `nv-gpu-map.nro` | Map NVMap backing, clone NV client, free handle while mapped, reject stale handle, unmap and close | 3172 | 15 |
 | `nvmap-alloc.nro` | Import existing guest backing, query normalized ALIGNMENT, verify Free address and unchanged/updated bytes, release resources | 817 | 10 |
 | `nvmap.nro` | Open a device, clone the session, Create/SIZE/Free an unallocated NVMap object, close and verify restored memory | 719 | 9 |
 | `nv-initialize.nro` | Lend transfer memory, Initialize nvdrv with copied objects, retain through sender/receiver closes, verify restored CPU rights | 317 | 4 |

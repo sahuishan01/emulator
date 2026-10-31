@@ -23,6 +23,7 @@ struct Allocation {
 #[derive(Clone, Debug)]
 struct MapObject {
     size: u32,
+    owner: u32,
     allocation: Option<Allocation>,
 }
 #[derive(Clone, Debug)]
@@ -39,6 +40,18 @@ impl Default for NvMap {
     }
 }
 impl NvMap {
+    pub fn close_device(&mut self, fd: u32) {
+        self.objects.retain(|_, object| object.owner != fd);
+    }
+    pub fn imported_view(&self, handle: u32) -> Result<MemoryView, u32> {
+        self.objects
+            .get(&handle)
+            .ok_or(BAD_PARAMETER)?
+            .allocation
+            .as_ref()
+            .map(|a| a.view.clone())
+            .ok_or(INVALID_STATE)
+    }
     pub fn imported_usage(&self) -> (usize, usize) {
         self.objects
             .values()
@@ -63,6 +76,7 @@ impl NvMap {
     // memory access is needed when the isolated metadata snapshot is published.
     pub fn ioctl(
         &mut self,
+        fd: u32,
         code: u32,
         input: &[u8],
         budget: ImportBudget,
@@ -85,7 +99,7 @@ impl NvMap {
                 if size == 0 || size % 4096 != 0 || size as usize > IMPORT_BYTES {
                     return Err(BAD_PARAMETER);
                 }
-                if self.objects.len() >= 64 {
+                if self.objects.values().filter(|o| o.owner == fd).count() >= 64 {
                     return Err(NO_MEMORY);
                 }
                 let next = self.next.checked_add(1).ok_or(NO_MEMORY)?;
@@ -94,6 +108,7 @@ impl NvMap {
                     handle,
                     MapObject {
                         size,
+                        owner: fd,
                         allocation: None,
                     },
                 );
@@ -101,7 +116,11 @@ impl NvMap {
                 output[4..8].copy_from_slice(&handle.to_le_bytes());
             }
             0xc0200104 => {
-                let object = self.objects.get_mut(&word(0)).ok_or(BAD_PARAMETER)?;
+                let object = self
+                    .objects
+                    .get_mut(&word(0))
+                    .filter(|o| o.owner == fd)
+                    .ok_or(BAD_PARAMETER)?;
                 if object.allocation.is_some() {
                     return Err(INVALID_STATE);
                 }
@@ -142,7 +161,11 @@ impl NvMap {
                 output[12..16].copy_from_slice(&alignment.to_le_bytes());
             }
             0xc00c0109 => {
-                let object = self.objects.get(&word(0)).ok_or(BAD_PARAMETER)?;
+                let object = self
+                    .objects
+                    .get(&word(0))
+                    .filter(|o| o.owner == fd)
+                    .ok_or(BAD_PARAMETER)?;
                 let value = match word(4) {
                     1 => object.size,
                     2 => object.allocation.as_ref().ok_or(INVALID_STATE)?.alignment,
@@ -158,7 +181,11 @@ impl NvMap {
                 if word(4) != 0 {
                     return Err(BAD_PARAMETER);
                 }
-                let object = self.objects.remove(&word(0)).ok_or(BAD_PARAMETER)?;
+                self.objects
+                    .get(&word(0))
+                    .filter(|o| o.owner == fd)
+                    .ok_or(BAD_PARAMETER)?;
+                let object = self.objects.remove(&word(0)).expect("checked owned object");
                 let address = object.allocation.as_ref().map_or(0, |a| a.address);
                 output[8..16].copy_from_slice(&address.to_le_bytes());
                 output[16..20].copy_from_slice(&object.size.to_le_bytes());
@@ -184,11 +211,13 @@ mod tests {
         }
     }
     fn call(n: &mut NvMap, m: &AddressSpace, code: u32, args: &[u32]) -> Result<Vec<u8>, u32> {
-        n.ioctl(code, &words(args), budget(), |a, s, p| m.pin(a, s, p).ok())
+        n.ioctl(1, code, &words(args), budget(), |a, s, p| {
+            m.pin(a, s, p).ok()
+        })
     }
     fn object() -> NvMap {
         let mut n = NvMap::default();
-        n.ioctl(0xc0080101, &words(&[4096, 0]), budget(), |_, _, _| None)
+        n.ioctl(1, 0xc0080101, &words(&[4096, 0]), budget(), |_, _, _| None)
             .unwrap();
         n
     }
@@ -280,7 +309,7 @@ mod tests {
         let args = words(&[1, 0, 0, 4096, 0, 0, 0x8000, 0]);
         for (size, rights) in [(4096, Permissions::READ_WRITE), (8192, Permissions::READ)] {
             assert_eq!(
-                n.ioctl(0xc0200104, &args, budget(), |a, _, _| m
+                n.ioctl(1, 0xc0200104, &args, budget(), |a, _, _| m
                     .pin(a, size, rights)
                     .ok()),
                 Err(BAD_PARAMETER)
@@ -297,6 +326,7 @@ mod tests {
         let args = words(&[1, 0, 1, 4096, 0, 0, 0x8000, 0]);
         assert_eq!(
             n.ioctl(
+                1,
                 0xc0200104,
                 &args,
                 ImportBudget {
@@ -309,6 +339,7 @@ mod tests {
         );
         assert_eq!(
             n.ioctl(
+                1,
                 0xc0200104,
                 &args,
                 ImportBudget {

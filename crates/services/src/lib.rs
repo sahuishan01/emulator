@@ -1,6 +1,7 @@
 //! Original, deliberately small service implementations for owned homebrew.
 mod gpu;
 mod nv;
+mod nvas;
 mod nvmap;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};

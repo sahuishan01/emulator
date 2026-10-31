@@ -3,6 +3,7 @@ use emulator_memory::{Access, BackingRange, MemoryError, MemoryView};
 use std::sync::atomic::AtomicU64;
 
 static NEXT_SPACE_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_MAPPING_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) const MAX_BACKING_SPANS: usize = 4096;
 const MAX_MAPPINGS: usize = 1024;
 
@@ -32,7 +33,7 @@ impl std::fmt::Display for GpuMemoryError {
 }
 impl std::error::Error for GpuMemoryError {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Mapping {
     id: MappingId,
     start: u64,
@@ -109,7 +110,6 @@ pub struct GpuAddressSpace {
     id: AddressSpaceId,
     mappings: Vec<Mapping>,
     byte_limit: usize,
-    next_mapping: u64,
 }
 impl GpuAddressSpace {
     pub fn new(byte_limit: usize) -> Result<Self, GpuMemoryError> {
@@ -119,8 +119,24 @@ impl GpuAddressSpace {
             id: AddressSpaceId(id),
             mappings: Vec::new(),
             byte_limit,
-            next_mapping: 1,
         })
+    }
+    /// Isolate metadata for a speculative transaction of this same address space.
+    /// Publish at most one branch. Backing bytes are shared, so callers must not
+    /// write through a candidate before commit. Mapping identities come from a
+    /// non-reused host allocator; discarded branches cannot recycle their IDs.
+    pub fn snapshot_for_transaction(&self) -> Self {
+        Self {
+            id: self.id,
+            mappings: self.mappings.clone(),
+            byte_limit: self.byte_limit,
+        }
+    }
+    pub fn mapped_spans(&self) -> usize {
+        self.mappings
+            .iter()
+            .map(|m| m.view.backing_ranges().count())
+            .sum()
     }
     pub fn id(&self) -> AddressSpaceId {
         self.id
@@ -155,16 +171,13 @@ impl GpuAddressSpace {
         {
             return Err(GpuMemoryError::Limit);
         }
-        let next = self
-            .next_mapping
-            .checked_add(1)
-            .ok_or(GpuMemoryError::IdentityExhausted)?;
         self.mappings
             .try_reserve(1)
             .map_err(|_| GpuMemoryError::Limit)?;
         let id = MappingId {
             space: self.id,
-            serial: self.next_mapping,
+            serial: crate::allocate_identity(&NEXT_MAPPING_ID)
+                .ok_or(GpuMemoryError::IdentityExhausted)?,
         };
         self.mappings.push(Mapping {
             id,
@@ -173,7 +186,6 @@ impl GpuAddressSpace {
             view,
         });
         self.mappings.sort_unstable_by_key(|m| m.start);
-        self.next_mapping = next;
         Ok(id)
     }
     pub fn unmap(&mut self, id: MappingId) -> Result<(), GpuMemoryError> {

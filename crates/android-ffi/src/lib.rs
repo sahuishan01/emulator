@@ -175,6 +175,18 @@ fn reference_checks() -> String {
             ipc_buffers: (5, 4, 162),
             copy_handles: 2,
         },
+        Case {
+            name: "guest-nv-gpu-address-space",
+            image: include_bytes!("../../../examples/homebrew/nv-gpu-map.nro"),
+            message: "Guest NV GPU mappings retained backing and unmapped cleanly.\n",
+            instructions: 3172,
+            ipc_calls: 15,
+            memory: Some((0x3040, 1 << 32)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (9, 6, 372),
+            copy_handles: 2,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -275,7 +287,7 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":8,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":9,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -327,7 +339,7 @@ mod tests {
         assert_eq!(result.abi_version, 2);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 11);
+        assert_eq!(text.matches("\"passed\":true").count(), 12);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

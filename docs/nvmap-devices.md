@@ -21,10 +21,12 @@ full modern libnx bootstrap, Aruid setup and CloneCurrentObjectEx remain open.
 Each client permits sixteen live descriptors. IDs increase without reuse, so
 closed descriptors cannot reach later objects. CMIF session clones share the
 same client, including descriptors and arena ownership. Closing a descriptor
-releases its metadata and imports; closing the final receiver releases the
+releases its owned metadata/imports; GPU mappings may retain backing after that.
+Closing the final receiver releases the
 client's arena and backing references. Closing the sender's transfer handle alone does not restore rights.
 
-Ioctl takes u32 fd/request, one A input and one B output. The supported subset
+Ioctl takes u32 fd/request; NVMap commands use one A input and one B output.
+The supported subset
 requires each buffer to have exactly the ioctl argument size. Input and output
 may refer to the same CPU bytes; input is captured before any output write.
 Transport preflight checks all mappings/rights and rejects B-to-TLS aliases.
@@ -34,10 +36,12 @@ Transport preflight checks all mappings/rights and rejects B-to-TLS aliases.
 | `0xC0080101` NVMAP_CREATE | 8 bytes: size, handle output | Record an unallocated object's size and return a new handle |
 | `0xC0200104` NVMAP_ALLOC | 32 bytes: handle, heapmask, flags, alignment, kind u8/padding, address u64 | Import existing guest backing with READ or RW rights |
 | `0xC00C0109` NVMAP_PARAM | 12 bytes: handle, parameter, result output | Parameter 1 returns size; 2/5 return allocated alignment/kind |
-| `0xC0180105` NVMAP_FREE | 24 bytes: handle, zero padding, address output u64, size output, flags output | Remove an object; return original imported address (zero if unallocated), size and zero flags |
+| `0xC0180105` NVMAP_FREE | 24 bytes: handle, zero padding, address output u64, size output, flags output | Remove an object; return imported address (zero if unallocated or still GPU-mapped), size and zero flags |
 
-Objects are local to a descriptor, capped at 64 live objects. Handles increase
-without reuse within that descriptor. This implementation accepts positive,
+Objects retain their owning descriptor, capped at 64 live objects per fd.
+Since 0.14, handles increase in one non-reused client-wide namespace so GPU
+address-space devices can resolve them without ambiguity. Wrong-fd NVMap
+operations fail; same-client GPU mappings may import allocated handles. This implementation accepts positive,
 4 KiB-aligned sizes up to 64 MiB as an explicit reference limit. No backing
 memory is allocated or imported by Create. Unsupported parameters, ioctls and
 devices return error 2; invalid fds, object handles or argument sizes return 4;
@@ -78,11 +82,11 @@ Per client, all descriptors share a 64 MiB logical imported-byte budget and
 session references do not count again. Object Free, device Close and final
 receiver Close drop imports. Snapshot preparation temporarily clones references
 without copying payloads; rejected replies drop only candidate references and
-preserve live imports. Free returns the recorded CPU address even if that
-address has since been unmapped/reused; it never unmaps or frees a caller's
-current CPU mapping. Supported cached modes return zero Free flags. Sharing IDs
-and outstanding GPU references are not implemented, so no extra NV references
-or uncached flags are fabricated.
+preserve live imports. Free returns zero while an NV GPU mapping retains the
+backing, otherwise the recorded CPU address even if unmapped/reused; it never unmaps or frees a caller's
+current CPU mapping. Supported cached modes return zero Free flags. GPU mapping references now retain their own views; see
+[the address-space subset](nv-gpu-address-space.md). Sharing IDs and uncached
+flags remain unsupported.
 
 Unit and service integration tests verify actual backing read/write visibility,
 read-only capabilities, address reuse, originating resident charges, byte/span
@@ -104,9 +108,10 @@ and the transfer-memory guest. The new nvmap-alloc.nro adds Alloc, normalized
 ALIGNMENT, imported-address Free and CPU byte preservation/update checks. It
 expects 817 instructions/10 IPC/2 copied handles/5 A/4 B/162 descriptor bytes,
 4096 at image offset 0x3030 and updated source 77 at 0x4000, with zero handles,
-transfer objects or lent bytes. Its phone checkpoint is pending.
+transfer objects or lent bytes. Its [0.13 phone checkpoint](validation/g720-nvmap-backing.md) passes all twenty cases.
 
-Fresh allocation, object sharing IDs, GPU address-space mapping, NV channels,
+[GPU address-space mapping](nv-gpu-address-space.md) now retains imported views.
+Fresh allocation, object sharing IDs, NV channels,
 syncpoints, cache control and GPU submission through NV remain open. The
 separate emu:gpu reference still tests actual original linear DMA. This backing
 checkpoint does not render guest shaders or launch commercial games.

@@ -43,7 +43,8 @@ and its process awaited. Raw reports/captures/helpers/artifacts remain ignored.
 
 The supplied [0.12 physical report](g720-nvmap.md) passes all nineteen prior
 ARM64/G720 checks, closing transfer-memory and metadata guest phone checkpoints.
-This new backing-import case and ABI 2 still require phone evidence. Fresh
+The [0.13 physical report](g720-nvmap-backing.md) now also confirms the
+backing-import case and ABI 2 on ARM64/G720. Fresh
 allocation, sharing IDs/cache control, NV GPU mapping/submission, guest shaders,
 rendering and commercial games remain open. No console timing/performance or
 16 KiB Android runtime validation is claimed. Debug-signed development diagnostic.

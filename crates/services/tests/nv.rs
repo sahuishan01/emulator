@@ -567,12 +567,12 @@ fn nvmap_client_import_quota_counts_all_devices_and_free_and_close_reclaim_it() 
     }
     assert_eq!(r.ioctl(fd2, 0xc0080101, &[2 * 1024 * 1024, 0], 1), 0);
     assert_eq!(
-        r.ioctl(fd2, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
+        r.ioctl(fd2, 0xc0200104, &[33, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
         6
     );
     assert_eq!(r.ioctl(fd1, 0xc0180105, &[1, 0, 0, 0, 0, 0], 1), 0);
     assert_eq!(
-        r.ioctl(fd2, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
+        r.ioctl(fd2, 0xc0200104, &[33, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
         0
     );
     let baseline = r.m.resident_bytes();
@@ -609,4 +609,176 @@ fn final_nv_receiver_close_releases_imports_after_caller_close_and_session_clone
     assert_eq!(r.m.resident_bytes(), resident - 4096);
     assert_eq!(r.k.live_transfer_memory_count(), 0);
     assert_eq!(r.m.read_u64(0x4000).unwrap(), 42);
+}
+
+const AS_INIT: u32 = 0x40284109;
+const AS_MAP: u32 = 0xc0284106;
+const AS_UNMAP: u32 = 0xc0084105;
+impl Rig {
+    fn initialize_as(&mut self, fd: u32, command: u32) -> Result<u32, KernelError> {
+        self.m
+            .write(0x6000, &words(&[1, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+            .unwrap();
+        self.call(&message(command, &[fd, AS_INIT], Some((0x6000, 40)), None))?;
+        Ok(self.m.read_u32(0x2020).unwrap())
+    }
+    fn import_object(&mut self, fd: u32, address: u32, size: u32) -> u32 {
+        assert_eq!(self.ioctl(fd, 0xc0080101, &[size, 0], 1), 0);
+        let handle = self.m.read_u32(0x6004).unwrap();
+        assert_eq!(
+            self.ioctl(fd, 0xc0200104, &[handle, 0, 1, 4096, 0, 0, address, 0], 1),
+            0
+        );
+        handle
+    }
+    fn map_object(&mut self, fd: u32, handle: u32) -> (u32, u64) {
+        let error = self.ioctl(fd, AS_MAP, &[0, u32::MAX, handle, 0, 0, 0, 0, 0, 0, 0], 1);
+        (error, self.m.read_u64(0x6020).unwrap())
+    }
+}
+#[test]
+fn nv_address_space_rejected_initialization_map_and_unmap_replies_roll_back_state_and_bytes() {
+    let mut r = Rig::device_rig(Box::new(FailedDeviceReply::default()));
+    let nv = r.open_device(b"/dev/nvmap", 0).0;
+    let asfd = r.open_device(b"/dev/nvhost-as-gpu", 0).0;
+    r.m.map(0x8000, vec![42; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    let handle = r.import_object(nv, 0x8000, 4096);
+    assert!(matches!(
+        r.initialize_as(asfd, 101),
+        Err(KernelError::Ipc(_))
+    ));
+    assert_eq!(r.map_object(asfd, handle).0, 3);
+    assert_eq!(r.initialize_as(asfd, 1).unwrap(), 0);
+    assert_eq!(r.initialize_as(asfd, 1).unwrap(), 8);
+    let args = words(&[0, u32::MAX, handle, 0, 0, 0, 0, 0, 0, 0]);
+    r.m.write(0x6000, &args).unwrap();
+    assert!(matches!(
+        r.call(&message(
+            101,
+            &[asfd, AS_MAP],
+            Some((0x6000, 40)),
+            Some((0x6000, 40))
+        )),
+        Err(KernelError::Ipc(_))
+    ));
+    let mut actual = [0; 40];
+    r.m.read(0x6000, &mut actual).unwrap();
+    assert_eq!(actual.as_slice(), args);
+    assert_eq!(r.map_object(asfd, handle), (0, 1 << 32));
+    assert_eq!(r.ioctl(nv, 0xc0180105, &[handle, 0, 0, 0, 0, 0], 1), 0);
+    assert_eq!(r.m.read_u64(0x6008).unwrap(), 0);
+    assert_eq!(r.close_fd(nv), 0);
+    let resident = r.m.resident_bytes();
+    r.m.unmap(0x8000, 4096).unwrap();
+    assert_eq!(r.m.resident_bytes(), resident);
+    r.m.write(0x6000, &(1_u64 << 32).to_le_bytes()).unwrap();
+    assert!(matches!(
+        r.call(&message(
+            101,
+            &[asfd, AS_UNMAP],
+            Some((0x6000, 8)),
+            Some((0x6000, 8))
+        )),
+        Err(KernelError::Ipc(_))
+    ));
+    assert_eq!(r.m.resident_bytes(), resident);
+    assert_eq!(r.m.read_u64(0x6000).unwrap(), 1 << 32);
+    assert_eq!(r.ioctl(asfd, AS_UNMAP, &[0, 1], 1), 0);
+    assert_eq!(r.m.resident_bytes(), resident - 4096);
+    assert_eq!(r.ioctl(asfd, AS_UNMAP, &[0, 1], 1), 4);
+}
+#[test]
+fn nvmap_handles_are_unique_across_fds_but_device_ownership_and_gpu_pins_are_retained() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let fd1 = r.open_device(b"/dev/nvmap", 0).0;
+    let fd2 = r.open_device(b"/dev/nvmap", 0).0;
+    let asfd = r.open_device(b"/dev/nvhost-as-gpu", 0).0;
+    assert_eq!(r.initialize_as(asfd, 1).unwrap(), 0);
+    r.m.map(0x8000, vec![42; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    r.m.map(0xa000, vec![77; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    let h1 = r.import_object(fd1, 0x8000, 4096);
+    let h2 = r.import_object(fd2, 0xa000, 4096);
+    assert_eq!((h1, h2), (1, 2));
+    assert_eq!(r.ioctl(fd1, 0xc00c0109, &[h2, 1, 0], 1), 4);
+    assert_eq!(r.map_object(asfd, h1), (0, 1 << 32));
+    assert_eq!(r.map_object(asfd, h2), (0, (1 << 32) + 4096));
+    assert_eq!(r.close_fd(fd1), 0);
+    assert_eq!(r.map_object(asfd, h1).0, 4);
+    let h3 = r.import_object(fd2, 0xa000, 4096);
+    assert_eq!(h3, 3);
+    let resident = r.m.resident_bytes();
+    r.m.unmap(0x8000, 4096).unwrap();
+    assert_eq!(r.m.resident_bytes(), resident);
+    assert_eq!(r.ioctl(asfd, AS_UNMAP, &[0, 1], 1), 0);
+    assert_eq!(r.m.resident_bytes(), resident - 4096);
+}
+#[test]
+fn gpu_mapping_quota_is_shared_by_address_space_devices_and_unmap_reclaims_it() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let nv = r.open_device(b"/dev/nvmap", 0).0;
+    let as1 = r.open_device(b"/dev/nvhost-as-gpu", 0).0;
+    let as2 = r.open_device(b"/dev/nvhost-as-gpu", 0).0;
+    assert_eq!(r.initialize_as(as1, 1).unwrap(), 0);
+    assert_eq!(r.initialize_as(as2, 1).unwrap(), 0);
+    r.m.map(0x100000, vec![0; 2 * 1024 * 1024], Permissions::READ_WRITE)
+        .unwrap();
+    let h = r.import_object(nv, 0x100000, 2 * 1024 * 1024);
+    for n in 0..32 {
+        assert_eq!(r.map_object(as1, h), (0, (1 << 32) + n * 2 * 1024 * 1024));
+    }
+    assert_eq!(r.map_object(as2, h).0, 6);
+    assert_eq!(r.ioctl(as1, AS_UNMAP, &[0, 1], 1), 0);
+    assert_eq!(r.map_object(as2, h), (0, 1 << 32));
+    assert_eq!(r.close_fd(as1), 0);
+    assert_eq!(r.map_object(as2, h), (0, (1 << 32) + 2 * 1024 * 1024));
+}
+#[test]
+fn cloned_receiver_and_rejected_close_keep_gpu_backing_until_final_receiver_close() {
+    let mut r = Rig::device_rig(Box::new(FailedDeviceReply::default()));
+    let nv = r.open_device(b"/dev/nvmap", 0).0;
+    let asfd = r.open_device(b"/dev/nvhost-as-gpu", 0).0;
+    assert_eq!(r.initialize_as(asfd, 1).unwrap(), 0);
+    r.m.map(0x8000, vec![42; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    let h = r.import_object(nv, 0x8000, 4096);
+    assert_eq!(r.map_object(asfd, h), (0, 1 << 32));
+    assert_eq!(r.close_fd(nv), 0);
+    let resident = r.m.resident_bytes();
+    r.m.unmap(0x8000, 4096).unwrap();
+    assert!(matches!(
+        r.call(&message(102, &[asfd], None, None)),
+        Err(KernelError::Ipc(_))
+    ));
+    assert_eq!(r.m.resident_bytes(), resident);
+    let mut clone = message(2, &[], None, None);
+    clone[..4].copy_from_slice(&5_u32.to_le_bytes());
+    r.call(&clone).unwrap();
+    let alias = r.m.read_u32(0x200c).unwrap();
+    r.close(r.tmem);
+    r.close(r.session);
+    assert_eq!(r.m.resident_bytes(), resident);
+    assert!(r.m.read_u64(0x4000).is_err());
+    r.close(alias);
+    assert_eq!(r.m.resident_bytes(), resident - 4096);
+    assert_eq!(r.m.read_u64(0x4000).unwrap(), 42);
+    assert_eq!(r.k.live_transfer_memory_count(), 0);
+}
+#[test]
+fn nv_address_space_initialization_requires_input_only_and_rejects_extra_receive_grants() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let asfd = r.open_device(b"/dev/nvhost-as-gpu", 0).0;
+    r.m.write(0x6000, &[0; 40]).unwrap();
+    assert!(r
+        .call(&message(
+            1,
+            &[asfd, AS_INIT],
+            Some((0x6000, 40)),
+            Some((0x6000, 40))
+        ))
+        .is_err());
+    assert_eq!(r.initialize_as(asfd, 1).unwrap(), 0);
+    assert_eq!(r.ioctl(asfd, 0xc0080101, &[4096, 0], 1), 2);
 }

@@ -268,3 +268,39 @@ fn guest_nvmap_imports_existing_backing_and_reports_alignment_and_free_address()
     assert_eq!(session.kernel().live_transfer_memory_count(), 0);
     assert_eq!(session.memory().lent_bytes(), 0);
 }
+
+#[test]
+fn nv_guest_maps_retained_backing_clones_client_frees_handle_and_unmaps() {
+    let mut session =
+        Session::from_nro(include_bytes!("../../../examples/homebrew/nv-gpu-map.nro")).unwrap();
+    assert_eq!(session.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(session.instructions(), 3172);
+    assert_eq!(
+        session.debug_records(),
+        &[b"Guest NV GPU mappings retained backing and unmapped cleanly.\n".to_vec()]
+    );
+    for (offset, value) in [(0x2000, 42), (0x3040, 1 << 32), (0x4000, 77)] {
+        assert_eq!(
+            session.memory().read_u64(LOAD_BASE + offset).unwrap(),
+            value
+        );
+    }
+    let records = session.kernel().ipc_records();
+    assert_eq!(records.len(), 15);
+    assert_eq!(
+        records.iter().map(|r| r.command_id).collect::<Vec<_>>(),
+        [0, 1, 3, 0, 1, 1, 0, 1, 1, 2, 1, 2, 1, 1, 2]
+    );
+    assert_eq!(
+        (
+            records.iter().map(|r| r.send_buffers).sum::<usize>(),
+            records.iter().map(|r| r.receive_buffers).sum::<usize>(),
+            records.iter().map(|r| r.buffer_bytes).sum::<usize>(),
+            records.iter().map(|r| r.copy_handles).sum::<usize>()
+        ),
+        (9, 6, 372, 2)
+    );
+    assert_eq!(session.kernel().live_handle_count(), 0);
+    assert_eq!(session.kernel().live_transfer_memory_count(), 0);
+    assert_eq!(session.memory().lent_bytes(), 0);
+}
