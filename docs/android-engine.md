@@ -1,12 +1,12 @@
 # Android original-engine checks
 
-Version 0.7.0-dev embeds the original Rust engine into the existing Android
+Version 0.8.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
 The app's worker calls Rust once to execute six original NRO fixtures
-described in [kernel-ipc.md](kernel-ipc.md), separately runs two actual GPU-core
-memory/command cases, then calls the unchanged six-test
+described in [kernel-ipc.md](kernel-ipc.md), separately runs three actual GPU-core
+memory/command cases, including original DMA execution, then calls the unchanged six-test
 C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
 counts, guest memory results and zero remaining handles after process exit.
 The result is not hardcoded successful output. Each native group reports its
@@ -63,7 +63,7 @@ validate the Android C ABI or either Android runtime architecture.
 
 The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
 installations update in place. Select **Run engine and GPU checks**, then
-**Export report**. Schema 3/workload 7 separates `engine`, `gpuCore` and `gpu`,
+**Export report**. Schema 3/workload 8 separates `engine`, `gpuCore` and `gpu`,
 with combined `allPassed` requiring all three. The embedded Vulkan suite retains
 its own workload version 3. Engine reports record host/guest architecture,
 six per-case outcomes, instruction/IPC counts, output, handle cleanup and
@@ -79,10 +79,13 @@ SwiftShader results do not establish ARM64/Mali behavior. The physical G720
 as all six unchanged GPU checks. See [physical evidence](validation/g720-engine.md).
 The [0.5.0-dev physical report](validation/g720-scheduling.md) also passes the
 fifth, scheduling/blocking-wait fixture. The [0.6.0-dev report](validation/g720-cancellation.md)
-also passes cancellation. The new `gpuCore` suite 1 verifies shared CPU/GPU
+also passes cancellation. The `gpuCore` suite 2 verifies shared CPU/GPU
 aliases and queued-command capture/resource lifetimes through Rust/JNI. These
 are direct engine API checks, not NRO or NV-service submissions. Its two cases
-are the new device checkpoint; framing/mappings now run on Android too.
+passed in the [0.7.0-dev physical report](validation/g720-gpu-ownership.md).
+A third case exercises original DMA method execution: 11 writes, two dependent
+launches, 16 copied bytes and zero remaining backing/pending work. That is the
+new phone checkpoint; see [DMA contracts](gpu-dma-methods.md).
 
-Guest GPU method execution, shader translation, guest-frame presentation and
+Broader GPU method execution, shader translation, guest-frame presentation and
 commercial startup remain open. Pokémon Legends: Z-A is a later target.

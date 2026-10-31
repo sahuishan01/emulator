@@ -252,10 +252,12 @@ mod tests {
         assert_eq!(report.abi_version, 1);
         let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 2);
+        assert_eq!(text.matches("\"passed\":true").count(), 3);
         assert!(text.contains(
             "\"capturedSubmissions\":2,\"decodedWrites\":4,\"residentBytesAfterRelease\":0"
         ));
+        assert!(text.contains("\"copyLaunches\":2,\"copiedBytes\":16"));
+        assert!(text.contains("maxwell-dma-linear-copy"));
         assert!(report.bytes[report.length as usize..]
             .iter()
             .all(|b| *b == 0));

@@ -110,8 +110,9 @@ Android suite adds this as its sixth actual guest program.
 
 Next kernel work includes remaining synchronization/ISA requirements for GPU
 service submission. [GPU command framing](gpu-command-framing.md) is now
-implemented separately; GPU memory/submissions, method execution, shader
-translation and presentation remain open. No
+implemented separately, together with owned GPU memory/queues and bounded
+[linear DMA execution](gpu-dma-methods.md). NV-service submissions, broader
+method execution, shader translation and presentation remain open. No
 commercial game is supported by this checkpoint.
 
 Public interface references: [SVC](https://switchbrew.org/wiki/SVC),

@@ -1,9 +1,13 @@
-//! Actual CPU/GPU backing and command-capture checks, separate from guest NROs
-//! and from native Vulkan. No GPU methods, shaders or fences execute here.
-use emulator_gpu::{GpuAddressSpace, GpuVa, QueueLimits, QueueStats, SubmissionQueue};
+//! Actual CPU/GPU backing, command capture and original DMA method checks.
+//! Separate from guest NROs/native Vulkan; no guest shaders or fences execute.
+use emulator_gpu::{
+    ExecutionLimits, GpuAddressSpace, GpuVa, QueueLimits, QueueStats, SubmissionQueue,
+    LINEAR_DMA_LAUNCH, MAXWELL_DMA_COPY_A,
+};
 use emulator_memory::{AddressSpace, Permissions};
 type Error = Box<dyn std::error::Error>;
-type Check = fn() -> Result<(usize, usize, usize), Error>;
+type Metrics = (usize, usize, usize, usize, usize);
+type Check = fn() -> Result<Metrics, Error>;
 fn require(value: bool, message: &str) -> Result<(), Error> {
     if value {
         Ok(())
@@ -18,7 +22,7 @@ fn wire(address: u64, words: u32) -> Vec<u8> {
         .collect()
 }
 
-fn aliases() -> Result<(usize, usize, usize), Error> {
+fn aliases() -> Result<Metrics, Error> {
     let mut cpu = AddressSpace::with_limit(64);
     cpu.map(0x1000, vec![0; 8], Permissions::READ_WRITE)?;
     {
@@ -69,9 +73,9 @@ fn aliases() -> Result<(usize, usize, usize), Error> {
         cpu.resident_bytes() == 0,
         "Released alias backing remained resident",
     )?;
-    Ok((0, 0, cpu.resident_bytes()))
+    Ok((0, 0, cpu.resident_bytes(), 0, 0))
 }
-fn submission() -> Result<(usize, usize, usize), Error> {
+fn submission() -> Result<Metrics, Error> {
     let mut cpu = AddressSpace::with_limit(64);
     cpu.map(
         0x1000,
@@ -154,6 +158,83 @@ fn submission() -> Result<(usize, usize, usize), Error> {
         admitted.pending,
         admitted.decoded_writes,
         cpu.resident_bytes(),
+        0,
+        0,
+    ))
+}
+fn dma_copy() -> Result<Metrics, Error> {
+    let mut cpu = AddressSpace::with_limit(1024);
+    let command = 0x1_0000_1000;
+    let data = 0x2_0000_0000;
+    let alias = 0x4_0000_0000;
+    // Bind class, initialize its five required registers, launch, then copy
+    // the just-written bytes through a second virtual alias of that backing.
+    let methods = [
+        (0, MAXWELL_DMA_COPY_A),
+        (0x400, 2),
+        (0x404, 0),
+        (0x408, 2),
+        (0x40c, 16),
+        (0x418, 8),
+        (0x300, LINEAR_DMA_LAUNCH),
+        (0x400, 4),
+        (0x404, 16),
+        (0x40c, 32),
+        (0x300, LINEAR_DMA_LAUNCH),
+    ];
+    let bytes: Vec<u8> = methods
+        .into_iter()
+        .flat_map(|(offset, value)| [0x2001_0000_u32 | (offset / 4), value])
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    let size = bytes.len();
+    cpu.map(0x1000, bytes, Permissions::READ_WRITE)?;
+    cpu.map(0x3000, (0..64).collect(), Permissions::READ_WRITE)?;
+    let mut gpu = GpuAddressSpace::new(1024)?;
+    let command_map = gpu.map(GpuVa(command), cpu.pin(0x1000, size, Permissions::READ)?)?;
+    let data_map = gpu.map(GpuVa(data), cpu.pin(0x3000, 64, Permissions::READ_WRITE)?)?;
+    let alias_map = gpu.map(GpuVa(alias), cpu.pin(0x3000, 64, Permissions::READ_WRITE)?)?;
+    let mut queue = SubmissionQueue::new(&gpu, QueueLimits::default())?;
+    let id = queue.submit(&gpu, &wire(command, (size / 4) as u32))?;
+    let admitted = queue.stats();
+    // Snapshot commands are unaffected; live source data changes before execution.
+    cpu.write(0x1000, &vec![0xff; size])?;
+    let expected = [0xa5, 0x17, 0x39, 0x51, 0x63, 0x8b, 0xcd, 0xef];
+    cpu.write(0x3000, &expected)?;
+    let stats = queue.execute_front(&gpu, id, ExecutionLimits::default())?;
+    let mut actual = [0; 8];
+    cpu.read(0x3010, &mut actual)?;
+    require(actual == expected, "First DMA launch copied wrong bytes")?;
+    cpu.read(0x3020, &mut actual)?;
+    require(
+        actual == expected,
+        "Dependent DMA launch missed aliased writes",
+    )?;
+    require(
+        stats.methods == 11 && stats.copy_launches == 2 && stats.copied_bytes == 16,
+        "DMA execution counters mismatch",
+    )?;
+    require(
+        queue
+            .execute_front(&gpu, id, ExecutionLimits::default())
+            .is_err(),
+        "A consumed DMA batch executed twice",
+    )?;
+    gpu.unmap(command_map)?;
+    gpu.unmap(data_map)?;
+    gpu.unmap(alias_map)?;
+    cpu.unmap(0x1000, size)?;
+    cpu.unmap(0x3000, 64)?;
+    require(
+        cpu.resident_bytes() == 0 && queue.stats() == QueueStats::default(),
+        "Completed DMA retained backing or pending work",
+    )?;
+    Ok((
+        admitted.pending,
+        admitted.decoded_writes,
+        cpu.resident_bytes(),
+        stats.copy_launches,
+        stats.copied_bytes,
     ))
 }
 pub fn report() -> String {
@@ -162,15 +243,16 @@ pub fn report() -> String {
     for (name, run) in [
         ("shared-cpu-gpu-backing-aliases", aliases as Check),
         ("queued-command-snapshot-and-lifetime", submission as Check),
+        ("maxwell-dma-linear-copy", dma_copy as Check),
     ] {
         let result = run();
         let passed = result.is_ok();
         all &= passed;
-        let (captures, writes, resident, error) = match result {
-            Ok((a, b, c)) => (a, b, c, String::new()),
-            Err(e) => (0, 0, 0, e.to_string()),
+        let (captures, writes, resident, launches, copied, error) = match result {
+            Ok((a, b, c, d, e)) => (a, b, c, d, e, String::new()),
+            Err(e) => (0, 0, 0, 0, 0, e.to_string()),
         };
-        tests.push(format!("{{\"name\":{},\"passed\":{},\"capturedSubmissions\":{},\"decodedWrites\":{},\"residentBytesAfterRelease\":{},\"error\":{}}}",super::quote(name),passed,captures,writes,resident,super::quote(&error)));
+        tests.push(format!("{{\"name\":{},\"passed\":{},\"capturedSubmissions\":{},\"decodedWrites\":{},\"residentBytesAfterRelease\":{},\"copyLaunches\":{},\"copiedBytes\":{},\"error\":{}}}",super::quote(name),passed,captures,writes,resident,launches,copied,super::quote(&error)));
     }
-    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":1,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
+    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":2,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
 }

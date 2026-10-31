@@ -1,8 +1,9 @@
 # Shared backing and decoded submission ownership
 
 Version 0.7.0-dev adds original CPU/GPU shared backing, GPU virtual mappings and
-a bounded queue of captured/decoded commands. These internal APIs do not execute
-GPU methods, shaders or fences and are not a completed NV service/ioctl path.
+a bounded queue of captured/decoded commands. The separate
+[0.8.0-dev DMA executor](gpu-dma-methods.md) consumes decoded batches to execute
+bounded linear copies. Neither is a completed NV service/ioctl or shader path.
 
 ## Storage and access
 
@@ -54,12 +55,13 @@ permissions/bounds, atomic failures, pinned resident limits, entry-spanning
 packets, immutable capture, ownership, queue limits and ordered release. Existing
 CPU/loader/kernel tests also run against shared backing.
 
-Android adds a separate `gpuCore` group with two actual memory/decode cases.
+Android adds a separate `gpuCore` group with ownership cases and, in suite 2,
+an original DMA method-execution case.
 The alias case releases all backing. The queue case captures two batches/four
 writes, retains the first across address reuse and ends with zero resident
 bytes/pending work. These are distinct from six guest NROs and six host Vulkan
 cases; they do not establish guest graphics.
 
-Next: NV service/ioctl/object registration, class routing/method execution,
+Next: NV service/ioctl/object registration, broader class/method execution,
 synchronization, original shader decode/IR/SPIR-V and renderer integration.
 M4's guest-program-to-image gate remains open.

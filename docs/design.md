@@ -6,13 +6,14 @@ This is the proposed design for the original emulator. It supplements
 Current implemented slice: bounded region memory, static NRO loading, A64
 interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
 event/thread waits, cancellation and virtual deadlines in one process. The Kotlin/JNI lab runs six original Rust guest
-programs, two GPU-core memory/command cases and six Vulkan workloads, with report
+programs, three GPU-core memory/command cases and six Vulkan workloads, with report
 export. Broader synchronization, guest graphics and the gameplay
 Android API remain planned. See [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.
 The [GPU memory/submission layer](gpu-memory-submission.md) implements shared
-backing, owned GPU mappings and decoded batch capture independently of GPU
-services, method execution and rendering.
+backing, owned GPU mappings and decoded batch capture.
+[DMA method execution](gpu-dma-methods.md) adds bounded linear copies separately
+from NV services, shaders and rendering.
 
 ## 1. Process, addresses and memory
 

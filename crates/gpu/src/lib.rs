@@ -1,12 +1,16 @@
-//! Original bounded Maxwell command framing, independent of kernel and Vulkan.
-//! Decoding produces method writes; it never executes or acknowledges GPU work.
+//! Original bounded Maxwell command framing and synchronous DMA reference core.
+//! Framing and execution are separate; neither submits to host Vulkan.
 //! Wire fields follow NVIDIA's public MAXWELL_CHANNEL_GPFIFO_A interface.
 use std::fmt;
 
 mod address_space;
+mod methods;
 mod submission;
 pub use address_space::{
     AddressSpaceId, GpuAddressSpace, GpuMemoryError, GpuMemoryRange, MappingId,
+};
+pub use methods::{
+    ExecutionError, ExecutionLimits, ExecutionStats, LINEAR_DMA_LAUNCH, MAXWELL_DMA_COPY_A,
 };
 pub use submission::{
     QueueError, QueueLimits, QueueStats, Submission, SubmissionId, SubmissionQueue,

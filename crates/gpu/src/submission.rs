@@ -82,6 +82,7 @@ pub struct SubmissionQueue {
     next: u64,
     limits: QueueLimits,
     pending: VecDeque<Submission>,
+    methods: crate::methods::MethodState,
 }
 impl SubmissionQueue {
     pub fn new(space: &GpuAddressSpace, limits: QueueLimits) -> Result<Self, QueueError> {
@@ -100,6 +101,7 @@ impl SubmissionQueue {
             next: 1,
             limits,
             pending: VecDeque::new(),
+            methods: crate::methods::MethodState::default(),
         })
     }
     pub fn stats(&self) -> QueueStats {
@@ -181,6 +183,29 @@ impl SubmissionQueue {
         });
         self.next = next;
         Ok(id)
+    }
+    /// Execute the front batch synchronously, then consume it exactly once.
+    /// Validation failure changes neither method state, memory nor the queue.
+    /// Data addresses resolve at execution; command bytes were captured at submit.
+    pub fn execute_front(
+        &mut self,
+        space: &GpuAddressSpace,
+        id: SubmissionId,
+        limits: crate::ExecutionLimits,
+    ) -> Result<crate::ExecutionStats, crate::ExecutionError> {
+        if space.id() != self.owner {
+            return Err(crate::ExecutionError::WrongAddressSpace);
+        }
+        let front = self
+            .pending
+            .front()
+            .filter(|s| s.id == id)
+            .ok_or(crate::ExecutionError::NotFront)?;
+        let prepared = self.methods.prepare(space, front.writes(), limits)?;
+        let (state, stats) = prepared.commit();
+        self.methods = state;
+        self.pending.pop_front();
+        Ok(stats)
     }
     /// Explicitly release a decoded batch. No GPU methods/fences execute here.
     pub fn release_front(&mut self, id: SubmissionId) -> Result<(), QueueError> {

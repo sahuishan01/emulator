@@ -51,13 +51,19 @@ implementation, with no unsafe blocks or pointer arguments.
   retain source backing across unmap/address reuse. Packets can cross entries
   within a batch. Failed admission publishes nothing; release is FIFO and
   queue-ID checked. release_front releases decoded work, not GPU completion.
-  No NV service submission, class/method/shader execution or guest rendering.
+  Original per-subchannel class binding and synchronous linear DMA methods now
+  execute through execute_front; whole-batch preflight precedes memory/state
+  mutation, dependent aliases observe earlier writes and success consumes once.
+  Caps: 64 launches/4 MiB scratch and copied bytes/4096 backing spans per batch.
+  Only class 0xB0B5 and launch 0x182 are supported; overlap and other flags fail.
+  No NV object/service submission, shaders, fences or guest rendering. See
+  docs/gpu-dma-methods.md.
 - Original Rust BC1 RGBA UNORM decoder and generated GPU corpus. Original C++
   Vulkan lab: six offscreen transfer/depth/compute-to-draw/BC1 conversion/sampling/
   update checks. Native shaders, no guest GPU execution. Allocations count Vulkan
   backing requests only, excluding pipeline/driver and process heap overhead.
-- Android schema 3/workload 7: engine has six actual guest NROs (suite 3),
-  gpuCore has two direct memory/decode cases (suite 1), gpu has six unchanged
+- Android schema 3/workload 8: engine has six actual guest NROs (suite 3),
+  gpuCore has three direct ownership/DMA cases (suite 2), gpu has six unchanged
   native Vulkan cases (workload 3). Combined allPassed requires all three.
   Both Rust exports return initialized value-only 4104-byte reports (4096
   payload bytes), caught panics, no borrowed allocations. JSON is retained and
@@ -65,7 +71,7 @@ implementation, with no unsafe blocks or pointer arguments.
 
 ## Evidence
 
-- 94 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
+- 102 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
   malformed input, rollback, shared memory/alias visibility, pinned resident
   caps, GPU mappings, entry-spanning packets, immutable capture, queue ownership,
   atomic admission failure and ordered release, alongside prior guest behavior.
@@ -77,15 +83,19 @@ implementation, with no unsafe blocks or pointer arguments.
   zero originating resident bytes/pending work. Android 0.7.0-dev passes all
   fourteen checks, upgrade invalidation, byte-exact export and cold restoration.
   System UI needed its startup ANR Wait action; no app crash/ANR captured. See
-  docs/validation/android-gpu-ownership.md.
+  docs/validation/android-gpu-ownership.md. Android 0.8.0-dev also passes all
+  fifteen checks, exact export, upgrade invalidation and cold restoration; the
+  DMA case has 11 writes/2 launches/16 copied bytes/zero retained backing. See
+  docs/validation/android-dma.md.
 - Prior Android AVD runs pass their current suites, upgrade invalidation, exact
   export and cold restore. System UI can show a startup ANR: dismiss only its
   Wait action using current XML, then re-dump before tapping. Never dismiss an
   app ANR as infrastructure. Details are under docs/validation/.
-- Supplied physical reports through 0.6.0-dev pass all six guest and six host
-  GPU cases on ARM64/G720, with matching device/driver identity. Cancellation
-  matches the oracle exactly. See docs/validation/g720-cancellation.md and prior
-  records. Android 16/API 36, Vulkan 1.3.247, raw driver 184553472; validation
+- Supplied physical reports through 0.7.0-dev pass all fourteen guest/ownership/
+  host Vulkan cases on ARM64/G720, with matching device/driver identity. The two
+  ownership cases release all backing; queued capture counts are 2 batches/4
+  writes. See docs/validation/g720-gpu-ownership.md and prior records.
+  Android 16/API 36, Vulkan 1.3.247, raw driver 184553472; validation
   disabled, native BC false. No physical phone is connected through ADB.
 - Earlier physical BC1 conversion/sampling/update results do not establish guest
   graphics, sustained performance, shader stages or Z-A compatibility. Raw JSON,
@@ -93,11 +103,13 @@ implementation, with no unsafe blocks or pointer arguments.
 
 ## Next work
 
-1. Verify the new two gpuCore cases on the phone with 0.7.0-dev. Prior guest/
-   cancellation/Vulkan checkpoints passed; these direct GPU-core APIs are new.
-2. Implement class routing/method semantics and required NV service/ioctl/object
-   registration. Extend CPU/synchronization from owned workload needs. Current
-   queue capture is a reference policy, not asynchronous hardware fetch timing.
+1. Verify gpuCore suite 2 DMA on the phone with 0.8.0-dev: 1 batch/11 writes/
+   2 dependent launches/16 copied bytes, zero retained backing/pending work.
+   Prior guest/ownership/Vulkan checkpoints passed in the supplied phone reports.
+2. Implement required NV service/ioctl/object registration so an original guest
+   program can reach the DMA executor. Extend CPU/synchronization from owned
+   workload needs. Queue capture and synchronous DMA are reference policies,
+   not asynchronous fetch timing, a host Vulkan backend or guest completion.
 3. Implement original shader decode/IR/SPIR-V and renderer integration. M4's
    complete guest-program-to-image gate remains open. Presentation/audio/input,
    broader content/services and performance follow their actual dependencies.
@@ -105,7 +117,7 @@ implementation, with no unsafe blocks or pointer arguments.
 ## Repository and environment
 
 Private GitHub repository: https://github.com/sahuishan01/emulator, main.
-The 0.7.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
+The 0.8.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
 packaging report and notes; older snapshots are retained. Source and artifacts
 must match the recorded commit. These are prototypes, not production releases;
 use agent-tasks notifications only. Use permanent /releases/download/<tag>/...

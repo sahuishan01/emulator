@@ -24,7 +24,8 @@ inspected; UI actions used fresh XML bounds. Only emulator-5580 was used and
 shut down afterward. Raw reports, captures, native extracts and APKs stay ignored.
 
 The [0.6.0-dev phone report](g720-cancellation.md) passes the six prior guest and
-six GPU cases on ARM64/G720. The two new GPU-core cases need a phone report.
+six GPU cases on ARM64/G720. Both GPU-core ownership cases also pass in the
+[0.7.0-dev physical report](g720-gpu-ownership.md).
 They are direct [memory/queue API checks](../gpu-memory-submission.md), not NV
 service submissions or GPU execution. FIFO release does not signal completion.
 Guest methods/shaders, presentation, 16 KiB Android runtime behavior and commercial

@@ -17,12 +17,14 @@ Current foundation: eleven original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
 virtual timeouts/cancellation and CLI/Android execution. Six owned NROs exercise
-the implemented behavior. All 94 Rust tests and 17 independent
+the implemented behavior. All 102 Rust tests and 17 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
 decoded batches, tested independently of kernel/Vulkan on the host and Android.
-NV-service submission and method/shader execution remain unimplemented.
+Original [DMA method execution](gpu-dma-methods.md) now supports bounded linear
+copies with transaction preflight and sequential alias visibility. NV-service
+submission, broader method semantics and shaders remain unimplemented.
 
 The Android engine/GPU Lab APK builds and passes lint, signature and native
 packaging checks. Six host workloads pass on llvmpipe with zero Vulkan
@@ -32,8 +34,7 @@ physical G720 0.3.0-dev report. This closes the owned host corpus checkpoint,
 not guest
 graphics. APK export/state retention are exercised
 separately from graphics;
-there is no guest GPU, shader translator or commercial game
-support yet.
+guest rendering, shader translation and commercial game support remain open.
 
 ## Milestones and dependency gates
 

@@ -44,8 +44,9 @@ All work is bounded by input/output limits, and errors expose no partial output.
 
 The standalone parser requires complete captured packets. The decode queue
 joins entries within a batch. Continuation across batches, ring control,
-conditional fetching, class binding,
-method execution and synchronization remain unimplemented. An accepted packet
+conditional fetching and synchronization remain unimplemented.
+The separate [DMA executor](gpu-dma-methods.md) supports direct class binding
+and a linear-copy method subset. An accepted packet
 does not imply its method has supported GPU semantics.
 
 ## Evidence and next work
@@ -57,7 +58,8 @@ flags/opcodes, address and method overflow, and input/output budgets. The GPU
 parser is tested on the host and through the separate Android `gpuCore` group.
 
 Bounded GPU mappings and decoded submission ownership are implemented. Next:
-class routing and needed NV service/ioctl semantics. Shader decoding/IR/SPIR-V,
-method execution, host renderer integration and presentation follow. M4's full
+needed NV service/ioctl/object semantics and broader class methods. Original
+linear DMA copies execute through per-subchannel bindings. Shader decoding/IR/
+SPIR-V, host renderer integration and presentation follow. M4's full
 guest-to-image checkpoint remains open; the six Vulkan lab workloads continue
 to use host shaders.
