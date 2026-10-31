@@ -76,6 +76,9 @@ pub(crate) struct PreparedBatch {
     stats: ExecutionStats,
 }
 impl PreparedBatch {
+    pub(crate) fn next_state(&self) -> MethodState {
+        self.state.clone()
+    }
     pub(crate) fn stats(&self) -> ExecutionStats {
         self.stats
     }

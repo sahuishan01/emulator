@@ -75,6 +75,32 @@ impl Submission {
         self.sources.iter().flat_map(|s| s.backing_ranges())
     }
 }
+/// Persistent method state for one synchronous guest channel. Preparation returns
+/// an isolated successor and a cancelable effect; neither writes memory.
+#[derive(Clone, Debug, Default)]
+pub struct ChannelProcessor {
+    methods: crate::methods::MethodState,
+}
+impl ChannelProcessor {
+    pub fn prepare(
+        &self,
+        space: &GpuAddressSpace,
+        entries: &[u8],
+    ) -> Result<(Self, PreparedSubmission), String> {
+        let mut queue =
+            SubmissionQueue::new(space, QueueLimits::default()).map_err(|e| e.to_string())?;
+        queue.methods = self.methods.clone();
+        let id = queue.submit(space, entries).map_err(|e| e.to_string())?;
+        let work = queue
+            .prepare_front(space, id, crate::ExecutionLimits::default())
+            .map_err(|e| e.to_string())?;
+        let next = Self {
+            methods: work.batch.next_state(),
+        };
+        Ok((next, work))
+    }
+}
+
 /// An owned, fully validated batch. Dropping cancels without side effects;
 /// commit executes exactly once and returns the queue with its updated state.
 #[derive(Debug)]

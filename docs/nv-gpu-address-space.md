@@ -87,7 +87,9 @@ It exits with zero handles, transfer objects or lent bytes. The copy loop is
 independently assembled with LLVM; existing fixtures/oracles are unchanged.
 
 The [0.13 phone report](validation/g720-nvmap-backing.md) passes all twenty prior
-ARM64/G720 cases. This new mapping guest awaits phone evidence. Channel binding,
+ARM64/G720 cases. The [0.14 phone report](validation/g720-nv-gpu-map.md) confirms this mapping guest.
+[Channel binding/submission/completion](nv-channel-batch.md) are now implemented
+for the synchronous DMA subset.
 VA reservation/fixed maps, large pages, sharing IDs, remap/cache/fence interfaces,
-NV GPFIFO submission, guest shaders/rendering and commercial game support remain
+Broader NV GPFIFO modes, guest shaders/rendering and commercial game support remain
 open. The separate emu:gpu diagnostics still execute our original synchronous DMA.

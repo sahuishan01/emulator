@@ -16,8 +16,8 @@ Z-A. Success claims must name the build, device, driver, title version and scene
 Current foundation: eleven original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
-virtual timeouts/cancellation and CLI/Android execution. Twelve owned NROs exercise
-the implemented behavior. All 161 Rust tests and 23 independent
+virtual timeouts/cancellation and CLI/Android execution. Thirteen owned NROs exercise
+the implemented behavior. All 164 Rust tests and 24 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
@@ -32,7 +32,8 @@ process objects](nv-initialization.md) now support nvdrv Initialize resource
 ownership. [NV device descriptors, metadata and backing-import ioctls](nvmap-devices.md)
 now pass the owned guest traces. Alloc imports existing guest backing with
 retained capabilities. [NV GPU mapping](nv-gpu-address-space.md) now passes the owned guest trace.
-Fresh allocation, NV submission,
+[The integrated NV channel batch](nv-channel-batch.md) adds actual submission,
+completion, rollback and lifetime checks in one APK. Fresh allocation,
 broader methods and shaders remain open.
 
 The Android engine/GPU Lab APK builds and passes lint, signature and native

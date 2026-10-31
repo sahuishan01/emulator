@@ -19,9 +19,10 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 14
+        private const val WORKLOAD_VERSION = 15
     }
 
+    private external fun runNvChecks(): ByteArray
     private external fun runGpuChecks(): ByteArray
     private external fun runEngineChecks(): ByteArray
     private external fun runGpuCoreChecks(): ByteArray
@@ -49,12 +50,12 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
         })
         layout.addView(TextView(this).apply {
-            text = "Original CPU/kernel, GPU memory and command checks, plus native Vulkan diagnostics."
+            text = "Run the full CPU, NV submission, completion, GPU memory and Vulkan test batch."
             textSize = 15f
             setPadding(0, padding / 2, 0, padding / 2)
         })
         runButton = Button(this).apply {
-            text = "Run engine and GPU checks"
+            text = "Run all checks"
             setOnClickListener { runChecks() }
         }
         exportButton = Button(this).apply {
@@ -71,7 +72,7 @@ class MainActivity : Activity() {
         layout.addView(runButton)
         layout.addView(exportButton)
         output = TextView(this).apply {
-            text = "Ready. Tests use the device's system Vulkan driver."
+            text = "Ready. Run all checks once, then export one report."
             textSize = 13f
             typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
@@ -88,7 +89,7 @@ class MainActivity : Activity() {
                 val saved = previous.readText()
                 if (JSONObject(saved).optInt("workloadVersion", 0) == WORKLOAD_VERSION) {
                     report = saved
-                    output.text = saved
+                    output.text = summarize(saved)
                     exportButton.isEnabled = true
                 } else {
                     output.text = "Ready. Run checks again for this version's updated tests."
@@ -97,10 +98,29 @@ class MainActivity : Activity() {
         } catch (_: Exception) { }
     }
 
+    private fun summarize(text: String): String = try {
+        val root = JSONObject(text)
+        var total = 0
+        var passed = 0
+        var complete = true
+        val groups = listOf("engine" to "Guest", "nv" to "NV batch", "gpuCore" to "GPU core", "gpu" to "Vulkan")
+        val details = groups.map { (key, label) ->
+            val tests = root.optJSONObject(key)?.optJSONArray("tests")
+            val count = tests?.length() ?: 0
+            if (count == 0) complete = false
+            val good = (0 until count).count { tests!!.getJSONObject(it).optBoolean("passed", false) }
+            total += count
+            passed += good
+            "$label: $good/$count"
+        }
+        val title = if (!complete) "Checks incomplete. See errors below" else if (root.optBoolean("allPassed", false) && total > 0) "All $total checks passed" else "$passed/$total checks passed; see failures below"
+        "$title\n${details.joinToString(" · ")}\n\n$text"
+    } catch (_: Exception) { text }
+
     private fun runChecks() {
         runButton.isEnabled = false
         exportButton.isEnabled = false
-        output.text = "Running original engine and GPU checks…"
+        output.text = "Running the full test batch…"
         worker.execute {
             val result = try {
                 val engine = try {
@@ -115,6 +135,12 @@ class MainActivity : Activity() {
                     JSONObject().put("scope", "original-gpu-memory-and-command-reference").put("allPassed", false)
                         .put("error", error.message ?: error.javaClass.simpleName)
                 }
+                val nv = try {
+                    JSONObject(String(runNvChecks(), Charsets.UTF_8))
+                } catch (error: Exception) {
+                    JSONObject().put("scope", "original-nv-protocol-reference").put("allPassed", false)
+                        .put("error", error.message ?: error.javaClass.simpleName)
+                }
                 val gpu = try {
                     JSONObject(String(runGpuChecks(), Charsets.UTF_8))
                 } catch (error: Exception) {
@@ -122,13 +148,14 @@ class MainActivity : Activity() {
                         .put("error", error.message ?: error.javaClass.simpleName)
                 }
                 JSONObject().apply {
-                    put("schemaVersion", 3)
+                    put("schemaVersion", 4)
                     put("workloadVersion", WORKLOAD_VERSION)
                     put("scope", "original-engine-gpu-core-and-host-vulkan")
                     put("engine", engine)
                     put("gpuCore", gpuCore)
+                    put("nv", nv)
                     put("gpu", gpu)
-                    put("allPassed", engine.optBoolean("allPassed", false) && gpuCore.optBoolean("allPassed", false) && gpu.optBoolean("allPassed", false))
+                    put("allPassed", engine.optBoolean("allPassed", false) && gpuCore.optBoolean("allPassed", false) && nv.optBoolean("allPassed", false) && gpu.optBoolean("allPassed", false))
                     put("phoneModel", Build.MODEL)
                     put("manufacturer", Build.MANUFACTURER)
                     put("socModel", Build.SOC_MODEL)
@@ -145,7 +172,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 if (!isFinishing && !isDestroyed) {
                     report = result
-                    output.text = result
+                    output.text = summarize(result)
                     runButton.isEnabled = true
                     exportButton.isEnabled = true
                 }

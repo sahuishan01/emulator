@@ -21,7 +21,8 @@ full modern libnx bootstrap, Aruid setup and CloneCurrentObjectEx remain open.
 Each client permits sixteen live descriptors. IDs increase without reuse, so
 closed descriptors cannot reach later objects. CMIF session clones share the
 same client, including descriptors and arena ownership. Closing a descriptor
-releases its owned metadata/imports; GPU mappings may retain backing after that.
+releases its external owner reference; bound channels may retain allocator
+metadata/imports, and GPU maps retain their own backing views.
 Closing the final receiver releases the
 client's arena and backing references. Closing the sender's transfer handle alone does not restore rights.
 
@@ -79,8 +80,9 @@ not a full console cache-coherence/page-state implementation.
 
 Per client, all descriptors share a 64 MiB logical imported-byte budget and
 4096 backing-span budget. Aliased imports are charged for each view; cloned
-session references do not count again. Object Free, device Close and final
-receiver Close drop imports. Snapshot preparation temporarily clones references
+session references do not count again. Object Free and final receiver Close drop their imports. Channels now retain
+allocator/address-space owners after external fd Close; see
+[nv-channel-batch.md](nv-channel-batch.md). Snapshot preparation temporarily clones references
 without copying payloads; rejected replies drop only candidate references and
 preserve live imports. Free returns zero while an NV GPU mapping retains the
 backing, otherwise the recorded CPU address even if unmapped/reused; it never unmaps or frees a caller's
@@ -111,7 +113,8 @@ expects 817 instructions/10 IPC/2 copied handles/5 A/4 B/162 descriptor bytes,
 transfer objects or lent bytes. Its [0.13 phone checkpoint](validation/g720-nvmap-backing.md) passes all twenty cases.
 
 [GPU address-space mapping](nv-gpu-address-space.md) now retains imported views.
-Fresh allocation, object sharing IDs, NV channels,
-syncpoints, cache control and GPU submission through NV remain open. The
+Fresh allocation, object sharing IDs, Broader async synchronization and cache control remain open.
+[NV channels and synchronous submission/completion](nv-channel-batch.md) now
+route the original DMA engine. The
 separate emu:gpu reference still tests actual original linear DMA. This backing
 checkpoint does not render guest shaders or launch commercial games.

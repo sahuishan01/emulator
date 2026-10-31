@@ -1,220 +1,154 @@
 # Handoff
 
-## Scope and working agreement
+## Working agreement
 
-Original emulator from scratch, Switch 1 first, Android on Realme GT 7 Dream
-Edition / reported realme RMX5061 / MT6989 / Mali-G720-Immortalis MC12. Pokémon
-Legends: Z-A is a later target; no commercial game runs yet. Earlier Eden/Lemon
-patching is superseded. Do not copy/link/import their cores. Historical upstream/
-checkouts are ignored and excluded from builds.
+Original Switch 1 emulator from scratch, targeting Android/Realme GT 7 Dream
+Edition (reported RMX5061/MT6989/Immortalis-G720). Pokémon Legends: Z-A remains
+a later target; no commercial game runs. Do not copy/link/import an existing
+emulator core. Ignored upstream/ checkouts are historical and excluded from builds.
 
-The user requested autonomous progress: after verifying a checkpoint, continue
-the next authorized issue without repeatedly requesting another go-ahead. Keep
-unsupported paths explicit; do not fabricate successful device/service replies.
+The user explicitly asked to test multiple things in one go because individual
+APK/report cycles were taking too long. Batch connected features, successful and
+rejected workloads, rollback and lifecycle coverage in one build. Continue larger
+authorized steps without repeatedly asking go-ahead. Default suite runs all groups
+in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Implemented through 2026-10-31
+## Current implementation: 0.15.0-dev
 
-Eleven original Rust crates: memory, a64, loader, ipc, kernel, services, session,
-texture, gpu, CLI and android-ffi. No external Cargo dependencies. Ten core
-crates forbid unsafe; the FFI permits only the export attribute in its current
-implementation, with no unsafe blocks or pointer arguments.
+Eleven original Rust crates, no external Cargo dependencies. Ten core crates
+forbid unsafe; android-ffi permits export attributes only, with no unsafe blocks
+or pointer arguments. See README.md, docs/architecture.md, design.md and
+implementation-plan.md for scope/milestones; M4 guest graphics gate is still open.
 
-- Memory: bounded transactional mappings, reserved/committed regions, full-range
-  R/W/X preflight, protect/unmap, shared backing IDs/slices, CPU aliases and
-  capability-limited pin views. Protect/unmap no longer copy bytes. Mapped bytes
-  count logical mappings; resident bytes count originating allocations until
-  all CPU/GPU/queue views drop. Both caps apply. A fragment retains its original
-  allocation. Scoped MemoryLease lending adds weak region links, restricted
-  owner permissions/borrowed metadata and final-owner restoration; active loans
-  block mapping edits. Creation rejects aliases and outstanding backing views.
-  No payload copying/revocation. Page tables/paged allocation remain future. See
-  docs/gpu-memory-submission.md and nv-initialization.md.
-- A64 integer interpreter subset, ADR/ADRP, wide immediates, branches/load/store,
-  guest-owned MRS TPIDRRO_EL0 and SVC. SIMD/FP/atomics/JIT remain open.
-- Static uncompressed NRO0 v0 subset with RX/R/RW, BSS, guarded main stack and
-  minimal entry configuration. No MOD0/linking/NSO/full libnx runtime.
-- Kernel: 256 live handles, HIPC/CMIF v0 transactions with rollback, sender PID
-  replacement, shared cloned sessions, manual-reset events, separate event
-  capabilities, readable/writable ClearEvent, thread waits and cancellation.
-  Minimal SM Initialize/GetService exposes emu:test and emu:gpu diagnostics.
-  Services can prepare pinned memory effects; reply/handle validation precedes
-  commit and rejects effects that alias TLS reply backing. Oversized reply/
-  handle exhaustion cancels effects and candidate state; trace space is reserved.
-  Normal HIPC A/B descriptors now grant READ inputs/WRITE outputs (four buffers,
-  8 MiB logical bytes/4096 backing spans, positive lengths); all ranges preflight
-  before service preparation, and B-to-TLS aliases fail. Default/legacy services
-  reject unused buffers. SVC 0x15 now creates aligned transfer objects (positive
-  4 KiB guest pages, <=16 MiB each, 32 live objects; owner NONE/READ/RW; TLS
-  arena excluded). Up to four incoming copied process/transfer handles retain
-  actual objects; current-process pseudo 0xffff8001 uses opaque owner identity.
-  No caller handle is consumed. nvdrv command 3 adopts a checked NONE-permission
-  arena on the service snapshot; final receiver close restores CPU rights.
-  Static/exchange/non-normal buffers, incoming moves/other copied object types,
-  domains/TIPC, full NV bootstrap and remote transfer maps remain open. NV Open,
-  Close and buffered NVMap metadata/import ioctls now use bounded
-  per-client fds/client-wide non-reused NVMap IDs with fd ownership, isolated snapshots and prepared B writes.
-  Rejected replies preserve IDs, object state and output. See nvmap-devices.md.
-  Alloc imports existing guest backing with READ/RW capabilities and stable
-  lifetime across CPU unmap/address reuse. Per-client limits: 64 MiB logical
-  imported bytes/4096 backing spans across all fds. Free/Close/final receiver
-  release their pins; NV GPU mappings now retain independent views after
-  NVMap Free/Close. Free returns address zero while mapped. InitializeEx uses
-  input-only A; MapBufferEx/Unmap use A/B. Automatic 4K GPU VAs use first fit
-  from 4 GiB. Per-AS cap 64 maps, per-client GPU cap 64 MiB/4096 spans; import
-  caps remain separate. See docs/nv-gpu-address-space.md. Failed replies preserve
-  live pins/bytes/maps. Fresh allocation and NV submission remain open.
-- Scheduler: one host executor, up to 16 lifetime guest threads, core 0/default,
-  priority/FIFO selection, 64-instruction quanta, separate registers/flags/TLS,
-  sleep/yield, blocking events/joins, virtual deadlines, bounded Blocked outcome.
-  One virtual ns per instruction is a reference model, not console frequency.
-  Cancellation interrupts active waits or coalesces a deferred flag; polls,
-  immediate results and argument errors retain it. SleepThread is not woken.
-- Twelve original LLVM NROs: hello (5 instructions), counter (384/5 IPC), clone
-  (529/7 IPC), events (87), threads (97/2 threads/4 switches/3 waits/1 timeout/
-  1680 virtual ns), cancellation (106/2 threads/4 switches/2 waits/2 interrupts/
-  0 timeouts/1091 ns), gpu-dma (338 instructions/4 IPC/10 methods/2 launches/
-  16 copied bytes), gpu-buffers (327 instructions/4 IPC/3 A/1 B/80 descriptor
-  bytes/7 methods/1 launch/8 copied bytes). All exit with expected output/memory
-  and zero handles. nv-initialize adds 317 instructions/4 IPC/2 copied handles,
-  receiver retention/clone cleanup and restored source value 42. IPC traces
-  include successful buffer/copy counts and bytes. nvmap adds 719 instructions/
-  9 IPC/2 copies/4 A/3 B/98 descriptor bytes, cloned-session device lifetime,
-  Create/SIZE/Free and result 4096 at image offset 0x3030. nvmap-alloc adds
-  817 instructions/10 IPC/2 copies/5 A/4 B/162 bytes, Alloc/ALIGNMENT/Free
-  address checks, 4096 at 0x3030 and preserved/updated source 77 at 0x4000.
-  nv-gpu-map adds 3172 instructions/15 IPC/2 copies/9 A/6 B/372 bytes, retained
-  mapping across handle Free/fd Close, intentional stale-handle error4, exact
-  Unmap and cleanup. Result 4 GiB at 0x3040; source 77 at 0x4000.
-- GPU: bounded 40-bit GPFIFO and four modern method-packet forms; owned GPU
-  mappings importing granted MemoryViews; atomic range access; stable mapping
-  IDs. Address-space-bound decode queues capture immutable command bytes and
-  retain source backing across unmap/address reuse. Packets can cross entries
-  within a batch. Failed admission publishes nothing; release is FIFO and
-  queue-ID checked. release_front releases decoded work, not GPU completion.
-  Original per-subchannel class binding and synchronous linear DMA methods now
-  execute through execute_front; whole-batch preflight precedes memory/state
-  mutation, dependent aliases observe earlier writes and success consumes once.
-  Caps: 64 launches/4 MiB scratch and copied bytes/4096 backing spans per batch.
-  Only class 0xB0B5 and launch 0x182 are supported; overlap and other flags fail.
-  prepare_front consumes a queue into a pinned owned transaction; drop cancels,
-  commit executes once/returns the updated queue. An original NRO now reaches
-  this engine through emu:gpu, an emulator-owned one-shot CMIF diagnostic with
-  fresh GPU class state per call. NV fresh allocation/submission, shaders, fences
-  and rendering remain open. emu:gpu command 2 now uses A commands/source/entries
-  and B output with narrow grants; it cannot read B or write A. See
-  docs/hipc-buffers.md, guest-gpu-bridge.md and gpu-dma-methods.md.
-- Original Rust BC1 RGBA UNORM decoder and generated GPU corpus. Original C++
-  Vulkan lab: six offscreen transfer/depth/compute-to-draw/BC1 conversion/sampling/
-  update checks. Native shaders, no guest GPU execution. Allocations count Vulkan
-  backing requests only, excluding pipeline/driver and process heap overhead.
-- Android schema 3/workload 14: engine has twelve actual guest NROs (suite 9),
-  gpuCore has three direct ownership/DMA cases (suite 2), gpu has six unchanged
-  native Vulkan cases (workload 3). Combined allPassed requires all three.
-  Both ABI 2 Rust exports return initialized value-only 8200-byte reports (8192
-  payload bytes), caught panics, no borrowed allocations. JSON is retained and
-  exported via Android's document picker. Guest JSON is now 4549 bytes on x86_64; watch
-  the 8192-byte cap when adding cases/fields (C/Rust ABI changes must match).
-  Exports use _v2 symbols to make stale ABI 1 callers fail at link time.
-  GPU mapping snapshots preserve space identity, isolate metadata and use
-  global non-reused host mapping IDs; discarded branches can burn host IDs.
-  No network/storage permission.
+- Memory: bounded checked region mappings, stable shared backing IDs, CPU aliases,
+  narrow MemoryViews, resident charging until the last pin drops, metadata-only
+  protect/unmap, and MemoryLease lending. Active loans restrict source CPU rights;
+  last lease drop restores them. Creation rejects aliases/outstanding backing
+  views; no payload copy or revocation. Page tables/coherence remain incomplete.
+- CPU/loader: original integer A64 subset with guest TLS/MRS/SVC, static NRO0
+  RX/R/RW/BSS and guarded stack. FP/SIMD/atomics/JIT, NSO/MOD0/linking/full runtime
+  and content/game loading remain open. Thirteen owned NROs are LLVM-assembled.
+- Kernel: 256 handles, one host executor/16 lifetime guest threads, events,
+  blocking waits, cancellation, virtual deadlines and cloned session identity.
+  One virtual ns/instruction is a reference model, not console frequency.
+  HIPC A/B: four each, 8 MiB logical/4096 spans; input READ/output WRITE. TLS
+  reply aliases fail before effects. Service snapshots/handle/reply checks precede
+  infallible prepared-effect publication. Bad replies preserve live bytes/state.
+- Transfer memory: SVC 0x15 positive aligned 4 KiB ranges <=16 MiB, 32 live objects,
+  owner NONE/READ/RW; W3 ignores high X3 bits; guest TLS arena excluded. Incoming
+  copies support actual process/transfer objects only (max 4). nvdrv Initialize
+  retains a checked process-owned NONE arena; final receiver drop restores rights.
+  Full NV bootstrap/Aruid/CloneCurrentObjectEx and remote mappings remain open.
+- GPU core: 40-bit GPFIFO/four packet forms, stable GPU mappings, captured command
+  queues and original synchronous DMA (class B0B5/launch182), ordered copies,
+  <=64 launches/4 MiB scratch/copied bytes per batch. Mapping snapshots preserve
+  space identity; opaque host mapping IDs never reuse even for canceled branches.
+  ChannelProcessor returns isolated successor state plus a cancelable effect.
+  Guest draw/shader translation and host renderer integration remain open.
+- NVMap/AS: 16 live fds/client; non-reused client-wide object IDs with owning-fd
+  checks; 64 objects/owner. Alloc imports existing guest backing (READ/RW, linear,
+  cached defaults), not fresh allocation. Import cap 64 MiB/4096 spans/client.
+  AS uses automatic 4 KiB first fit from 4 GiB, 64 maps/space; GPU mapped cap 64 MiB/
+  4096 spans/client separately. Free returns address 0 while a map retains backing.
+  Fixed/reserved/large-page maps, sharing IDs/cache modes remain unsupported.
+  InitializeEx public word 0/2 layouts disagree; both default flag 0/1 and big-page
+  0/65536 combinations are accepted, other fields zero; actual maps remain 4 KiB.
+- New channel batch: nvhost-gpu and nvhost-ctrl; SetNvmapFd, AS BindChannel, one
+  DMA object context, bounded GPFIFO capacity (power of two <=256), inline SubmitGpfifo,
+  SyncptRead and zero-timeout WaitEx. Registers persist per channel. Flags 2/3
+  mean fence_get / already-satisfied wait+get; unsupported async modes fail.
+  Each actual completed reference job advances a client-local point once. IDs
+  never reuse, capped 32 lifetime channels; closed-channel values remain readable.
+  This is synchronous CPU reference execution, not console hardware fence timing.
+- Channels retain NVMap allocator and AS owners after external fd closes. Detached
+  owners/maps stay charged until final referencing channel closes; open fds can
+  also retain them. CPU unmap/address reuse cannot redirect commands or data.
+  Combined GPU/B effects commit copies before reply/fence publication. B/DMA and
+  active-TLS/DMA aliases fail atomically. No mutable metadata is shared between
+  request snapshots. See docs/nv-channel-batch.md for exact operations/limits.
+- Vulkan: unchanged six native offscreen transfer/depth/compute/BC1 conversion/
+  sampling/update microchecks. Native shaders, no guest rendering. Rust BC1
+  decoder/corpus remains independent. No console performance claim.
 
-## Evidence
+## Batched Android report
 
-- 161 Rust tests, formatting and Clippy with warnings denied pass. Tests cover
-  malformed input, rollback, shared memory/alias visibility, pinned resident
-  caps, GPU mappings, entry-spanning packets, immutable capture, queue ownership,
-  atomic admission failure and ordered release, alongside prior guest behavior.
-- All 23 independent LLVM fixtures match: 11 raw A64 plus twelve NROs.
-- ARM64/x86_64 Rust cross-build, Gradle build/lint, signature/ELF architecture and
-  16 KiB ELF/ZIP packaging checks pass. Not a 16 KiB Android runtime test.
-- GPU-core host reference cases pass: shared aliases survive protect/unmap/
-  address reuse; two queued batches/four writes retain originals and end with
-  zero originating resident bytes/pending work. Android 0.7.0-dev passes all
-  fourteen checks, upgrade invalidation, byte-exact export and cold restoration.
-  System UI needed its startup ANR Wait action; no app crash/ANR captured. See
-  docs/validation/android-gpu-ownership.md. Android 0.8.0-dev also passes all
-  fifteen checks, exact export, upgrade invalidation and cold restoration; the
-  DMA case has 11 writes/2 launches/16 copied bytes/zero retained backing. See
-  docs/validation/android-dma.md. Android 0.9.0-dev passes all sixteen cases,
-  upgrade invalidation, exact export and cold restoration, with no captured app
-  crash/ANR. The new guest has 338 instructions/4 IPC/zero handles. See
-  docs/validation/android-guest-dma.md. Android 0.10.0-dev passes all seventeen
-  checks, upgrade invalidation, exact export and cold restoration, with no app
-  crash/ANR. See docs/validation/android-hipc-buffers.md. Android 0.11.0-dev
-  passes all eighteen checks, exact export, upgrade invalidation and cold restore;
-  the new NV case has 317 instructions/4 IPC/2 copied handles/zero remaining
-  handles, transfer objects or lent bytes. See android-nv-initialization.md under
-  docs/validation/. Its final APK includes the W3-width regression fix.
-  Android 0.12.0-dev passes all nineteen checks, upgrade invalidation, exact
-  export and cold restore. NVMap matches 719 instructions/9 IPC/2 copies/4 A/
-  3 B/98 bytes/zero handles. System UI startup ANR needed XML-derived Wait; no
-  app crash/ANR was captured. See docs/validation/android-nvmap.md.
-  Android 0.13.0-dev passes all twenty checks, upgrade invalidation, exact
-  export and cold restore. New backing import matches 817 instructions/10 IPC/
-  2 copies/5 A/4 B/162 bytes/zero handles. ABI 2 is verified through JNI and both
-  packaged architectures have _v2 exports only. System UI needed startup Wait;
-  no app crash/ANR captured. See docs/validation/android-nvmap-backing.md.
-  Android 0.14.0-dev passes all twenty-one cases, upgrade invalidation and exact
-  export. The first AVD exited cleanly during the cold-restore XML check; cause
-  undetermined, final interval app logs unavailable. A CPU-gated full AVD restart
-  and another cold app launch restored byte-identical JSON/new case/Export. Retry
-  logs show no app crash/ANR, empty crash buffer. System UI startup Wait was
-  required before the original suite. See docs/validation/android-nv-gpu-map.md.
-- Prior Android AVD runs pass their current suites, upgrade invalidation, exact
-  export and cold restore. System UI can show a startup ANR: dismiss only its
-  Wait action using current XML, then re-dump before tapping. Never dismiss an
-  app ANR as infrastructure. Details are under docs/validation/.
-- Supplied physical 0.13.0-dev report passes all twenty guest/GPU-core/host
-  Vulkan cases. All engine/core fields match freshly executed 0.13 results except
-  host architecture. This closes backing-import and ABI 2 phone checkpoints. See
-  docs/validation/g720-nvmap-backing.md. Device: realme RMX5061/MT6989/Android16
-  API36/Mali-G720-Immortalis MC12/Vulkan1.3.247/raw driver184553472, validation
-  off/native BC false. No physical ADB. The new NV GPU mapping guest awaits phone
-  evidence. Prior physical checkpoints are also under docs/validation/.
-- Earlier physical BC1 conversion/sampling/update results do not establish guest
-  graphics, sustained performance, shader stages or Z-A compatibility. Raw JSON,
-  captures, native extracts, games/firmware/keys and APKs remain ignored.
+Schema 4/workload 15: engine 13 interpreted NROs (suite 10), nv 18 kernel/NV protocol
+scenarios (suite 1, executesGuestCpu:false), gpuCore 3 direct cases (suite 2), gpu 6
+host Vulkan cases (workload 3). Combined allPassed requires all four groups.
+Run all checks shows actual per-group/total outcomes and exports one JSON.
+Missing groups show incomplete checks. Previous workload reports are invalidated.
 
-## Next work
+ABI 2: 8200-byte, alignment 4, offset 8, 8192-byte payload. Three _v2 value-only
+exports supply guest, GPU-core and NV reports; panics become bounded failures.
+Rust/JNI rebuild together. Host JSON sizes: engine 4924/NV 2354/core 642 bytes.
 
-1. Verify suite 9 NV GPU mapping on the phone with 0.14.0-dev: 3172 instructions/
-   15 IPC/2 copies/9 A/6 B/372 bytes/zero handles. Prior twenty checks passed
-   physically through workload 13. ABI 2 remains 8200 bytes/8192 payload with _v2
-   exports; ARM64 and x86_64 Rust/JNI must match.
-2. Implement NV channel objects/binding and GPFIFO submission through the original
-   command engine. Current address spaces map imported backing; fixed/reserved
-   maps, 64K maps, remap, sharing IDs/cache/fence paths remain unsupported. Public
-   InitializeEx sources disagree on word 0/2 ordering; both default flag 0/1 and
-   big-page 0/65536 layouts are accepted with zero other fields. No large-page
-   mapping is claimed. Full NV bootstrap/Aruid/CloneCurrentObjectEx/remote maps
-   remain open. emu:gpu is the diagnostic path for synchronous original DMA.
-3. Implement original shader decode/IR/SPIR-V and renderer integration. M4's
-   complete guest-program-to-image gate remains open. Presentation/audio/input,
-   broader content/services and performance follow their actual dependencies.
+The new nv-channel-batch.nro covers failed/valid/repeated DMA, persistent state,
+fence reads/waits, closed bindings and cleanup: 7179 instructions/32 IPC/2 copies/
+25 A/18 B/875 descriptor bytes. Completion 3 at 0x4040, source/target 44 at 0x5100/
+0x5108, original marker 42 at 0x3000, known output and zero handles/loans/transfer
+objects. Original twelve NRO oracles remain unchanged. The eighteen additional
+NV scenarios exercise actual kernel API requests on Android, including oversized
+reply cancellation, rights, aliases, quotas, cloned clients and residency release.
 
-## Repository and environment
+## Evidence and verification
 
-Private GitHub repository: https://github.com/sahuishan01/emulator, main.
-The 0.14.0-dev prerelease contains the verified debug APK, ZIP fallback, checksums,
-packaging report and notes; older snapshots are retained. Source and artifacts
-must match the recorded commit. These are prototypes, not production releases;
-use agent-tasks notifications only. Use permanent /releases/download/<tag>/...
-links plus the release page, never signed CDN redirects. An expired redirect
-previously produced ERR_INVALID_RESPONSE. Private assets also return 404 to
-unauthenticated browsers: verified with 0.9.0-dev; authenticated downloads match
-checksums. Open the release in Chrome signed into the owner/access account.
-A server download does not prove the phone's browser/network path.
+- 164 Rust tests (including the eighteen-scenario runner), fmt and Clippy with
+  warnings denied; 24 LLVM fixtures (11 raw/13 NROs); pinned ARM64/x86_64 build,
+  Gradle lint, signature and 16 KiB ELF/ZIP packaging checks pass. Packaging is
+  not a 16 KiB Android runtime test. Keep exact APK hash in validation/release notes.
+- Supplied 0.14 phone report passes all 21 prior cases, matching all engine/core
+  fields against fresh reference output except host architecture. New mapping
+  matches 3172 instructions/15 IPC/2 copies/9 A/6 B/372 bytes. See
+  docs/validation/g720-nv-gpu-map.md. Device realme RMX5061/MT6989/Android 16/API 36/
+  G720-Immortalis MC12/Vulkan1.3.247/raw driver184553472; validation off/native BC
+  false. No physical ADB. The larger 0.15 batch awaits phone evidence.
+- Android 0.15 passes all 40 cases with derived summary, upgrade invalidation,
+  exact export and cold restore. A save-navigation timing issue in the QA harness
+  was fixed with bounded expected-screen polling; resumed verification after AVD
+  restart passed. Initial and resumed captures are retained; no app crash/ANR
+  captured. See docs/validation/android-nv-channel-batch.md.
+- Historical software/physical evidence is under docs/validation/. Supplied
+  microchecks do not establish guest graphics, full compatibility or performance.
+  Keep reports, captures, helper outputs, games/keys/firmware/APKs ignored.
 
-Rust/Cargo, LLVM/Clang 19, llvmpipe, Vulkan/Khronos validation, glslangValidator
-and spirv-val are available. Android SDK: ~/Android/Sdk. Pins: Rust 1.85.1,
-NDK 28.2.13676358, Gradle 8.9, AGP 8.7.3, Kotlin 2.0.21, SDK 35/build-tools
-34.0.0, CMake 3.22.1, Java target 17 (JDK 21 installed). The cross-build helper
-sets RUSTC explicitly; do not change the global toolchain. Host Clippy may be
-newer: identity allocation uses checked CAS compatible with both toolchains.
+## Efficient local workflow
 
-The QA AVD lives under ignored reports/android-qa/avd. CPU-gate its background
-startup at >=80% idle; use only emulator-5580, await boot/command completion,
-require a dump success message plus valid fresh XML (exit 0 can leave no file),
-use XML-derived coordinates, capture/view screenshots/logs, and shut
-it down/await its process after QA. Do not affect another emulator/device.
+SDK ~/Android/Sdk; Rust1.85.1, NDK28.2.13676358, Gradle8.9/AGP8.7.3/Kotlin2.0.21,
+SDK35/build-tools34.0.0/CMake3.22.1/JDK21 targetJava17. Cross-build helper pins
+RUSTC and uses 2 jobs. Do not change global toolchains or touch other workspaces.
+Generate host references via reference_report (default, gpu-core, nv) example.
+
+Use tools/qa_android_batch.py for the entire upgrade/run/summary/export/restore/
+log flow. It compares all three Rust groups to the host JSON, not just allPassed.
+It verifies fresh XML before deriving taps, waits for asynchronous save navigation,
+uses bounded retries/timeouts and can resume export/restore from an already
+verified run. The runner can --shutdown its explicitly owned AVD. Initial and
+resumed attempts/captures must be retained; do not hide app ANRs as infrastructure.
+
+Owned AVD: reports/android-qa/avd, gpu-lab-api35, emulator-5580. Before background
+startup sample /proc/stat and require >=80% idle; nice 10/cores 2/memory 2048,
+headless SwiftShader/no snapshot. Await boot and dependent commands; do not run
+concurrent UI operations. Stop only that AVD and await its process. System UI
+startup ANR Wait may be handled using its exact current XML; app ANRs fail QA.
+
+## Next combined work
+
+Move toward the M4 graphics/shader/renderer vertical slice with a known owned
+workload. Batch needed command/state/shader and negative/lifetime tests together;
+do not require a phone report per small opcode/ioctl. Broader asynchronous GPU
+scheduling, error/event/fence contracts, CPU ISA/runtime/content, audio/input and
+performance remain explicit work. No gameplay compatibility is claimed yet.
+
+## Repository and delivery
+
+Private repo sahuishan01/emulator, canonical main checkout here. Push verified
+source, create a target-commit development prerelease (--latest=false), and upload
+six assets: APK, ZIP containing APK/README/checksum/packaging report, APK checksum,
+ZIP checksum, README and packaging report. Download them all back and byte/hash
+compare; verify tag/main/source and private visibility. Give permanent APK/ZIP
+/releases/download/<tag>/... links plus release page. Never send signed CDN URLs.
+Private links return 404 when unsigned; use Chrome signed into an access account.
+
+These are debug prototypes, not production releases: use agent-tasks notifications
+via the protected ntfy-agent-notify helper. Do not use agent-releases. Never print
+or copy credentials. Send the authorized task notification at final completion.

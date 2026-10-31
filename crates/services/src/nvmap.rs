@@ -40,8 +40,9 @@ impl Default for NvMap {
     }
 }
 impl NvMap {
-    pub fn close_device(&mut self, fd: u32) {
-        self.objects.retain(|_, object| object.owner != fd);
+    pub fn retain_owners(&mut self, owners: &[u32]) {
+        self.objects
+            .retain(|_, object| owners.contains(&object.owner));
     }
     pub fn imported_view(&self, handle: u32) -> Result<MemoryView, u32> {
         self.objects

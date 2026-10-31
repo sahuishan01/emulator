@@ -187,6 +187,18 @@ fn reference_checks() -> String {
             ipc_buffers: (9, 6, 372),
             copy_handles: 2,
         },
+        Case {
+            name: "guest-nv-channel-batch",
+            image: include_bytes!("../../../examples/homebrew/nv-channel-batch.nro"),
+            message: "Guest NV batch passed: jobs, fences, rejection and lifetime.\n",
+            instructions: 7179,
+            ipc_calls: 32,
+            memory: Some((0x4040, 3)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (25, 18, 875),
+            copy_handles: 2,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -287,7 +299,7 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":9,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":10,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -328,6 +340,18 @@ fn encode_report(run: fn() -> String, scope: &str) -> EngineReport {
     report
 }
 
+/// Integrated NV protocol regressions, distinct from interpreted guest programs.
+#[no_mangle]
+pub extern "C" fn emulator_run_nv_checks_v2() -> EngineReport {
+    encode_report(nv_reference_checks, "original-nv-protocol-reference")
+}
+fn nv_reference_checks() -> String {
+    let cases = emulator_services::reference::run();
+    let passed = cases.iter().all(|c| c.passed);
+    let tests=cases.iter().map(|c|format!("{{\"name\":{},\"passed\":{},\"ipcCalls\":{},\"verifiedBytes\":{},\"handlesAfterExit\":{},\"error\":{}}}",quote(c.name),c.passed,c.ipc_calls,c.verified_bytes,c.handles_after_exit.map_or_else(||"null".into(),|v|v.to_string()),quote(&c.error))).collect::<Vec<_>>().join(",");
+    format!("{{\"scope\":\"original-nv-protocol-reference\",\"suiteVersion\":1,\"executesGuestCpu\":false,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",quote(std::env::consts::ARCH),tests,passed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,7 +363,7 @@ mod tests {
         assert_eq!(result.abi_version, 2);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 12);
+        assert_eq!(text.matches("\"passed\":true").count(), 13);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));
@@ -357,6 +381,19 @@ mod tests {
         assert!(text.contains("\"copyLaunches\":2,\"copiedBytes\":16"));
         assert!(text.contains("maxwell-dma-linear-copy"));
         assert!(report.bytes[report.length as usize..]
+            .iter()
+            .all(|b| *b == 0));
+    }
+
+    #[test]
+    fn nv_batch_reports_actual_protocol_results_and_bounded_bytes() {
+        let result = super::emulator_run_nv_checks_v2();
+        let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
+        assert_eq!(result.abi_version, 2);
+        assert!(text.ends_with("\"allPassed\":true}"));
+        assert_eq!(text.matches("\"passed\":true").count(), 18);
+        assert_eq!(text.matches("\"handlesAfterExit\":0").count(), 18);
+        assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));
     }

@@ -5,7 +5,7 @@ This is the proposed design for the original emulator. It supplements
 
 Current implemented slice: bounded region memory, static NRO loading, A64
 interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
-event/thread waits, cancellation and virtual deadlines in one process. The Kotlin/JNI lab runs twelve original Rust guest
+event/thread waits, cancellation and virtual deadlines in one process. The Kotlin/JNI lab runs thirteen original Rust guest
 programs, three GPU-core memory/command cases and six Vulkan workloads, with report
 export. Broader synchronization, guest graphics and the gameplay
 Android API remain planned. See [kernel-ipc.md](kernel-ipc.md) and
@@ -26,7 +26,9 @@ back object IDs, state, imported references and B bytes. Alloc pins existing
 guest backing with narrow READ/RW capabilities and retains identity across CPU
 unmap/address reuse. [NV GPU mapping](nv-gpu-address-space.md) now retains those views across
 NVMap Free/device Close; speculative mapping snapshots preserve reply rollback.
-Fresh allocation and NV submission remain open.
+[Channels and synchronous submission/completion](nv-channel-batch.md) now
+execute original DMA through NV with persistent state and transactional effects.
+Fresh allocation and guest graphics remain open.
 
 ## 1. Process, addresses and memory
 

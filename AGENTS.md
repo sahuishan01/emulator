@@ -9,3 +9,5 @@
 - Keep Vulkan decisions capability-driven and record physical-device evidence separately from host tests.
 - The user requested autonomous progress: after verifying a checkpoint, continue to the next authorized issue. Do not repeatedly ask for another go-ahead.
 - Keep reports, game files, firmware, keys and private captures out of Git. Never copy secret material from global instructions into this project.
+
+- Batch related implementation steps and positive, rejection, rollback and lifetime tests into one APK. The user explicitly asked to test multiple things in one go; avoid a separate phone/report cycle for every small primitive.

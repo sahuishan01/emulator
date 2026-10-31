@@ -13,6 +13,7 @@ static_assert(sizeof(EngineReport) == 8200 && alignof(EngineReport) == 4);
 static_assert(offsetof(EngineReport, bytes) == 8);
 extern "C" EngineReport emulator_run_reference_guests_v2();
 extern "C" EngineReport emulator_run_gpu_core_checks_v2();
+extern "C" EngineReport emulator_run_nv_checks_v2();
 
 static jbyteArray copy_engine_report(JNIEnv* env, const EngineReport& report) {
     if (report.abi_version != 2 || report.length > sizeof(report.bytes)) {
@@ -47,4 +48,9 @@ Java_com_algosculptor_emulator_gpulab_MainActivity_runGpuChecks(JNIEnv* env, job
         if (type) env->ThrowNew(type, error.what());
         return nullptr;
     }
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_MainActivity_runNvChecks(JNIEnv* env, jobject) {
+    return copy_engine_report(env, emulator_run_nv_checks_v2());
 }

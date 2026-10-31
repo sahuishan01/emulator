@@ -329,10 +329,10 @@ fn nvmap_rejects_unknown_devices_ioctls_handles_sizes_and_malformed_buffers() {
         .unwrap();
     assert_eq!(r.open_device(b"/dev/nvmap", 0), (0, 3));
     r.initialize().unwrap();
-    for path in [b"/dev/nvhost-gpu".as_slice(), b"/dev/nvmap\0", b"\xff"] {
+    for path in [b"/dev/nvhost-unknown".as_slice(), b"/dev/nvmap\0", b"\xff"] {
         let result = r.open_device(path, 0);
         assert_eq!(result.0, 0);
-        assert_eq!(result.1, if path == b"/dev/nvhost-gpu" { 2 } else { 4 });
+        assert_eq!(result.1, if path == b"/dev/nvhost-unknown" { 2 } else { 4 });
     }
     assert!(r.call(&message(0, &[], Some((0x6000, 0)), None)).is_err());
     let fd = r.open_device(b"/dev/nvmap", 0).0;

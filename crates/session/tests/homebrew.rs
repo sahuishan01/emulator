@@ -304,3 +304,34 @@ fn nv_guest_maps_retained_backing_clones_client_frees_handle_and_unmaps() {
     assert_eq!(session.kernel().live_transfer_memory_count(), 0);
     assert_eq!(session.memory().lent_bytes(), 0);
 }
+
+#[test]
+fn guest_nv_batch_executes_rejects_retries_tracks_fences_and_retains_closed_bindings() {
+    let mut s = Session::from_nro(include_bytes!(
+        "../../../examples/homebrew/nv-channel-batch.nro"
+    ))
+    .unwrap();
+    assert_eq!(s.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(s.instructions(), 7179);
+    assert_eq!(
+        s.debug_records(),
+        &[b"Guest NV batch passed: jobs, fences, rejection and lifetime.\n".to_vec()]
+    );
+    for (a, v) in [(0x3000, 42), (0x4040, 3), (0x5100, 44), (0x5108, 44)] {
+        assert_eq!(s.memory().read_u64(LOAD_BASE + a).unwrap(), v);
+    }
+    let r = s.kernel().ipc_records();
+    assert_eq!(r.len(), 32);
+    assert_eq!(
+        (
+            r.iter().map(|r| r.send_buffers).sum::<usize>(),
+            r.iter().map(|r| r.receive_buffers).sum::<usize>(),
+            r.iter().map(|r| r.buffer_bytes).sum::<usize>(),
+            r.iter().map(|r| r.copy_handles).sum::<usize>()
+        ),
+        (25, 18, 875, 2)
+    );
+    assert_eq!(s.kernel().live_handle_count(), 0);
+    assert_eq!(s.kernel().live_transfer_memory_count(), 0);
+    assert_eq!(s.memory().lent_bytes(), 0);
+}

@@ -3,6 +3,7 @@ use crate::nvmap::{ImportBudget, BAD_PARAMETER, IMPORT_BYTES, NOT_SUPPORTED, NO_
 use emulator_gpu::{GpuAddressSpace, GpuMemoryError, GpuVa, MappingId};
 use emulator_memory::MemoryView;
 
+pub(crate) const BIND_CHANNEL: u32 = 0x40044101;
 pub(crate) const INITIALIZE: u32 = 0x40284109;
 pub(crate) const MAP_BUFFER: u32 = 0xc0284106;
 pub(crate) const UNMAP_BUFFER: u32 = 0xc0084105;
@@ -50,6 +51,7 @@ fn memory_error(error: GpuMemoryError) -> u32 {
 impl NvAddressSpace {
     pub fn argument_size(code: u32) -> Option<usize> {
         match code {
+            BIND_CHANNEL => Some(4),
             INITIALIZE | MAP_BUFFER => Some(40),
             UNMAP_BUFFER => Some(8),
             _ => None,
@@ -59,6 +61,9 @@ impl NvAddressSpace {
         self.space
             .as_ref()
             .map_or((0, 0), |s| (s.mapped_bytes(), s.mapped_spans()))
+    }
+    pub fn core(&self) -> Result<&GpuAddressSpace, u32> {
+        self.space.as_ref().ok_or(3)
     }
     pub fn holds(&self, handle: u32) -> bool {
         self.regions.iter().any(|r| r.handle == handle)

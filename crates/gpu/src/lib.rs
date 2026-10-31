@@ -13,8 +13,8 @@ pub use methods::{
     ExecutionError, ExecutionLimits, ExecutionStats, LINEAR_DMA_LAUNCH, MAXWELL_DMA_COPY_A,
 };
 pub use submission::{
-    PreparedSubmission, QueueError, QueueLimits, QueueStats, Submission, SubmissionId,
-    SubmissionQueue,
+    ChannelProcessor, PreparedSubmission, QueueError, QueueLimits, QueueStats, Submission,
+    SubmissionId, SubmissionQueue,
 };
 
 pub const MAX_PUSHBUFFER_WORDS: usize = 16 * 1024;

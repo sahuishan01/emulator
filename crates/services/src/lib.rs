@@ -2,7 +2,10 @@
 mod gpu;
 mod nv;
 mod nvas;
+mod nvchannel;
 mod nvmap;
+/// Bounded original NV protocol regression workloads for host and Android.
+pub mod reference;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
 pub use gpu::DiagnosticGpu;
