@@ -1,8 +1,10 @@
 //! Host service contract. Preparing on an isolated clone allows the kernel to
 //! validate/encode output and stage handles before publishing service state.
+use crate::handles::{Object, ProcessIdentity, TransferMemory};
 use emulator_ipc::Request;
 use emulator_memory::{AddressSpace, BackingRange, MemoryError, MemoryView, Permissions};
 use std::fmt;
+use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceError {
@@ -18,6 +20,8 @@ pub enum ServiceError {
     BufferLimit,
     InvalidBufferCounts { send: usize, receive: usize },
     ReplyBufferOverlap,
+    InvalidCopyHandleCount(usize),
+    InvalidTransferMemory,
     DeviceFault(String),
     Memory(MemoryError),
 }
@@ -42,13 +46,22 @@ pub struct ServiceContext<'a> {
     memory: &'a AddressSpace,
     send: Vec<MemoryView>,
     receive: Vec<MemoryView>,
+    process: ProcessIdentity,
+    copied: Vec<Object>,
 }
 impl<'a> ServiceContext<'a> {
-    pub(crate) fn new(memory: &'a AddressSpace, request: &Request) -> Result<Self, ServiceError> {
+    pub(crate) fn new(
+        memory: &'a AddressSpace,
+        request: &Request,
+        process: ProcessIdentity,
+        copied: Vec<Object>,
+    ) -> Result<Self, ServiceError> {
         let mut context = Self {
             memory,
             send: Vec::new(),
             receive: Vec::new(),
+            process,
+            copied,
         };
         let mut total = 0_u64;
         let mut spans = 0;
@@ -92,6 +105,29 @@ impl<'a> ServiceContext<'a> {
             return Err(ServiceError::ReplyBufferOverlap);
         }
         Ok(())
+    }
+    pub fn require_copy_handles(&self, count: usize) -> Result<(), ServiceError> {
+        if self.copied.len() != count {
+            return Err(ServiceError::InvalidCopyHandleCount(self.copied.len()));
+        }
+        Ok(())
+    }
+    pub fn transfer_memory(
+        &self,
+        process_index: usize,
+        transfer_index: usize,
+    ) -> Result<Rc<TransferMemory>, ServiceError> {
+        match (
+            self.copied.get(process_index),
+            self.copied.get(transfer_index),
+        ) {
+            (Some(Object::Process(process)), Some(Object::TransferMemory(memory)))
+                if process.same(&self.process) && memory.owned_by(process) =>
+            {
+                Ok(Rc::clone(memory))
+            }
+            _ => Err(ServiceError::InvalidTransferMemory),
+        }
     }
     pub fn require_buffers(&self, send: usize, receive: usize) -> Result<(), ServiceError> {
         if self.send.len() != send || self.receive.len() != receive {
@@ -148,6 +184,7 @@ pub trait Service: fmt::Debug {
         context: &ServiceContext<'_>,
     ) -> Result<ServiceReply, ServiceError> {
         context.require_buffers(0, 0)?;
+        context.require_copy_handles(0)?;
         self.dispatch(request)
     }
 }

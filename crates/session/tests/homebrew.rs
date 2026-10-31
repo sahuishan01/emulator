@@ -161,3 +161,39 @@ fn guest_hipc_buffers_grant_dma_input_and_output_and_record_exact_counts() {
     );
     assert_eq!(session.kernel().live_handle_count(), 0);
 }
+
+#[test]
+fn guest_nv_initialization_retains_copied_memory_and_restores_on_final_close() {
+    let mut session = Session::from_nro(include_bytes!(
+        "../../../examples/homebrew/nv-initialize.nro"
+    ))
+    .unwrap();
+    assert_eq!(session.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(session.instructions(), 317);
+    assert_eq!(
+        session.debug_records(),
+        &[b"Guest NV initialized with copied handles; memory restored.\n".to_vec()]
+    );
+    assert_eq!(session.memory().read_u64(LOAD_BASE + 0x2000).unwrap(), 42);
+    assert_eq!(
+        session
+            .kernel()
+            .ipc_records()
+            .iter()
+            .map(|r| r.command_id)
+            .collect::<Vec<_>>(),
+        [0, 1, 3, 2]
+    );
+    assert_eq!(
+        session
+            .kernel()
+            .ipc_records()
+            .iter()
+            .map(|r| r.copy_handles)
+            .sum::<usize>(),
+        2
+    );
+    assert_eq!(session.kernel().live_handle_count(), 0);
+    assert_eq!(session.kernel().live_transfer_memory_count(), 0);
+    assert_eq!(session.memory().lent_bytes(), 0);
+}

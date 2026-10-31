@@ -1,8 +1,10 @@
 //! Original, deliberately small service implementations for owned homebrew.
 mod gpu;
+mod nv;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
 pub use gpu::DiagnosticGpu;
+pub use nv::NvDriver;
 
 fn payload(request: &Request, length: usize) -> Result<(), ServiceError> {
     if request.data.len() == length {
@@ -49,6 +51,7 @@ impl Service for ServiceManager {
                 let object: Box<dyn Service> = match &name {
                     b"emu:test" => Box::new(DiagnosticCounter::default()),
                     b"emu:gpu\0" => Box::new(DiagnosticGpu::default()),
+                    b"nvdrv\0\0\0" => Box::new(NvDriver::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {

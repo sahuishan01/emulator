@@ -30,7 +30,8 @@ force-stop. Only emulator-5580 was used, then shut down. Raw reports, logs,
 screenshots, APKs and QA helper scripts remain ignored.
 
 The [0.9.0-dev phone report](g720-guest-dma.md) passes all sixteen prior ARM64/
-G720 checks. This new buffered case needs its own phone report. Only normal,
+G720 checks. The buffered case also passes in the
+[0.10.0-dev physical report](g720-hipc-buffers.md). Only normal,
 positive A/B descriptors are supported under the documented bounds. Standard
 NV services/handle initialization, shaders/rendering, console timing/performance
 and commercial gameplay remain open. This is a debug-signed development diagnostic.

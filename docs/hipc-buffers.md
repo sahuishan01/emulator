@@ -20,7 +20,9 @@ Each descriptor has three little-endian words:
 
 Parsing preserves all 58 address/36 size bits. Only mode 0 (normal) is accepted.
 Modes 1/3 require unimplemented NonSecure/NonDevice semantics; mode 2 is invalid.
-X/C static buffers, W exchange buffers, incoming handles, domains/context/TIPC,
+Up to four incoming copied process/transfer handles are added in 0.11.0-dev; see
+[NV initialization](nv-initialization.md). X/C static buffers, W exchange buffers,
+incoming moves/other copied types, domains/context/TIPC,
 receive-list controls and buffers on CMIF Control remain explicit errors.
 The existing complete raw-data/CMIF padding and 256-byte TLS bounds still apply.
 
@@ -71,7 +73,6 @@ NRO; direct GPU-core and native Vulkan checks remain separate.
 Tests include literal high-bit descriptor vectors, all truncated prefixes,
 PID/empty-special-header alignment, modes/counts, write-only grants, attempted
 A writes/B reads, late invalid buffers/commands, TLS aliases, budgets/retained
-pin cleanup and actual interpreted guest execution. Standard NV initialization
-still needs process/transfer-memory handles, incoming-handle semantics and the
-required ioctl/object layer. Static/exchange/optional-buffer variants follow
+pin cleanup and actual interpreted guest execution. Standard NV Initialize now adopts checked process/transfer-memory objects. Its required
+device/ioctl/object layer remains open. Static/exchange/optional-buffer variants follow
 owned workload needs; shader/rendering milestones remain open.

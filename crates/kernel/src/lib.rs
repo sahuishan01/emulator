@@ -7,8 +7,8 @@ pub mod service;
 use emulator_a64::Cpu;
 use emulator_ipc::{encode_reply, parse_request, CommandType, IpcError, IPC_BUFFER_SIZE};
 use emulator_memory::{Access, AddressSpace, MemoryError};
-pub use handles::HandleError;
-use handles::{HandleTable, Object, ThreadObject};
+pub use handles::{HandleError, TransferMemory};
+use handles::{HandleTable, Object, ProcessIdentity, ThreadObject};
 pub use scheduler::{
     ScheduleOutcome, SchedulerError, SchedulerStats, MAX_THREADS, THREAD_QUANTUM, THREAD_TLS_ARENA,
 };
@@ -26,6 +26,10 @@ pub const SVC_EXIT_THREAD: u16 = 0x0a;
 pub const SVC_SLEEP_THREAD: u16 = 0x0b;
 pub const SVC_OUTPUT_DEBUG_STRING: u16 = 0x27;
 pub const SVC_CLOSE_HANDLE: u16 = 0x16;
+pub const SVC_CREATE_TRANSFER_MEMORY: u16 = 0x15;
+pub const CURRENT_PROCESS_HANDLE: u32 = 0xffff_8001;
+pub const MAX_TRANSFER_MEMORY_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_TRANSFER_MEMORY_OBJECTS: usize = 32;
 pub const SVC_CONNECT_TO_NAMED_PORT: u16 = 0x1f;
 pub const SVC_SEND_SYNC_REQUEST: u16 = 0x21;
 pub const SVC_CREATE_EVENT: u16 = 0x45;
@@ -67,6 +71,13 @@ pub enum KernelError {
     InvalidThreadStack(u64),
     InvalidThreadPriority(i32),
     UnsupportedProcessor(i32),
+    InvalidTransferMemory {
+        address: u64,
+        size: u64,
+        permissions: u64,
+    },
+    TransferMemoryLimit,
+    UnsupportedCopyHandle(u32),
 }
 
 impl fmt::Display for KernelError {
@@ -97,6 +108,18 @@ impl fmt::Display for KernelError {
             Self::InvalidThreadPriority(priority) => {
                 write!(f, "invalid guest thread priority {priority}")
             }
+            Self::InvalidTransferMemory {
+                address,
+                size,
+                permissions,
+            } => write!(
+                f,
+                "unsupported transfer memory: {address:#x}+{size:#x}, permissions {permissions:#x}"
+            ),
+            Self::TransferMemoryLimit => write!(f, "transfer-memory object limit exceeded"),
+            Self::UnsupportedCopyHandle(handle) => {
+                write!(f, "unsupported copied handle type: {handle:#x}")
+            }
             Self::UnsupportedProcessor(core) => write!(f, "unsupported guest processor {core}"),
         }
     }
@@ -119,6 +142,7 @@ pub struct IpcRecord {
     pub send_buffers: usize,
     pub receive_buffers: usize,
     pub buffer_bytes: usize,
+    pub copy_handles: usize,
 }
 
 #[derive(Debug)]
@@ -130,6 +154,8 @@ pub struct Kernel {
     ports: BTreeMap<String, Box<dyn Service>>,
     ipc_records: Vec<IpcRecord>,
     scheduler: Scheduler,
+    process: ProcessIdentity,
+    transfer_quota: Rc<Cell<usize>>,
 }
 
 impl Default for Kernel {
@@ -143,11 +169,86 @@ impl Default for Kernel {
             ports: BTreeMap::new(),
             ipc_records: Vec::new(),
             scheduler: Scheduler::new(main),
+            process: ProcessIdentity::new(),
+            transfer_quota: Rc::new(Cell::new(0)),
         }
     }
 }
 
 impl Kernel {
+    pub fn live_transfer_memory_count(&self) -> usize {
+        self.transfer_quota.get()
+    }
+    fn create_transfer_memory(
+        &mut self,
+        cpu: &mut Cpu,
+        memory: &mut AddressSpace,
+    ) -> Result<(), KernelError> {
+        let address = cpu.x[1];
+        let size = cpu.x[2];
+        let permissions = u64::from(cpu.x[3] as u32);
+        let invalid = || KernelError::InvalidTransferMemory {
+            address,
+            size,
+            permissions,
+        };
+        let size_usize = usize::try_from(size).map_err(|_| invalid())?;
+        let end = address.checked_add(size).ok_or_else(invalid)?;
+        if address % 4096 != 0
+            || size == 0
+            || size % 4096 != 0
+            || size_usize > MAX_TRANSFER_MEMORY_BYTES
+            || (address < THREAD_TLS_ARENA + MAX_THREADS as u64 * 4096 && THREAD_TLS_ARENA < end)
+        {
+            return Err(invalid());
+        }
+        let owner = match permissions {
+            0 => emulator_memory::Permissions::NONE,
+            1 => emulator_memory::Permissions::READ,
+            3 => emulator_memory::Permissions::READ_WRITE,
+            _ => return Err(invalid()),
+        };
+        if self.transfer_quota.get() >= MAX_TRANSFER_MEMORY_OBJECTS {
+            return Err(KernelError::TransferMemoryLimit);
+        }
+        self.handles
+            .check_capacity(1)
+            .map_err(KernelError::Handle)?;
+        let lease = memory
+            .lend(address, size_usize, owner)
+            .map_err(KernelError::Memory)?;
+        let object = Rc::new(TransferMemory::new(
+            self.process.clone(),
+            lease,
+            Rc::clone(&self.transfer_quota),
+        ));
+        // No handle mutation/callback occurs after capacity preflight. Remaining
+        // handle publication cannot return a recoverable error.
+        let pending = self
+            .handles
+            .stage(vec![Object::TransferMemory(object)])
+            .expect("preflighted transfer handle slot");
+        let handle = pending.ids[0];
+        self.handles.commit(pending);
+        cpu.x[0] = 0;
+        cpu.x[1] = u64::from(handle);
+        Ok(())
+    }
+    fn copied_handles(&self, ids: &[u32]) -> Result<Vec<Object>, KernelError> {
+        ids.iter()
+            .map(|&id| {
+                let object = if id == CURRENT_PROCESS_HANDLE {
+                    Object::Process(self.process.clone())
+                } else {
+                    self.handles.get(id).map_err(KernelError::Handle)?
+                };
+                match object {
+                    Object::Process(_) | Object::TransferMemory(_) => Ok(object),
+                    _ => Err(KernelError::UnsupportedCopyHandle(id)),
+                }
+            })
+            .collect()
+    }
     pub fn scheduler_stats(&self) -> SchedulerStats {
         self.scheduler.stats()
     }
@@ -284,6 +385,7 @@ impl Kernel {
                 send_buffers: 0,
                 receive_buffers: 0,
                 buffer_bytes: 0,
+                copy_handles: 0,
             });
             cpu.x[0] = 0;
             return Ok(());
@@ -295,7 +397,9 @@ impl Kernel {
                 emulator_memory::Permissions::READ_WRITE,
             )
             .map_err(KernelError::Memory)?;
-        let context = ServiceContext::new(memory, &request).map_err(KernelError::Service)?;
+        let copied = self.copied_handles(&request.copy_handles)?;
+        let context = ServiceContext::new(memory, &request, self.process.clone(), copied)
+            .map_err(KernelError::Service)?;
         context
             .validate_reply(&reply_view)
             .map_err(KernelError::Service)?;
@@ -350,6 +454,7 @@ impl Kernel {
             reply_bytes: reply.data.len(),
             send_buffers: request.send_buffers.len(),
             receive_buffers: request.receive_buffers.len(),
+            copy_handles: request.copy_handles.len(),
             buffer_bytes: request
                 .send_buffers
                 .iter()
@@ -537,6 +642,10 @@ impl Kernel {
                 };
                 Ok(KernelEvent::Continue)
             }
+            SVC_CREATE_TRANSFER_MEMORY => {
+                self.create_transfer_memory(cpu, memory)?;
+                Ok(KernelEvent::Continue)
+            }
             SVC_CLOSE_HANDLE => {
                 cpu.x[0] = if self.handles.close(cpu.x[0] as u32).is_ok() {
                     0
@@ -616,6 +725,7 @@ pub fn homebrew_config() -> Vec<u8> {
         SVC_SLEEP_THREAD,
         SVC_OUTPUT_DEBUG_STRING,
         SVC_CLOSE_HANDLE,
+        SVC_CREATE_TRANSFER_MEMORY,
         SVC_CONNECT_TO_NAMED_PORT,
         SVC_SEND_SYNC_REQUEST,
         SVC_CREATE_EVENT,

@@ -10,6 +10,7 @@ fn request(command: u32, data: &[u8], pid: Option<u64>) -> Request {
         data: data.to_vec(),
         send_buffers: Vec::new(),
         receive_buffers: Vec::new(),
+        copy_handles: Vec::new(),
     }
 }
 

@@ -60,6 +60,7 @@ impl Service for DiagnosticGpu {
         request: &Request,
         context: &ServiceContext<'_>,
     ) -> Result<ServiceReply, ServiceError> {
+        context.require_copy_handles(0)?;
         if request.command_id == 2 {
             return self.buffered(request, context);
         }

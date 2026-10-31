@@ -63,7 +63,7 @@ fn unsupported_descriptors_handles_and_context_never_parse_as_success() {
         assert!(parse_request(&bytes).is_err(), "offset {offset}={value:#x}");
     }
     let mut bytes = request(true, &[]);
-    bytes[8..12].copy_from_slice(&3_u32.to_le_bytes()); // Incoming copy handle.
+    bytes[8..12].copy_from_slice(&0x21_u32.to_le_bytes()); // Incoming move handle.
     assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
     assert_eq!(parse_request(&[0; 257]), Err(IpcError::TooLarge));
 }
@@ -191,4 +191,57 @@ fn unsupported_alias_modes_excess_counts_and_control_buffers_are_rejected() {
         bytes[..4].copy_from_slice(&first.to_le_bytes());
         assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
     }
+}
+#[test]
+fn copied_handles_precede_descriptors_and_preserve_pid_and_cmif_alignment() {
+    for pid in [false, true] {
+        let mut bytes = vec![0; 256];
+        bytes[..4].copy_from_slice(&0x0110_0004_u32.to_le_bytes());
+        bytes[4..8].copy_from_slice(&0x80000009_u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&(4_u32 | u32::from(pid)).to_le_bytes());
+        let mut at = 12;
+        if pid {
+            bytes[at..at + 8].copy_from_slice(&99_u64.to_le_bytes());
+            at += 8;
+        }
+        for handle in [0xffff8001_u32, 0x12345678] {
+            bytes[at..at + 4].copy_from_slice(&handle.to_le_bytes());
+            at += 4;
+        }
+        for address in [0x4000_u32, 0x5000] {
+            bytes[at..at + 4].copy_from_slice(&8_u32.to_le_bytes());
+            bytes[at + 4..at + 8].copy_from_slice(&address.to_le_bytes());
+            at += 12;
+        }
+        let end = at + 36;
+        let cmif = (at + 15) & !15;
+        bytes[cmif..cmif + 4].copy_from_slice(b"SFCI");
+        bytes[cmif + 8..cmif + 12].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[cmif + 16..cmif + 20].copy_from_slice(&4096_u32.to_le_bytes());
+        bytes.truncate(end);
+        let parsed = parse_request(&bytes).unwrap();
+        assert_eq!(parsed.copy_handles, [0xffff8001, 0x12345678]);
+        assert_eq!(parsed.pid, if pid { Some(99) } else { None });
+        assert_eq!(parsed.data, 4096_u32.to_le_bytes());
+        assert_eq!(parsed.send_buffers[0].address, 0x4000);
+        assert_eq!(parsed.receive_buffers[0].address, 0x5000);
+        for length in 0..bytes.len() {
+            assert!(parse_request(&bytes[..length]).is_err());
+        }
+    }
+}
+#[test]
+fn copied_handle_limits_moves_and_control_transfers_remain_explicit_errors() {
+    let mut bytes = vec![0; 64];
+    bytes[..4].copy_from_slice(&4_u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&0x80000008_u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&10_u32.to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::HandleLimit));
+    for special in [0x20_u32, 0x40, 0x10000] {
+        bytes[8..12].copy_from_slice(&special.to_le_bytes());
+        assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
+    }
+    bytes[8..12].copy_from_slice(&2_u32.to_le_bytes());
+    bytes[..4].copy_from_slice(&5_u32.to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
 }

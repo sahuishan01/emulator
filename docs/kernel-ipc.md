@@ -23,6 +23,7 @@ for the host's diagnostic evidence.
 | `0x0b` SleepThread | Zero yields; positive ns sleep using reference virtual time |
 | `0x11` SignalEvent | Set a writable event's shared signal |
 | `0x12` ClearEvent | Clear through a writable or readable event handle |
+| `0x15` CreateTransferMemory | Lend a bounded aligned RW range; retain source backing and restrict owner rights until final release |
 | `0x16` CloseHandle | Release one handle; aliases retain their object |
 | `0x17` ResetSignal | Clear through a readable handle; unsignaled returns invalid state |
 | `0x18` WaitSynchronization | Validate up to 64 event/thread handles; immediate results, polling or blocking waits with virtual timeouts |
@@ -58,7 +59,10 @@ identity with its owned guest PID 1; a guest cannot supply a host PID.
 Normal A/B map-alias descriptors now grant read-only inputs/write-only outputs:
 up to four descriptors, 8 MiB logical bytes and 4096 spans, with complete range/
 permission checks and TLS reply alias rejection. See [HIPC buffers](hipc-buffers.md).
-X/C static and W exchange buffers, non-normal modes, incoming copy/move handles,
+Up to four incoming copy handles now resolve current-process and transfer-memory
+objects before service preparation. Sender handles remain present. See
+[transfer memory/NV initialization](nv-initialization.md). X/C static and W
+exchange buffers, non-normal modes, incoming moves/other copied object types,
 domains, context variants, TIPC and other layouts remain explicit errors. Replies are complete
 zero-initialized 256-byte buffers with SFCO, result/data and up to 15 outgoing
 moved session handles. Unaligned/oversized payloads are rejected.
@@ -87,8 +91,10 @@ RunDmaBatch (0) prepares actual GPFIFO/DMA commands from granted guest memory;
 ReadCompleted (1) returns committed calls. BufferedDma (2) uses three A/one B
 descriptors and GPU addresses, preserving descriptor rights. Each GetService
 creates fresh state.
-These protocols are separate from Nintendo/NV device services. Unsupported
-operations never fabricate success.
+The emu:* protocols are separate from device services. nvdrv Initialize (3) now
+adopts a validated process-owned transfer arena through two copied handles;
+other NV/device commands remain explicit faults. Unsupported operations never
+fabricate success.
 
 ## Evidence
 
@@ -105,6 +111,7 @@ Run each with `cargo run --offline -p emulator-cli -- run-nro <file>`.
 | `cancellation.nro` | Deferred and active cancellation, coalescing, preserved indices, event state and readable clear | 106 | 0 |
 | `gpu-dma.nro` | Discover emu:gpu, submit actual commands, verify two dependent copies/counters and close sessions | 338 | 4 |
 | `gpu-buffers.nro` | Grant three A/one B descriptors, submit DMA, verify returned bytes/counters and close sessions | 327 | 4 |
+| `nv-initialize.nro` | Lend transfer memory, Initialize nvdrv with copied objects, retain through sender/receiver closes, verify restored CPU rights | 317 | 4 |
 
 Tests also cover truncated wire prefixes, PID replacement, malformed layouts,
 reply capacity, read-only output, rollback after oversized replies, atomic

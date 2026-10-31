@@ -1,10 +1,10 @@
 # Android original-engine checks
 
-Version 0.10.0-dev embeds the original Rust engine into the existing Android
+Version 0.11.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
-The app's worker calls Rust once to execute eight original NRO fixtures
+The app's worker calls Rust once to execute nine original NRO fixtures
 described in [kernel-ipc.md](kernel-ipc.md), separately runs three actual GPU-core
 memory/command cases, including original DMA execution, then calls the unchanged six-test
 C++ Vulkan suite. The Rust checks validate actual debug output, instruction/IPC
@@ -63,11 +63,13 @@ validate the Android C ABI or either Android runtime architecture.
 
 The package/application ID stays `com.algosculptor.emulator.gpulab` so existing
 installations update in place. Select **Run engine and GPU checks**, then
-**Export report**. Schema 3/workload 10 separates `engine`, `gpuCore` and `gpu`,
+**Export report**. Schema 3/workload 11 separates `engine`, `gpuCore` and `gpu`,
 with combined `allPassed` requiring all three. The embedded Vulkan suite retains
 its own workload version 3. Engine reports record host/guest architecture,
-eight per-case outcomes, instruction/IPC counts, output, handle cleanup and
-thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 5
+nine per-case outcomes, instruction/IPC counts, output, handle cleanup and
+thread/switch/wait/timeout/cancellation/virtual-time counters. Engine suite 6
+adds copyHandles and the transfer-memory/NV initialization fixture (317
+instructions/four IPC calls/two copied handles/restored CPU rights). Suite 5
 adds successful IPC sendBuffers/receiveBuffers/bufferBytes and a buffered DMA
 fixture (327 instructions/four IPC calls/three A/one B/80 bytes). Earlier suite 4
 added inline guest DMA and suite 3 cancellation. Both DMA guests discover
@@ -91,7 +93,9 @@ launches, 16 copied bytes and zero remaining backing/pending work. That is the
 checkpoint verified in the [0.8.0-dev phone report](validation/g720-dma.md).
 Guest DMA submission also passes in the
 [0.9.0-dev phone report](validation/g720-guest-dma.md). The new phone checkpoint
-is engine suite 5's eighth NRO; see [HIPC buffers](hipc-buffers.md).
+was engine suite 5's buffered NRO, which passes in the
+[0.10.0-dev report](validation/g720-hipc-buffers.md). The new phone checkpoint is
+engine suite 6's ninth NRO; see [NV initialization](nv-initialization.md).
 
 Broader GPU method execution, shader translation, guest-frame presentation and
 commercial startup remain open. Pokémon Legends: Z-A is a later target.

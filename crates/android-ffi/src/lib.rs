@@ -39,6 +39,7 @@ struct Case {
     scheduler: (usize, u64, u64), // threads, blocking waits, timeouts
     cancellations: u64,
     ipc_buffers: (usize, usize, usize),
+    copy_handles: usize,
 }
 fn reference_checks() -> String {
     let cases = [
@@ -52,6 +53,7 @@ fn reference_checks() -> String {
             scheduler: (1, 0, 0),
             cancellations: 0,
             ipc_buffers: (0, 0, 0),
+            copy_handles: 0,
         },
         Case {
             name: "guest-service-manager-ipc",
@@ -63,6 +65,7 @@ fn reference_checks() -> String {
             scheduler: (1, 0, 0),
             cancellations: 0,
             ipc_buffers: (0, 0, 0),
+            copy_handles: 0,
         },
         Case {
             name: "guest-cloned-session-lifetime",
@@ -74,6 +77,7 @@ fn reference_checks() -> String {
             scheduler: (1, 0, 0),
             cancellations: 0,
             ipc_buffers: (0, 0, 0),
+            copy_handles: 0,
         },
         Case {
             name: "guest-event-signaling-polling",
@@ -85,6 +89,7 @@ fn reference_checks() -> String {
             scheduler: (1, 0, 0),
             cancellations: 0,
             ipc_buffers: (0, 0, 0),
+            copy_handles: 0,
         },
         Case {
             name: "guest-thread-scheduling-and-blocking-waits",
@@ -96,6 +101,7 @@ fn reference_checks() -> String {
             scheduler: (2, 3, 1),
             cancellations: 0,
             ipc_buffers: (0, 0, 0),
+            copy_handles: 0,
         },
         Case {
             name: "guest-wait-cancellation",
@@ -107,6 +113,7 @@ fn reference_checks() -> String {
             scheduler: (2, 2, 0),
             cancellations: 2,
             ipc_buffers: (0, 0, 0),
+            copy_handles: 0,
         },
         Case {
             name: "guest-gpu-dma-submission",
@@ -118,6 +125,7 @@ fn reference_checks() -> String {
             scheduler: (1, 0, 0),
             cancellations: 0,
             ipc_buffers: (0, 0, 0),
+            copy_handles: 0,
         },
         Case {
             name: "guest-hipc-buffered-dma",
@@ -129,6 +137,19 @@ fn reference_checks() -> String {
             scheduler: (1, 0, 0),
             cancellations: 0,
             ipc_buffers: (3, 1, 80),
+            copy_handles: 0,
+        },
+        Case {
+            name: "guest-nv-transfer-memory-lifetime",
+            image: include_bytes!("../../../examples/homebrew/nv-initialize.nro"),
+            message: "Guest NV initialized with copied handles; memory restored.\n",
+            instructions: 317,
+            ipc_calls: 4,
+            memory: Some((0x2000, 42)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (0, 0, 0),
+            copy_handles: 2,
         },
     ];
     let mut all_passed = true;
@@ -136,6 +157,7 @@ fn reference_checks() -> String {
     for case in cases {
         let mut instructions = 0;
         let mut ipc_calls = 0;
+        let mut copies = 0;
         let mut buffers = (0, 0, 0);
         let mut handles = 0;
         let mut debug = String::new();
@@ -146,6 +168,7 @@ fn reference_checks() -> String {
             instructions = session.instructions();
             ipc_calls = session.kernel().ipc_records().len();
             for record in session.kernel().ipc_records() {
+                copies += record.copy_handles;
                 buffers.0 += record.send_buffers;
                 buffers.1 += record.receive_buffers;
                 buffers.2 += record.buffer_bytes;
@@ -167,6 +190,9 @@ fn reference_checks() -> String {
                 || instructions != case.instructions
                 || ipc_calls != case.ipc_calls
                 || buffers != case.ipc_buffers
+                || copies != case.copy_handles
+                || session.kernel().live_transfer_memory_count() != 0
+                || session.memory().lent_bytes() != 0
                 || handles != 0
                 || session.debug_records() != [case.message.as_bytes().to_vec()]
                 || (stats.threads_created, stats.blocking_waits, stats.timeouts) != case.scheduler
@@ -222,10 +248,10 @@ fn reference_checks() -> String {
         })();
         let passed = check.is_ok();
         all_passed &= passed;
-        tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
-            quote(case.name),passed,instructions,ipc_calls,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
+        tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
+            quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":5,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":6,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -277,7 +303,7 @@ mod tests {
         assert_eq!(result.abi_version, 1);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 8);
+        assert_eq!(text.matches("\"passed\":true").count(), 9);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

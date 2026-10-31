@@ -3,8 +3,9 @@
 Version 0.9.0-dev connects an original A64 NRO to the original DMA executor via
 SVC, HIPC/CMIF and `emu:gpu`. This emulator-owned protocol is deliberately
 separate from nvdrv. Version 0.10.0-dev adds normal
-[A/B buffer grants](hipc-buffers.md) and buffered command 2. Process/transfer-memory handles,
-object registration/ioctls, shaders and rendering remain open. No commercial
+[A/B buffer grants](hipc-buffers.md) and buffered command 2. Version 0.11.0-dev
+adds [transfer-memory/copied-handle NV initialization](nv-initialization.md).
+NV device objects/ioctls, shaders and rendering remain open. No commercial
 program is expected to use this diagnostic service.
 
 ## Protocol and bounds
@@ -80,7 +81,7 @@ late unsupported commands, range/permission/budget failures, TLS aliases, and
 state/counter rollback. Kernel tests attach actual prepared writes to oversized
 reply and handle-exhaustion cases, proving those failures do not publish effects.
 
-Next: extend buffer variants and implement kernel-object foundations required by the
+Next: extend buffer/handle variants and implement device/ioctl objects required by the
 public [NV service interface](https://switchbrew.org/wiki/NV_services), then
 route the supported standard ioctl/object subset to this executor. The
 original guest-program-to-image/shader milestone remains open.

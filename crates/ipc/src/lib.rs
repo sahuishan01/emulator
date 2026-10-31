@@ -1,10 +1,11 @@
 //! Original bounded HIPC/CMIF v0 with normal A/B map-alias buffer descriptors.
-//! Static/exchange buffers, domains and incoming handles remain unsupported.
+//! Static/exchange buffers, domains and incoming move handles remain unsupported.
 
 use std::fmt;
 
 pub const IPC_BUFFER_SIZE: usize = 0x100;
 pub const MAX_ALIAS_BUFFERS: usize = 4;
+pub const MAX_COPY_HANDLES: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IpcError {
@@ -17,6 +18,7 @@ pub enum IpcError {
     UnsupportedContext,
     UnalignedPayload,
     BufferLimit,
+    HandleLimit,
     UnsupportedBufferMode(u8),
 }
 impl fmt::Display for IpcError {
@@ -49,6 +51,7 @@ pub struct Request {
     pub data: Vec<u8>,
     pub send_buffers: Vec<BufferDescriptor>,
     pub receive_buffers: Vec<BufferDescriptor>,
+    pub copy_handles: Vec<u32>,
 }
 
 fn word(input: &[u8], offset: usize) -> Result<u32, IpcError> {
@@ -79,13 +82,21 @@ pub fn parse_request(input: &[u8]) -> Result<Request, IpcError> {
         return Err(IpcError::UnsupportedLayout);
     }
     let mut raw_start = 8;
+    let mut copy_handles = Vec::new();
     let pid = if second >> 31 != 0 {
         let special = word(input, raw_start)?;
         raw_start += 4;
-        if special & !1 != 0 {
+        if special & !0x1f != 0 {
             return Err(IpcError::UnsupportedLayout);
         }
-        if special == 0 {
+        let copies = ((special >> 1) & 15) as usize;
+        if copies > MAX_COPY_HANDLES {
+            return Err(IpcError::HandleLimit);
+        }
+        if kind == CommandType::Control && copies != 0 {
+            return Err(IpcError::UnsupportedLayout);
+        }
+        let pid = if special & 1 == 0 {
             None
         } else {
             let bytes = input
@@ -93,7 +104,12 @@ pub fn parse_request(input: &[u8]) -> Result<Request, IpcError> {
                 .ok_or(IpcError::Truncated)?;
             raw_start += 8;
             Some(u64::from_le_bytes(bytes.try_into().expect("eight bytes")))
+        };
+        for _ in 0..copies {
+            copy_handles.push(word(input, raw_start)?);
+            raw_start += 4;
         }
+        pid
     } else {
         None
     };
@@ -154,6 +170,7 @@ pub fn parse_request(input: &[u8]) -> Result<Request, IpcError> {
         data: input[payload_start..payload_end].to_vec(),
         send_buffers,
         receive_buffers,
+        copy_handles,
     })
 }
 

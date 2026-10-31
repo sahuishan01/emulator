@@ -1,6 +1,8 @@
 //! Guest virtual memory for the initial single-threaded interpreter.
 
+mod loans;
 mod shared;
+pub use loans::MemoryLease;
 use shared::{AllocationBudget, BackingSlice};
 pub use shared::{BackingId, BackingRange, MemoryView};
 use std::{cell::Cell, fmt, rc::Rc};
@@ -63,6 +65,8 @@ impl Permissions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemoryError {
     EmptyMapping,
+    InvalidLoan,
+    LoanConflict,
     AddressOverflow,
     OverlappingMapping,
     Unmapped {
@@ -95,6 +99,11 @@ pub enum MemoryError {
 impl fmt::Display for MemoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidLoan => write!(f, "unsupported guest memory loan rights or backing"),
+            Self::LoanConflict => write!(
+                f,
+                "guest memory loan conflicts with a loan, alias or outstanding view"
+            ),
             Self::EmptyMapping => write!(f, "guest memory mapping must not be empty"),
             Self::AddressOverflow => write!(f, "guest memory address range overflows"),
             Self::OverlappingMapping => write!(f, "guest memory mappings overlap"),
@@ -133,6 +142,20 @@ struct Region {
     end: u64,
     bytes: Option<BackingSlice>,
     permissions: Permissions,
+    loan: Option<std::rc::Weak<loans::LoanState>>,
+}
+impl Region {
+    fn loaned(&self) -> bool {
+        self.loan
+            .as_ref()
+            .is_some_and(|loan| loan.strong_count() != 0)
+    }
+    fn effective_permissions(&self) -> Permissions {
+        self.loan
+            .as_ref()
+            .and_then(std::rc::Weak::upgrade)
+            .map_or(self.permissions, |loan| loan.permissions)
+    }
 }
 
 #[derive(Debug)]
@@ -155,6 +178,7 @@ pub struct MappingInfo {
     pub end: u64,
     pub permissions: Permissions,
     pub committed: bool,
+    pub borrowed: bool,
 }
 
 impl Default for AddressSpace {
@@ -189,7 +213,8 @@ impl AddressSpace {
             .map(|region| MappingInfo {
                 start: region.start,
                 end: region.end,
-                permissions: region.permissions,
+                permissions: region.effective_permissions(),
+                borrowed: region.loaned(),
                 committed: region.bytes.is_some(),
             })
     }
@@ -214,7 +239,7 @@ impl AddressSpace {
                 return Err(MemoryError::NotCommitted { address });
             }
             for access in [Access::Read, Access::Write, Access::Execute] {
-                if permissions.allows(access) && !region.permissions.allows(access) {
+                if permissions.allows(access) && !region.effective_permissions().allows(access) {
                     return Err(MemoryError::PermissionDenied {
                         address: region.start.max(address),
                         access,
@@ -259,6 +284,7 @@ impl AddressSpace {
                 end,
                 bytes: Some(span.clone()),
                 permissions,
+                loan: None,
             });
             next = end;
         }
@@ -293,12 +319,25 @@ impl AddressSpace {
                 end,
                 bytes: Some(BackingSlice::new(mapping.bytes, Rc::clone(&self.budget))?),
                 permissions: mapping.permissions,
+                loan: None,
             });
         }
         self.append_regions(pending)
     }
 
     fn append_regions(&mut self, pending: Vec<Region>) -> Result<(), MemoryError> {
+        for new in &pending {
+            if let Some(a) = &new.bytes {
+                if self.regions.iter().any(|r| {
+                    r.loaned()
+                        && r.bytes
+                            .as_ref()
+                            .is_some_and(|b| loans::overlaps(a.range(), b.range()))
+                }) {
+                    return Err(MemoryError::LoanConflict);
+                }
+            }
+        }
         if self.regions.len() + pending.len() > MAX_MAPPINGS {
             return Err(MemoryError::TooManyMappings);
         }
@@ -342,6 +381,7 @@ impl AddressSpace {
             end,
             bytes: None,
             permissions: Permissions::NONE,
+            loan: None,
         }])
     }
 
@@ -377,6 +417,7 @@ impl AddressSpace {
                 end,
                 bytes: Some(BackingSlice::new(bytes, Rc::clone(&self.budget))?),
                 permissions,
+                loan: None,
             }),
             None,
         )
@@ -419,6 +460,13 @@ impl AddressSpace {
         replacement: Option<Region>,
         protect: Option<Permissions>,
     ) -> Result<(), MemoryError> {
+        if self
+            .regions
+            .iter()
+            .any(|r| r.start < end && start < r.end && r.loaned())
+        {
+            return Err(MemoryError::LoanConflict);
+        }
         let mut result = Vec::new();
         result
             .try_reserve(self.regions.len() + 3)
@@ -487,7 +535,7 @@ impl AddressSpace {
                 break;
             }
             if let Some(access) = access {
-                if !region.permissions.allows(access) {
+                if !region.effective_permissions().allows(access) {
                     return Err(MemoryError::PermissionDenied {
                         address: cursor,
                         access,
@@ -614,6 +662,7 @@ fn fragment(
         end,
         bytes,
         permissions,
+        loan: region.loan.clone(),
     })
 }
 

@@ -92,7 +92,10 @@ impl BackingSlice {
         let start = self.offset + offset;
         self.backing.bytes.borrow_mut()[start..start + input.len()].copy_from_slice(input);
     }
-    fn range(&self) -> BackingRange {
+    pub(crate) fn owners(&self) -> usize {
+        Rc::strong_count(&self.backing)
+    }
+    pub(crate) fn range(&self) -> BackingRange {
         BackingRange {
             id: self.backing.id,
             offset: self.offset,

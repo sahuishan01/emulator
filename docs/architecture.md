@@ -7,7 +7,7 @@ acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
 event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
-Rust engine for eight original guest checks
+Rust engine for nine original guest checks
 alongside three GPU memory/command reference cases and the Vulkan laboratory. The user
 supplied a physical G720 0.3.0-dev report passing all six current workloads,
 including BC1 conversion, sampling and updates. Guest graphics and Android
@@ -118,11 +118,11 @@ crates/
   android-ffi/        implemented reference-program C ABI; gameplay API planned
 android/
   app/                planned user application
-  gpu-lab/            eight guest, three GPU-core and six Vulkan checks; presentation planned
+  gpu-lab/            nine guest, three GPU-core and six Vulkan checks; presentation planned
 native/
   gpu-lab/            implemented host-only C++ Vulkan workload runner
 examples/
-  homebrew/           eight implemented original static NRO fixtures
+  homebrew/           nine implemented original static NRO fixtures
 tests/
   gpu-workloads/      planned command, shader and reference-image tests
 ```
