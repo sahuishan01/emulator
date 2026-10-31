@@ -1,6 +1,8 @@
 //! Original, deliberately small service implementations for owned homebrew.
+mod gpu;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
+pub use gpu::DiagnosticGpu;
 
 fn payload(request: &Request, length: usize) -> Result<(), ServiceError> {
     if request.data.len() == length {
@@ -44,11 +46,13 @@ impl Service for ServiceManager {
                     .as_slice()
                     .try_into()
                     .expect("validated payload");
-                if &name != b"emu:test" {
-                    return Err(ServiceError::UnsupportedService(name));
-                }
+                let object: Box<dyn Service> = match &name {
+                    b"emu:test" => Box::new(DiagnosticCounter::default()),
+                    b"emu:gpu\0" => Box::new(DiagnosticGpu::default()),
+                    _ => return Err(ServiceError::UnsupportedService(name)),
+                };
                 Ok(ServiceReply {
-                    moved_objects: vec![Box::new(DiagnosticCounter::default())],
+                    moved_objects: vec![object],
                     ..ServiceReply::default()
                 })
             }

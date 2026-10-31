@@ -1,17 +1,50 @@
 use emulator_a64::Cpu;
 use emulator_ipc::{IpcError, Request};
 use emulator_kernel::{
-    service::{Service, ServiceError, ServiceReply},
+    service::{PreparedServiceEffect, Service, ServiceContext, ServiceError, ServiceReply},
     HandleError, Kernel, KernelError, RESULT_INVALID_HANDLE, SVC_CLOSE_HANDLE,
     SVC_CONNECT_TO_NAMED_PORT, SVC_SEND_SYNC_REQUEST,
 };
-use emulator_memory::{AddressSpace, Permissions};
+use emulator_memory::{AddressSpace, BackingRange, MemoryView, Permissions};
 
 #[derive(Clone, Debug, Default)]
 struct Probe {
     value: u64,
 }
+#[derive(Debug)]
+struct WriteEffect {
+    view: MemoryView,
+    ranges: Vec<BackingRange>,
+    value: u64,
+}
+impl PreparedServiceEffect for WriteEffect {
+    fn write_ranges(&self) -> &[BackingRange] {
+        &self.ranges
+    }
+    fn commit(self: Box<Self>) {
+        self.view
+            .write(0, &self.value.to_le_bytes())
+            .expect("prepared test pin");
+    }
+}
 impl Service for Probe {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        let mut reply = self.dispatch(request)?;
+        if matches!(request.command_id, 0 | 2 | 3) {
+            let view = context.pin(0x3000, 8, Permissions::READ_WRITE)?;
+            let ranges = view.backing_ranges().collect();
+            reply.effect = Some(Box::new(WriteEffect {
+                view,
+                ranges,
+                value: self.value,
+            }));
+        }
+        Ok(reply)
+    }
     fn clone_for_request(&self) -> Box<dyn Service> {
         Box::new(self.clone())
     }
@@ -60,6 +93,9 @@ fn setup() -> (Kernel, Cpu, AddressSpace, u32) {
         .unwrap();
     memory
         .map(0x2000, vec![0; 256], Permissions::READ_WRITE)
+        .unwrap();
+    memory
+        .map(0x3000, vec![0x55; 8], Permissions::READ_WRITE)
         .unwrap();
     let mut kernel = Kernel::default();
     kernel
@@ -151,6 +187,7 @@ fn oversized_reply_rolls_back_service_state_and_buffer() {
     m.read(0x2000, &mut actual).unwrap();
     assert_eq!(actual, packet(4, 2, false));
     assert_eq!(k.live_handle_count(), 2);
+    assert_eq!(m.read_u64(0x3000).unwrap(), 0x5555555555555555);
     call(&mut k, &mut cpu, &mut m, handle, 4, 1).unwrap();
     assert_eq!(m.read_u64(0x2020).unwrap(), 0);
 }
@@ -173,6 +210,7 @@ fn handle_exhaustion_is_atomic_and_closed_handles_are_not_reused() {
     m.read(0x2000, &mut actual).unwrap();
     assert_eq!(actual, packet(4, 3, false));
     assert_eq!(k.live_handle_count(), 256);
+    assert_eq!(m.read_u64(0x3000).unwrap(), 0x5555555555555555);
     cpu.x[0] = u64::from(last);
     k.dispatch(SVC_CLOSE_HANDLE, &mut cpu, &mut m).unwrap();
     let before = cpu.clone();
@@ -209,4 +247,13 @@ fn sender_pid_is_replaced_and_unsupported_commands_do_not_succeed() {
         call(&mut k, &mut cpu, &mut m, handle, 5, 999),
         Err(KernelError::UnsupportedControl(999))
     ));
+}
+
+#[test]
+fn valid_reply_commits_the_prepared_effect_and_service_state_together() {
+    let (mut k, mut cpu, mut m, handle) = setup();
+    call(&mut k, &mut cpu, &mut m, handle, 4, 0).unwrap();
+    assert_eq!(m.read_u64(0x3000).unwrap(), 1);
+    call(&mut k, &mut cpu, &mut m, handle, 4, 1).unwrap();
+    assert_eq!(m.read_u64(0x2020).unwrap(), 1);
 }

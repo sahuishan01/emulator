@@ -59,7 +59,7 @@ Android adds a separate `gpuCore` group with ownership cases and, in suite 2,
 an original DMA method-execution case.
 The alias case releases all backing. The queue case captures two batches/four
 writes, retains the first across address reuse and ends with zero resident
-bytes/pending work. These are distinct from six guest NROs and six host Vulkan
+bytes/pending work. These are distinct from seven guest NROs and six host Vulkan
 cases; they do not establish guest graphics.
 
 Next: NV service/ioctl/object registration, broader class/method execution,

@@ -101,6 +101,16 @@ fn reference_checks() -> String {
             scheduler: (2, 2, 0),
             cancellations: 2,
         },
+        Case {
+            name: "guest-gpu-dma-submission",
+            image: include_bytes!("../../../examples/homebrew/gpu-dma.nro"),
+            message: "Guest DMA copied 16 bytes; dependent copies verified.\n",
+            instructions: 338,
+            ipc_calls: 4,
+            memory: Some((0x2030, 42)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -189,11 +199,11 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":3,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":4,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
-/// The sole exported symbol. C ABI layout is mirrored/checked in jni.cpp.
+/// C ABI layout is mirrored/checked in jni.cpp.
 /// Panics never unwind through C; output has no pointers and needs no free call.
 #[no_mangle]
 pub extern "C" fn emulator_run_reference_guests() -> EngineReport {
@@ -241,7 +251,7 @@ mod tests {
         assert_eq!(result.abi_version, 1);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 6);
+        assert_eq!(text.matches("\"passed\":true").count(), 7);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

@@ -1,7 +1,7 @@
 //! Original synchronous DMA reference executor. Register addresses/fields follow
 //! NVIDIA's public MAXWELL_DMA_COPY_A interface; no vendor implementation is used.
 use crate::{GpuAddressSpace, GpuMemoryError, GpuMemoryRange, GpuVa, MethodWrite};
-use emulator_memory::Access;
+use emulator_memory::{Access, BackingRange};
 
 pub const MAXWELL_DMA_COPY_A: u32 = 0xb0b5;
 /// NON_PIPELINED transfer, pitch source/destination, virtual addresses, one line.
@@ -63,17 +63,27 @@ struct DmaRegisters {
 pub(crate) struct MethodState {
     channels: [Option<DmaRegisters>; 8],
 }
+#[derive(Debug)]
 struct Copy {
     source: GpuMemoryRange,
     target: GpuMemoryRange,
     buffer: Vec<u8>,
 }
+#[derive(Debug)]
 pub(crate) struct PreparedBatch {
     state: MethodState,
     copies: Vec<Copy>,
     stats: ExecutionStats,
 }
 impl PreparedBatch {
+    pub(crate) fn stats(&self) -> ExecutionStats {
+        self.stats
+    }
+    pub(crate) fn write_ranges(&self) -> impl Iterator<Item = BackingRange> + '_ {
+        self.copies
+            .iter()
+            .flat_map(|copy| copy.target.backing_ranges())
+    }
     /// All fallible validation/allocation finishes before any memory changes.
     /// Pins hold immutable permissions/lengths; the executor is single threaded,
     /// and no callbacks or borrowed storage escape. Exact-sized accesses below

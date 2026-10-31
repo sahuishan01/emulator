@@ -26,7 +26,8 @@ requested force-stop. Only emulator-5580 was used and it was shut down afterward
 Raw reports, screenshots, logs, APKs and QA helpers remain ignored.
 
 The [0.7.0-dev phone report](g720-gpu-ownership.md) verifies prior ownership and
-other cases on ARM64/G720. This newer DMA case needs its own phone report.
+other cases on ARM64/G720. The direct DMA case also passes in the
+[0.8.0-dev physical report](g720-dma.md).
 The copy path is a synchronous CPU reference executor, independent of host
 Vulkan; it is not an NV-service submission from an NRO or guest rendering.
 Object registration/ioctls, shaders, presentation, console timing/performance

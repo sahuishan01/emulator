@@ -63,21 +63,27 @@ moved session handles. Unaligned/oversized payloads are rejected.
 A normal request runs on an isolated service snapshot. Before publishing any
 mutation, the kernel checks guest reply write access, output bounds and handle
 capacity. After writing the complete reply it commits handles and the candidate
-service state. The current executor is single threaded, with no callbacks or
-mapping changes during this transaction. Future services must honor the
-`clone_for_request` contract and isolate mutable request state.
+service state. Services may return a fully prepared memory effect; the kernel
+validates its declared backing spans against TLS reply aliases, stages handles
+and encodes the reply before committing any effect. Oversized replies and
+handle exhaustion cancel prepared writes. Trace storage is reserved first.
+The executor is single threaded, with no callbacks or mapping changes during
+publication. Services must honor `clone_for_request` and prepared-effect
+contracts; see [the guest GPU bridge](guest-gpu-bridge.md).
 
 CMIF control command 2 (`CloneCurrentObject`) publishes another handle to the
 same session identity. Requests through either handle update shared service
 state; closing the original does not destroy the clone's state. This is
 separate from cloning a service snapshot for transactional request handling.
 
-`crates/services` implements only SM Initialize (command 0, sender identity and
+`crates/services` implements SM Initialize (command 0, sender identity and
 8-byte payload required) and GetService (command 1, exactly 8 name bytes).
-The only registered service is our emulator-owned `emu:test`: Add (0) checks
-u64 overflow and returns the new counter; Read (1) returns its value. Each
-GetService creates a fresh counter. This is a diagnostic service, not a stub
-for a Nintendo device service. Unsupported operations never fabricate success.
+Registered services are emulator-owned diagnostics: `emu:test` Add (0) checks
+u64 overflow and returns the counter; Read (1) returns its value. `emu:gpu`
+RunDmaBatch (0) prepares actual GPFIFO/DMA commands from granted guest memory;
+ReadCompleted (1) returns committed calls. Each GetService creates fresh state.
+These protocols are separate from Nintendo/NV device services. Unsupported
+operations never fabricate success.
 
 ## Evidence
 
@@ -92,6 +98,7 @@ Run each with `cargo run --offline -p emulator-cli -- run-nro <file>`.
 | `events.nro` | Signaling, repeated polls, reset/clear, capability/close errors; seven verified outcomes | 87 | 0 |
 | `threads.nro` | Separate contexts/TLS, sleeping child, blocking event wait, join and finite timeout | 97 | 0 |
 | `cancellation.nro` | Deferred and active cancellation, coalescing, preserved indices, event state and readable clear | 106 | 0 |
+| `gpu-dma.nro` | Discover emu:gpu, submit actual commands, verify two dependent copies/counters and close sessions | 338 | 4 |
 
 Tests also cover truncated wire prefixes, PID replacement, malformed layouts,
 reply capacity, read-only output, rollback after oversized replies, atomic

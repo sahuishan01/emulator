@@ -13,7 +13,7 @@ pub use scheduler::{
     ScheduleOutcome, SchedulerError, SchedulerStats, MAX_THREADS, THREAD_QUANTUM, THREAD_TLS_ARENA,
 };
 use scheduler::{Scheduler, WaitTarget};
-use service::{Service, ServiceError};
+use service::{Service, ServiceContext, ServiceError};
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -242,6 +242,9 @@ impl Kernel {
         if self.ipc_records.len() >= 4096 {
             return Err(KernelError::IpcTraceLimit);
         }
+        self.ipc_records
+            .try_reserve(1)
+            .map_err(|_| KernelError::IpcTraceLimit)?;
         let mut input = [0; IPC_BUFFER_SIZE];
         memory
             .read(cpu.tpidrro_el0, &mut input)
@@ -280,7 +283,32 @@ impl Kernel {
             return Ok(());
         }
         let mut candidate = service.borrow().clone_for_request();
-        let reply = candidate.dispatch(&request).map_err(KernelError::Service)?;
+        let reply = candidate
+            .prepare(&request, &ServiceContext::new(memory))
+            .map_err(KernelError::Service)?;
+        let reply_view = memory
+            .pin(
+                cpu.tpidrro_el0,
+                IPC_BUFFER_SIZE,
+                emulator_memory::Permissions::READ_WRITE,
+            )
+            .map_err(KernelError::Memory)?;
+        if let Some(effect) = &reply.effect {
+            let writes = effect.write_ranges();
+            if writes.len() > 4096
+                || writes.iter().any(|a| {
+                    a.length == 0
+                        || a.offset.checked_add(a.length).is_none()
+                        || reply_view.backing_ranges().any(|b| {
+                            a.id == b.id
+                                && a.offset < b.offset + b.length
+                                && b.offset < a.offset + a.length
+                        })
+                })
+            {
+                return Err(KernelError::Service(ServiceError::InvalidEffect));
+            }
+        }
         let pending = self
             .handles
             .stage(
@@ -293,11 +321,15 @@ impl Kernel {
             .map_err(KernelError::Handle)?;
         let encoded =
             encode_reply(reply.result, &reply.data, &pending.ids).map_err(KernelError::Ipc)?;
-        // No callbacks or concurrent mapping changes occur between preflight and
-        // publication. Everything fallible is checked before state/handle commit.
-        memory
-            .write(cpu.tpidrro_el0, &encoded)
-            .map_err(KernelError::Memory)?;
+        // All validation, encoding and handle staging precede effects. Pins are
+        // stable and cannot alias reply writes; the single executor has no
+        // callbacks or mapping changes during this infallible publication phase.
+        if let Some(effect) = reply.effect {
+            effect.commit();
+        }
+        reply_view
+            .write(0, &encoded)
+            .expect("prepared IPC reply pin");
         self.handles.commit(pending);
         *service.borrow_mut() = candidate;
         self.ipc_records.push(IpcRecord {

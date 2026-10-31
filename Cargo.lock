@@ -63,8 +63,11 @@ version = "0.1.0"
 name = "emulator-services"
 version = "0.1.0"
 dependencies = [
+ "emulator-a64",
+ "emulator-gpu",
  "emulator-ipc",
  "emulator-kernel",
+ "emulator-memory",
 ]
 
 [[package]]

@@ -302,3 +302,36 @@ fn limits_fifo_and_address_space_ownership_prevent_execution() {
     assert_eq!(rig.execute(first).unwrap().copy_launches, 2);
     rig.execute(second).unwrap();
 }
+#[test]
+fn owned_preparation_can_cancel_or_commit_once_without_early_writes() {
+    let mut rig = Rig::new();
+    let id = rig.submit(&copy(0, DATA, DATA + 16, 8));
+    let prepared = rig
+        .queue
+        .prepare_front(&rig.gpu, id, ExecutionLimits::default())
+        .unwrap();
+    let mut before = [0; 8];
+    rig.cpu.read(0x3010, &mut before).unwrap();
+    assert_eq!(before, [16, 17, 18, 19, 20, 21, 22, 23]);
+    assert_eq!(prepared.stats().copied_bytes, 8);
+    assert_eq!(prepared.write_ranges().map(|r| r.length).sum::<usize>(), 8);
+    drop(prepared);
+    rig.cpu.read(0x3010, &mut before).unwrap();
+    assert_eq!(before, [16, 17, 18, 19, 20, 21, 22, 23]);
+    let mut rig = Rig::new();
+    let id = rig.submit(&copy(0, DATA, DATA + 16, 8));
+    let prepared = rig
+        .queue
+        .prepare_front(&rig.gpu, id, ExecutionLimits::default())
+        .unwrap();
+    rig.cpu.write(0x3000, &[55; 8]).unwrap();
+    let (mut queue, stats) = prepared.commit();
+    assert_eq!(stats.copied_bytes, 8);
+    assert_eq!(queue.stats(), QueueStats::default());
+    assert_eq!(
+        queue.execute_front(&rig.gpu, id, ExecutionLimits::default()),
+        Err(ExecutionError::NotFront)
+    );
+    rig.cpu.read(0x3010, &mut before).unwrap();
+    assert_eq!(before, [55; 8]);
+}

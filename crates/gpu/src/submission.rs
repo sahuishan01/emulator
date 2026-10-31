@@ -75,6 +75,28 @@ impl Submission {
         self.sources.iter().flat_map(|s| s.backing_ranges())
     }
 }
+/// An owned, fully validated batch. Dropping cancels without side effects;
+/// commit executes exactly once and returns the queue with its updated state.
+#[derive(Debug)]
+pub struct PreparedSubmission {
+    queue: SubmissionQueue,
+    batch: crate::methods::PreparedBatch,
+}
+impl PreparedSubmission {
+    pub fn stats(&self) -> crate::ExecutionStats {
+        self.batch.stats()
+    }
+    pub fn write_ranges(&self) -> impl Iterator<Item = BackingRange> + '_ {
+        self.batch.write_ranges()
+    }
+    pub fn commit(mut self) -> (SubmissionQueue, crate::ExecutionStats) {
+        let (state, stats) = self.batch.commit();
+        self.queue.methods = state;
+        self.queue.pending.pop_front();
+        (self.queue, stats)
+    }
+}
+
 #[derive(Debug)]
 pub struct SubmissionQueue {
     id: u64,
@@ -183,6 +205,26 @@ impl SubmissionQueue {
         });
         self.next = next;
         Ok(id)
+    }
+    /// Consume this queue into a prepared transaction, preserving all pins.
+    /// Preparation errors/drop have no memory effects. No mapping changes or
+    /// callbacks occur during commit; data is read through its retained pins.
+    pub fn prepare_front(
+        self,
+        space: &GpuAddressSpace,
+        id: SubmissionId,
+        limits: crate::ExecutionLimits,
+    ) -> Result<PreparedSubmission, crate::ExecutionError> {
+        if space.id() != self.owner {
+            return Err(crate::ExecutionError::WrongAddressSpace);
+        }
+        let front = self
+            .pending
+            .front()
+            .filter(|s| s.id == id)
+            .ok_or(crate::ExecutionError::NotFront)?;
+        let batch = self.methods.prepare(space, front.writes(), limits)?;
+        Ok(PreparedSubmission { queue: self, batch })
     }
     /// Execute the front batch synchronously, then consume it exactly once.
     /// Validation failure changes neither method state, memory nor the queue.

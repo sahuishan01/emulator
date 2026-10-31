@@ -9,5 +9,11 @@ publish.workspace = true
 emulator-ipc = { path = "../ipc" }
 emulator-kernel = { path = "../kernel" }
 
+emulator-gpu = { path = "../gpu" }
+emulator-memory = { path = "../memory" }
+
+[dev-dependencies]
+emulator-a64 = { path = "../a64" }
+
 [lints]
 workspace = true

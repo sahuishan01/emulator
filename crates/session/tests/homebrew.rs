@@ -107,3 +107,27 @@ fn unsupported_service_faults_the_session_instead_of_faking_success() {
     assert_eq!(session.cpu().pc, LOAD_BASE + 0x84);
     assert!(session.debug_records().is_empty());
 }
+
+#[test]
+fn original_guest_submits_dma_and_checks_dependent_copies_before_cleanup() {
+    let mut session =
+        Session::from_nro(include_bytes!("../../../examples/homebrew/gpu-dma.nro")).unwrap();
+    assert_eq!(session.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(
+        session.debug_records(),
+        &[b"Guest DMA copied 16 bytes; dependent copies verified.\n".to_vec()]
+    );
+    for offset in [0x2010, 0x2020, 0x2030] {
+        assert_eq!(session.memory().read_u64(LOAD_BASE + offset).unwrap(), 42);
+    }
+    assert_eq!(
+        session
+            .kernel()
+            .ipc_records()
+            .iter()
+            .map(|r| r.command_id)
+            .collect::<Vec<_>>(),
+        [0, 1, 0, 1]
+    );
+    assert_eq!(session.kernel().live_handle_count(), 0);
+}

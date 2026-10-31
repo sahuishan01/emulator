@@ -3,7 +3,8 @@
 Version 0.8.0-dev adds a synchronous, CPU-executed reference implementation of
 one Maxwell copy-engine subset. It runs decoded GPU commands against shared
 CPU/GPU backing. It does not submit host Vulkan commands or execute shaders.
-NV service/ioctl/object registration and guest-program submission remain open.
+NV service/ioctl/object registration remains open. Version 0.9.0-dev adds an
+[emulator-owned guest submission bridge](guest-gpu-bridge.md).
 
 ## Interface and supported subset
 
@@ -64,8 +65,8 @@ bounds, unsupported fields, permissions, overlaps and FIFO/address-space ownersh
 Android `gpuCore` suite 2 adds `maxwell-dma-linear-copy`: one captured batch,
 11 decoded writes, two dependent launches, 16 copied bytes and zero remaining
 resident backing/pending work. Its byte oracle uses CPU reads, not a second copy
-implementation. Six guest NROs and six host Vulkan checks remain separate.
+implementation. Seven guest NROs and six host Vulkan checks remain separate.
 
-Next work is the bounded NV service/ioctl/object path needed for an original
-homebrew program to submit these commands. Original shader decode/IR/SPIR-V and
+An original NRO now submits these commands through `emu:gpu`; this diagnostic
+protocol is separate from the still-planned standard NV service/ioctl/object path. Original shader decode/IR/SPIR-V and
 renderer integration follow; the guest-program-to-image milestone remains open.
