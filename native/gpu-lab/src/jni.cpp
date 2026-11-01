@@ -4,16 +4,7 @@
 #include <cstdint>
 #include <jni.h>
 
-struct EngineReport {
-    std::uint32_t abi_version;
-    std::uint32_t length;
-    std::uint8_t bytes[8192];
-};
-static_assert(sizeof(EngineReport) == 8200 && alignof(EngineReport) == 4);
-static_assert(offsetof(EngineReport, bytes) == 8);
-extern "C" EngineReport emulator_run_reference_guests_v2();
-extern "C" EngineReport emulator_run_gpu_core_checks_v2();
-extern "C" EngineReport emulator_run_nv_checks_v2();
+#include "engine_abi.h"
 
 static jbyteArray copy_engine_report(JNIEnv* env, const EngineReport& report) {
     if (report.abi_version != 2 || report.length > sizeof(report.bytes)) {

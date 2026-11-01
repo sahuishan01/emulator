@@ -84,7 +84,8 @@ fn real_copy_is_cpu_visible_and_consumed_once_with_execution_time_data() {
         ExecutionStats {
             methods: 7,
             copy_launches: 1,
-            copied_bytes: 8
+            copied_bytes: 8,
+            ..ExecutionStats::default()
         }
     );
     assert_eq!(&rig.bytes()[16..24], &[99; 8]);
@@ -144,8 +145,8 @@ fn late_error_rolls_back_copies_binding_and_queue() {
 fn unsupported_classes_methods_launch_flags_and_uninitialized_data_are_errors() {
     for (methods, expected) in [
         (
-            vec![(0, 0, 0xb197)],
-            ExecutionError::UnsupportedClass(0xb197),
+            vec![(0, 0, 0xc197)],
+            ExecutionError::UnsupportedClass(0xc197),
         ),
         (
             vec![(0, 0, 0x1_0000 | MAXWELL_DMA_COPY_A)],

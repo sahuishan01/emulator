@@ -19,7 +19,7 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 15
+        private const val WORKLOAD_VERSION = 16
     }
 
     private external fun runNvChecks(): ByteArray
@@ -50,7 +50,7 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
         })
         layout.addView(TextView(this).apply {
-            text = "Run the full CPU, NV submission, completion, GPU memory and Vulkan test batch."
+            text = "Run the full CPU, guest color clear, NV, memory and Vulkan replay test batch."
             textSize = 15f
             setPadding(0, padding / 2, 0, padding / 2)
         })

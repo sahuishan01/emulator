@@ -18,6 +18,8 @@ def main():
     parser.add_argument('--workload', type=int, required=True)
     parser.add_argument('--previous-workload', type=int, required=True)
     parser.add_argument('--schema', type=int, default=4)
+    parser.add_argument('--gpu-tests', type=int, default=6)
+    parser.add_argument('--gpu-workload', type=int, default=3)
     parser.add_argument('--engine-reference', type=Path, required=True)
     parser.add_argument('--nv-reference', type=Path, required=True)
     parser.add_argument('--core-reference', type=Path, required=True)
@@ -142,9 +144,10 @@ def main():
             expected.pop('hostArchitecture')
             assert actual == expected, f'{group} differs from reference'
             counts[group] = len(actual['tests'])
-        assert report['gpu']['allPassed'] and len(report['gpu']['tests']) == 6
+        assert report['gpu']['allPassed'] and len(report['gpu']['tests']) == args.gpu_tests
+        assert report['gpu']['workloadVersion'] == args.gpu_workload
         assert all(t['passed'] for t in report['gpu']['tests'])
-        counts['gpu'] = 6
+        counts['gpu'] = args.gpu_tests
         total = sum(counts.values())
         (out / 'private-report.json').write_bytes(raw)
         root = wait_button('results', 'export report')

@@ -87,10 +87,30 @@ impl ChannelProcessor {
         space: &GpuAddressSpace,
         entries: &[u8],
     ) -> Result<(Self, PreparedSubmission), String> {
+        self.prepare_for_class(space, entries, None)
+    }
+    /// NV contexts may restrict which class a command stream can bind.
+    pub fn prepare_for_class(
+        &self,
+        space: &GpuAddressSpace,
+        entries: &[u8],
+        class: Option<u32>,
+    ) -> Result<(Self, PreparedSubmission), String> {
         let mut queue =
             SubmissionQueue::new(space, QueueLimits::default()).map_err(|e| e.to_string())?;
         queue.methods = self.methods.clone();
         let id = queue.submit(space, entries).map_err(|e| e.to_string())?;
+        if let Some(class) = class {
+            if queue
+                .front()
+                .expect("submitted batch")
+                .writes()
+                .iter()
+                .any(|w| w.method_word == 0 && w.data != class)
+            {
+                return Err("method class does not match allocated context".into());
+            }
+        }
         let work = queue
             .prepare_front(space, id, crate::ExecutionLimits::default())
             .map_err(|e| e.to_string())?;
@@ -109,6 +129,9 @@ pub struct PreparedSubmission {
     batch: crate::methods::PreparedBatch,
 }
 impl PreparedSubmission {
+    pub fn color_clears(&self) -> &[crate::ColorClear] {
+        self.batch.clears()
+    }
     pub fn stats(&self) -> crate::ExecutionStats {
         self.batch.stats()
     }

@@ -27,6 +27,8 @@ pub struct ExecutionStats {
     pub methods: usize,
     pub copy_launches: usize,
     pub copied_bytes: usize,
+    pub clear_launches: usize,
+    pub cleared_bytes: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionError {
@@ -38,6 +40,7 @@ pub enum ExecutionError {
     UnsupportedMethod { subchannel: u8, offset: u32 },
     InvalidAddressUpper(u32),
     UnsupportedLaunch(u32),
+    UnsupportedColorState,
     UninitializedRegister,
     EmptyCopy,
     Capacity,
@@ -61,11 +64,25 @@ struct DmaRegisters {
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MethodState {
-    channels: [Option<DmaRegisters>; 8],
+    channels: [Option<EngineState>; 8],
+}
+#[derive(Clone, Debug)]
+enum EngineState {
+    Dma(DmaRegisters),
+    Color(crate::clear::ColorRegisters),
+}
+#[derive(Debug)]
+enum CopyInput {
+    Memory(GpuMemoryRange),
+    Solid {
+        color: [u8; 4],
+        mask: u32,
+        previous: Option<GpuMemoryRange>,
+    },
 }
 #[derive(Debug)]
 struct Copy {
-    source: GpuMemoryRange,
+    source: CopyInput,
     target: GpuMemoryRange,
     buffer: Vec<u8>,
 }
@@ -73,11 +90,15 @@ struct Copy {
 pub(crate) struct PreparedBatch {
     state: MethodState,
     copies: Vec<Copy>,
+    clears: Vec<crate::ColorClear>,
     stats: ExecutionStats,
 }
 impl PreparedBatch {
     pub(crate) fn next_state(&self) -> MethodState {
         self.state.clone()
+    }
+    pub(crate) fn clears(&self) -> &[crate::ColorClear] {
+        &self.clears
     }
     pub(crate) fn stats(&self) -> ExecutionStats {
         self.stats
@@ -95,9 +116,27 @@ impl PreparedBatch {
         for copy in &mut self.copies {
             // Read at execution time so a later launch sees earlier writes,
             // including through a different virtual address of the same backing.
-            copy.source
-                .read(&mut copy.buffer)
-                .expect("prepared read pin");
+            match &copy.source {
+                CopyInput::Memory(source) => {
+                    source.read(&mut copy.buffer).expect("prepared read pin")
+                }
+                CopyInput::Solid {
+                    color,
+                    mask,
+                    previous,
+                } => {
+                    if let Some(source) = previous {
+                        source.read(&mut copy.buffer).expect("prepared color read");
+                    }
+                    for pixel in copy.buffer.chunks_exact_mut(4) {
+                        for component in 0..4 {
+                            if mask & (1 << component) != 0 {
+                                pixel[component] = color[component];
+                            }
+                        }
+                    }
+                }
+            }
             copy.target.write(&copy.buffer).expect("prepared write pin");
         }
         (self.state, self.stats)
@@ -120,6 +159,7 @@ impl MethodState {
         let mut batch = PreparedBatch {
             state: self.clone(),
             copies: Vec::new(),
+            clears: Vec::new(),
             stats: ExecutionStats {
                 methods: writes.len(),
                 ..ExecutionStats::default()
@@ -130,17 +170,39 @@ impl MethodState {
             let channel = &mut batch.state.channels[usize::from(write.subchannel)];
             let offset = write.method_byte_offset();
             if offset == 0 {
-                if write.data != MAXWELL_DMA_COPY_A {
-                    return Err(ExecutionError::UnsupportedClass(write.data));
-                }
+                let engine = match write.data {
+                    MAXWELL_DMA_COPY_A => EngineState::Dma(DmaRegisters::default()),
+                    crate::MAXWELL_B => EngineState::Color(crate::clear::ColorRegisters::default()),
+                    _ => return Err(ExecutionError::UnsupportedClass(write.data)),
+                };
                 // This subset binds a class directly. NV object handles and
                 // engine selection bits require the future NV object registry.
-                *channel = Some(DmaRegisters::default());
+                *channel = Some(engine);
                 continue;
             }
-            let registers = channel
+            let engine = channel
                 .as_mut()
                 .ok_or(ExecutionError::UnboundSubchannel(write.subchannel))?;
+            if let EngineState::Color(registers) = engine {
+                let clear = registers
+                    .write(offset, write.data)
+                    .map_err(|error| match error {
+                        ExecutionError::UnsupportedMethod { offset, .. } => {
+                            ExecutionError::UnsupportedMethod {
+                                subchannel: write.subchannel,
+                                offset,
+                            }
+                        }
+                        error => error,
+                    })?;
+                if let Some(clear) = clear {
+                    batch.add_clear(space, clear, limits, &mut spans)?;
+                }
+                continue;
+            }
+            let EngineState::Dma(registers) = engine else {
+                unreachable!()
+            };
             match offset {
                 0x100 => {} // Class NOP carries no effect.
                 0x400 | 0x408 => {
@@ -174,8 +236,11 @@ impl MethodState {
                     if length == 0 {
                         return Err(ExecutionError::EmptyCopy);
                     }
-                    if batch.stats.copy_launches >= limits.launches
-                        || length > limits.bytes.saturating_sub(batch.stats.copied_bytes)
+                    if batch.stats.copy_launches + batch.stats.clear_launches >= limits.launches
+                        || length
+                            > limits.bytes.saturating_sub(
+                                batch.stats.copied_bytes + batch.stats.cleared_bytes,
+                            )
                     {
                         return Err(ExecutionError::Capacity);
                     }
@@ -210,7 +275,7 @@ impl MethodState {
                         .try_reserve(1)
                         .map_err(|_| ExecutionError::Capacity)?;
                     batch.copies.push(Copy {
-                        source,
+                        source: CopyInput::Memory(source),
                         target,
                         buffer,
                     });
@@ -226,5 +291,80 @@ impl MethodState {
             }
         }
         Ok(batch)
+    }
+}
+
+impl PreparedBatch {
+    fn add_clear(
+        &mut self,
+        space: &GpuAddressSpace,
+        clear: crate::ColorClear,
+        limits: ExecutionLimits,
+        spans: &mut usize,
+    ) -> Result<(), ExecutionError> {
+        let length = (clear.rect[2] - clear.rect[0]) as usize * 4;
+        let rows = (clear.rect[3] - clear.rect[1]) as usize;
+        let bytes = length.checked_mul(rows).ok_or(ExecutionError::Capacity)?;
+        if self.stats.copy_launches + self.stats.clear_launches >= limits.launches
+            || bytes
+                > limits
+                    .bytes
+                    .saturating_sub(self.stats.copied_bytes + self.stats.cleared_bytes)
+        {
+            return Err(ExecutionError::Capacity);
+        }
+        self.clears
+            .try_reserve(1)
+            .map_err(|_| ExecutionError::Capacity)?;
+        let (color, mask) = clear.storage_color();
+        if length > 0 {
+            self.copies
+                .try_reserve(rows)
+                .map_err(|_| ExecutionError::Capacity)?;
+            for y in clear.rect[1]..clear.rect[3] {
+                let address = clear
+                    .address
+                    .0
+                    .checked_add(
+                        u64::from(y) * u64::from(clear.pitch) + u64::from(clear.rect[0]) * 4,
+                    )
+                    .ok_or(ExecutionError::Capacity)?;
+                let target = space
+                    .pin(GpuVa(address), length, Access::Write)
+                    .map_err(ExecutionError::Memory)?;
+                let previous = if mask != 15 {
+                    Some(
+                        space
+                            .pin(GpuVa(address), length, Access::Read)
+                            .map_err(ExecutionError::Memory)?,
+                    )
+                } else {
+                    None
+                };
+                *spans += target.backing_ranges().count()
+                    + previous.as_ref().map_or(0, |p| p.backing_ranges().count());
+                if *spans > crate::address_space::MAX_BACKING_SPANS {
+                    return Err(ExecutionError::Capacity);
+                }
+                let mut buffer = Vec::new();
+                buffer
+                    .try_reserve_exact(length)
+                    .map_err(|_| ExecutionError::Capacity)?;
+                buffer.resize(length, 0);
+                self.copies.push(Copy {
+                    source: CopyInput::Solid {
+                        color,
+                        mask,
+                        previous,
+                    },
+                    target,
+                    buffer,
+                });
+            }
+        }
+        self.clears.push(clear);
+        self.stats.clear_launches += 1;
+        self.stats.cleared_bytes += bytes;
+        Ok(())
     }
 }

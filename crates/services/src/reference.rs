@@ -255,6 +255,53 @@ impl Rig {
         self.m.write(0x8080, &words(&[0x200100c0, 0x182])).unwrap();
         self.full_program();
     }
+    fn prepare_color(&mut self, write: bool) {
+        self.prepare(write, false);
+        assert_eq!(self.io(self.channel, ALLOC_CONTEXT, &[0xb197, 0, 0, 0]), 0);
+        self.m.write(0x8800, &[0x55; 512]).unwrap();
+    }
+    fn color_program(&mut self, format: u32, extras: &[(u32, u32)]) -> u32 {
+        let mut methods = vec![
+            (0, 0xb197),
+            (0x800, 1),
+            (0x804, 0x800),
+            (0x808, 64),
+            (0x80c, 8),
+            (0x810, format),
+            (0x814, 0x1000),
+            (0x818, 1),
+            (0x81c, 0),
+            (0x820, 0),
+            (0xff4, 16 << 16),
+            (0xff8, 8 << 16),
+            (0x10f8, 0),
+            (0xd80, 1.0_f32.to_bits()),
+            (0xd84, 0),
+            (0xd88, 0),
+            (0xd8c, 1.0_f32.to_bits()),
+        ];
+        methods.extend_from_slice(extras);
+        let words: Vec<_> = methods
+            .iter()
+            .flat_map(|(offset, data)| [0x20010000 | (offset / 4), *data])
+            .collect();
+        self.program(&words);
+        words.len() as u32
+    }
+    fn verify_image(&mut self, expected: impl Fn(u32, u32) -> [u8; 4]) {
+        let mut actual = [0; 512];
+        self.m.read(0x8800, &mut actual).unwrap();
+        for y in 0..8 {
+            for x in 0..16 {
+                assert_eq!(
+                    &actual[((y * 16 + x) * 4) as usize..((y * 16 + x) * 4 + 4) as usize],
+                    &expected(x, y),
+                    "pixel {x},{y}"
+                );
+            }
+        }
+        self.verified += actual.len();
+    }
     fn clone_client(&mut self) {
         let mut message = packet(2, &[], None, None);
         message[..4].copy_from_slice(&5_u32.to_le_bytes());
@@ -350,7 +397,7 @@ pub fn run() -> Vec<CaseResult> {
         }),
         ("unsupported-context-and-recovery", |r| {
             r.prepare(true, false);
-            assert_eq!(r.io(r.channel, ALLOC_CONTEXT, &[0xb197, 0, 0, 0]), 2);
+            assert_eq!(r.io(r.channel, ALLOC_CONTEXT, &[0xc197, 0, 0, 0]), 2);
             assert_eq!(r.submit(2, 0, 0, 0, 14), 8);
             assert_eq!(r.io(r.channel, ALLOC_CONTEXT, &[0xb0b5, 0, 0, 0]), 0);
             assert_eq!(r.submit(2, 0, 0, 0, 14), 0);
@@ -530,6 +577,242 @@ pub fn run() -> Vec<CaseResult> {
             assert_eq!(r.io(r.channel, ALLOC_FIFO, &[8, 0, 1, 0, 0, 0, 0, 0]), 0);
             assert_eq!(r.m.read_u32(0x600c).unwrap(), 1);
         }),
+        ("color-rgba-completion-and-readback", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(0xd5, &[(0x19d0, 0x3c)]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|_, _| [255, 0, 0, 255]);
+            assert_eq!(r.read(r.point), 1);
+        }),
+        ("color-bgra-storage-order", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(0xcf, &[(0x19d0, 0x3c)]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|_, _| [0, 0, 255, 255]);
+        }),
+        ("color-scissor-preserves-outside", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(
+                0xd5,
+                &[
+                    (0xe00, 1),
+                    (0xe04, (12 << 16) | 4),
+                    (0xe08, (6 << 16) | 2),
+                    (0x10f8, 0x100),
+                    (0x19d0, 0x3c),
+                ],
+            );
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|x, y| {
+                if (4..12).contains(&x) && (2..6).contains(&y) {
+                    [255, 0, 0, 255]
+                } else {
+                    [0x55; 4]
+                }
+            });
+        }),
+        ("color-clear-rect-and-scissor-intersection", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(
+                0xd5,
+                &[
+                    (0xd6c, (10 << 16) | 2),
+                    (0xd70, (5 << 16) | 1),
+                    (0xe00, 1),
+                    (0xe04, (15 << 16) | 7),
+                    (0xe08, (8 << 16) | 3),
+                    (0x10f8, 0x110),
+                    (0x19d0, 0x3c),
+                ],
+            );
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|x, y| {
+                if (7..10).contains(&x) && (3..5).contains(&y) {
+                    [255, 0, 0, 255]
+                } else {
+                    [0x55; 4]
+                }
+            });
+        }),
+        ("color-component-mask-and-ordered-overwrite", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(
+                0xcf,
+                &[
+                    (0x19d0, 0x3c),
+                    (0xd84, 1.0_f32.to_bits()),
+                    (0xd80, 0),
+                    (0x19d0, 0x08),
+                ],
+            );
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|_, _| [0, 255, 255, 255]);
+            assert_eq!(r.read(r.point), 1);
+        }),
+        ("color-finite-unorm-clamp", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(
+                0xd5,
+                &[
+                    (0xd80, (-1.0_f32).to_bits()),
+                    (0xd84, 2.0_f32.to_bits()),
+                    (0xd88, 0.25_f32.to_bits()),
+                    (0x19d0, 0x3c),
+                ],
+            );
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|_, _| [0, 255, 64, 255]);
+        }),
+        ("color-readonly-destination-rejected", |r| {
+            r.prepare_color(false);
+            let n = r.color_program(0xd5, &[(0x19d0, 0x3c)]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 4);
+            r.verify_image(|_, _| [0x55; 4]);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("color-unsupported-state-is-atomic", |r| {
+            r.prepare_color(true);
+            for invalid in [
+                (0x810, 0xd6),
+                (0x814, 0),
+                (0x818, 2),
+                (0x820, 1),
+                (0x800, 256),
+                (0x804, 0x801),
+                (0x808, 60),
+                (0x80c, 0),
+                (0xd80, f32::NAN.to_bits()),
+                (0x10f8, 1),
+                (0x19d0, 1),
+                (0x19d0, 0x7c),
+                (0xe00, 2),
+            ] {
+                let mut extras = vec![invalid];
+                if invalid.0 == 0xe00 {
+                    extras.push((0x10f8, 0x100));
+                }
+                if invalid.0 != 0x19d0 {
+                    extras.push((0x19d0, 0x3c));
+                }
+                let n = r.color_program(0xd5, &extras);
+                assert_eq!(r.submit(2, 0, 0, 0, n), 4, "{invalid:?}");
+                r.verify_image(|_, _| [0x55; 4]);
+                assert_eq!(r.read(r.point), 0);
+            }
+        }),
+        ("color-late-error-rolls-back-state-and-pixels", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(0xd5, &[(0x19d0, 0x3c), (0x1234, 0)]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 4);
+            r.verify_image(|_, _| [0x55; 4]);
+            r.program(&[0x20010000 | (0x19d0 / 4), 0x3c]);
+            assert_eq!(r.submit(2, 0, 0, 0, 2), 4);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("color-failed-reply-cancels-write-and-fence", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(0xd5, &[(0x19d0, 0x3c)]);
+            assert!(r
+                .io_at(
+                    r.channel,
+                    SUBMIT,
+                    &[0, 0, 1, 2, 0, 0, 0, (n << 10) | 1],
+                    101,
+                    0x6000
+                )
+                .is_err());
+            r.verify_image(|_, _| [0x55; 4]);
+            assert_eq!(r.read(r.point), 0);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|_, _| [255, 0, 0, 255]);
+        }),
+        ("color-output-alias-rejected-before-commit", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(0xd5, &[(0x19d0, 0x3c)]);
+            assert_eq!(
+                r.io_at(
+                    r.channel,
+                    SUBMIT,
+                    &[0, 0, 1, 2, 0, 0, 0, (n << 10) | 1],
+                    1,
+                    0x8800
+                )
+                .unwrap(),
+                4
+            );
+            r.verify_image(|_, _| [0x55; 4]);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("color-closed-owners-and-cloned-client-retained", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(0xd5, &[(0x19d0, 0x3c)]);
+            assert_eq!(r.close(r.nv), 0);
+            assert_eq!(r.close(r.asfd), 0);
+            r.clone_client();
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|_, _| [255, 0, 0, 255]);
+            assert_eq!(r.close(r.channel), 0);
+            assert_eq!(r.read(r.point), 1);
+        }),
+        ("color-active-tls-alias-rejected-before-effects", |r| {
+            r.prepare_color(true);
+            assert_eq!(r.io(r.nv, 0xc0080101, &[4096, 0]), 0);
+            let object = r.m.read_u32(0x6004).unwrap();
+            assert_eq!(
+                r.io(r.nv, 0xc0200104, &[object, 0, 1, 4096, 0, 0, 0x2000, 0]),
+                0
+            );
+            assert_eq!(r.io(r.asfd, MAP, &[0, 0, object, 0, 0, 0, 0, 0, 0, 0]), 0);
+            assert_eq!(r.m.read_u64(0x6020).unwrap(), (1 << 32) + 4096);
+            let n = r.color_program(0xd5, &[(0x804, 0x1000), (0x19d0, 0x3c)]);
+            assert!(r
+                .io_at(
+                    r.channel,
+                    SUBMIT,
+                    &[0, 0, 1, 2, 0, 0, 0, (n << 10) | 1],
+                    1,
+                    0x6000
+                )
+                .is_err());
+            r.verify_image(|_, _| [0x55; 4]);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("color-padded-pitch-preserves-row-padding", |r| {
+            r.prepare_color(true);
+            r.m.write(0x8800, &[0x55; 640]).unwrap();
+            let n = r.color_program(0xd5, &[(0x808, 80), (0x19d0, 0x3c)]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            let mut image = [0; 640];
+            r.m.read(0x8800, &mut image).unwrap();
+            for row in image.chunks_exact(80) {
+                for p in row[..64].chunks_exact(4) {
+                    assert_eq!(p, &[255, 0, 0, 255]);
+                }
+                assert_eq!(&row[64..], &[0x55; 16]);
+            }
+            r.verified += 640;
+        }),
+        ("color-context-class-mismatch-rejected", |r| {
+            r.prepare_color(true);
+            r.full_program();
+            assert_eq!(r.submit(2, 0, 0, 0, 14), 4);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("color-empty-rect-completes-without-writes", |r| {
+            r.prepare_color(true);
+            let n = r.color_program(
+                0xd5,
+                &[
+                    (0xd6c, (32 << 16) | 20),
+                    (0xd70, (8 << 16) | 2),
+                    (0x10f8, 0x10),
+                    (0x19d0, 0x3c),
+                ],
+            );
+            assert_eq!(r.submit(2, 0, 0, 0, n), 0);
+            r.verify_image(|_, _| [0x55; 4]);
+            assert_eq!(r.read(r.point), 1);
+        }),
     ];
     cases
         .iter()
@@ -579,7 +862,7 @@ mod tests {
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();
-        assert_eq!(cases.len(), 18);
+        assert_eq!(cases.len(), 34);
         for case in cases {
             assert!(case.passed, "{}: {}", case.name, case.error)
         }

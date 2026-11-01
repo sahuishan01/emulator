@@ -4,7 +4,9 @@
 use std::fmt;
 
 mod address_space;
+mod clear;
 mod methods;
+pub use clear::{ColorClear, BGRA8_UNORM, MAXWELL_B, RGBA8_UNORM};
 mod submission;
 pub use address_space::{
     AddressSpaceId, GpuAddressSpace, GpuMemoryError, GpuMemoryRange, MappingId,

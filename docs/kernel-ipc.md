@@ -133,3 +133,7 @@ Public interface references: [HIPC](https://switchbrew.org/wiki/HIPC),
 [thread-local region](https://switchbrew.org/wiki/Thread_Local_Region),
 [libnx HIPC declarations](https://github.com/switchbrew/libnx/blob/master/nx/include/switch/sf/hipc.h)
 and [CMIF declarations](https://github.com/switchbrew/libnx/blob/master/nx/include/switch/sf/cmif.h).
+
+The [color-clear batch](color-clear-batch.md) adds an interpreted NV B197 guest,
+row write effects, class-specific contexts and sixteen further kernel/NV API
+scenarios. It retains the existing transactional reply and alias contracts.

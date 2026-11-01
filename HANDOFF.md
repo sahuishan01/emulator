@@ -13,7 +13,7 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.15.0-dev
+## Current implementation: 0.16.0-dev
 
 Eleven original Rust crates, no external Cargo dependencies. Ten core crates
 forbid unsafe; android-ffi permits export attributes only, with no unsafe blocks
@@ -27,7 +27,7 @@ implementation-plan.md for scope/milestones; M4 guest graphics gate is still ope
   views; no payload copy or revocation. Page tables/coherence remain incomplete.
 - CPU/loader: original integer A64 subset with guest TLS/MRS/SVC, static NRO0
   RX/R/RW/BSS and guarded stack. FP/SIMD/atomics/JIT, NSO/MOD0/linking/full runtime
-  and content/game loading remain open. Thirteen owned NROs are LLVM-assembled.
+  and content/game loading remain open. Fourteen owned NROs are LLVM-assembled.
 - Kernel: 256 handles, one host executor/16 lifetime guest threads, events,
   blocking waits, cancellation, virtual deadlines and cloned session identity.
   One virtual ns/instruction is a reference model, not console frequency.
@@ -66,34 +66,48 @@ implementation-plan.md for scope/milestones; M4 guest graphics gate is still ope
   Combined GPU/B effects commit copies before reply/fence publication. B/DMA and
   active-TLS/DMA aliases fail atomically. No mutable metadata is shared between
   request snapshots. See docs/nv-channel-batch.md for exact operations/limits.
-- Vulkan: unchanged six native offscreen transfer/depth/compute/BC1 conversion/
-  sampling/update microchecks. Native shaders, no guest rendering. Rust BC1
+- Color clears: original B197 context, pitch-linear target 0, RGBA8/BGRA8 UNORM,
+  finite colors, clear/scissor rectangles, channel masks and ordered row effects.
+  All required state explicit; no tiled/depth/MRT/layer/draw/shader support.
+  64 operations/4 MiB touched bytes/4096 spans are shared with DMA. Masked clears
+  read current backing, full clears need only WRITE. Output/TLS aliases and
+  failed replies cancel pixels/state/fences. See docs/color-clear-batch.md.
+- Vulkan: six existing native offscreen transfer/depth/compute/BC1 conversion/
+  sampling/update microchecks. Three new clear replays use original decoded operations, fixed host clear
+  shaders, exact image oracles and RGBA/BGRA/masked targets. Replay 0 executes
+  the new NRO and consumes its actual command bytes. No guest shader translator
+  or live renderer/display handoff. Rust BC1
   decoder/corpus remains independent. No console performance claim.
 
 ## Batched Android report
 
-Schema 4/workload 15: engine 13 interpreted NROs (suite 10), nv 18 kernel/NV protocol
-scenarios (suite 1, executesGuestCpu:false), gpuCore 3 direct cases (suite 2), gpu 6
-host Vulkan cases (workload 3). Combined allPassed requires all four groups.
-Run all checks shows actual per-group/total outcomes and exports one JSON.
-Missing groups show incomplete checks. Previous workload reports are invalidated.
+Schema 4/workload 16: engine 14 interpreted NROs (suite 11), nv 34 kernel/NV
+API scenarios (suite 2, executesGuestCpu:false), gpuCore 3 direct cases (suite 2),
+gpu 9 Vulkan cases (workload 4). Run all checks executes all 60, summarizes actual
+outcomes and exports one JSON. Combined allPassed requires every group. Older
+workload caches are invalidated; missing groups show incomplete checks.
 
-ABI 2: 8200-byte, alignment 4, offset 8, 8192-byte payload. Three _v2 value-only
-exports supply guest, GPU-core and NV reports; panics become bounded failures.
-Rust/JNI rebuild together. Host JSON sizes: engine 4924/NV 2354/core 642 bytes.
+EngineReport ABI 2 remains 8200 bytes/alignment 4/offset 8/payload 8192. Its three
+_v2 exports are unchanged. New emulator_guest_clear_replay_v1(index) is a
+1264-byte/alignment-4 owned value: header, 8 ops x60 bytes, image512/error256.
+Offsets/size are checked in Rust/C++; failures have zero operations/status!=0.
+Host report sizes: engine5302/NV4427/core642 bytes.
 
-The new nv-channel-batch.nro covers failed/valid/repeated DMA, persistent state,
-fence reads/waits, closed bindings and cleanup: 7179 instructions/32 IPC/2 copies/
-25 A/18 B/875 descriptor bytes. Completion 3 at 0x4040, source/target 44 at 0x5100/
-0x5108, original marker 42 at 0x3000, known output and zero handles/loans/transfer
-objects. Original twelve NRO oracles remain unchanged. The eighteen additional
-NV scenarios exercise actual kernel API requests on Android, including oversized
-reply cancellation, rights, aliases, quotas, cloned clients and residency release.
+New nv-color-clear.nro: 5571 instructions/25 IPC/2 copied handles/18 A/11 B/
+603 descriptor bytes, full independent 128-pixel oracle at image5800, completion2
+at4040, marker42 at3000 and zero handles/transfer objects/lent bytes. It rejects
+partly planned clears, draws a three-region clear image, closes bound fds and
+submits using retained state before final cleanup. Prior thirteen traces unchanged.
+The sixteen added kernel/NV scenarios cover formats, masks, clip/scissor, padding,
+rights, thirteen invalid states, late/reply rollback, B/TLS aliases, clones/closed
+owners, class mismatch and empty clear completion. NV now restricts bind classes
+by the allocated context (B0B5 or B197); standalone GPU tests allow explicit mixed
+DMA/clear queues. GPU effects preserve order and pins through CPU address reuse.
 
 ## Evidence and verification
 
-- 164 Rust tests (including the eighteen-scenario runner), fmt and Clippy with
-  warnings denied; 24 LLVM fixtures (11 raw/13 NROs); pinned ARM64/x86_64 build,
+- 170 Rust tests (including the thirty-four-scenario runner), fmt and Clippy with
+  warnings denied; 25 LLVM fixtures (11 raw/14 NROs); pinned ARM64/x86_64 build,
   Gradle lint, signature and 16 KiB ELF/ZIP packaging checks pass. Packaging is
   not a 16 KiB Android runtime test. Keep exact APK hash in validation/release notes.
 - Supplied 0.14 phone report passes all 21 prior cases, matching all engine/core
@@ -101,12 +115,20 @@ reply cancellation, rights, aliases, quotas, cloned clients and residency releas
   matches 3172 instructions/15 IPC/2 copies/9 A/6 B/372 bytes. See
   docs/validation/g720-nv-gpu-map.md. Device realme RMX5061/MT6989/Android 16/API 36/
   G720-Immortalis MC12/Vulkan1.3.247/raw driver184553472; validation off/native BC
-  false. No physical ADB. The larger 0.15 batch awaits phone evidence.
+  false. No physical ADB. The supplied 0.15 report now passes all 40 cases; see
+  docs/validation/g720-nv-channel-batch.md. All three Rust groups match fresh
+  references except architecture. New 0.16 color-clear/replay awaits the phone.
 - Android 0.15 passes all 40 cases with derived summary, upgrade invalidation,
   exact export and cold restore. A save-navigation timing issue in the QA harness
   was fixed with bounded expected-screen polling; resumed verification after AVD
   restart passed. Initial and resumed captures are retained; no app crash/ANR
   captured. See docs/validation/android-nv-channel-batch.md.
+- Android 0.16 passes all 60 checks in one run, matching all three Rust references,
+  with visible summary, upgrade invalidation and byte-exact export/cold restore.
+  Desktop llvmpipe passes all nine with validation enabled/zero errors. API35 AVD
+  needed a System UI startup ANR Wait (XML-derived); two empty picker dumps were
+  retried successfully. No app crash/ANR; both screenshots inspected; owned AVD
+  shut down and awaited. See docs/validation/android-color-clear-batch.md.
 - Historical software/physical evidence is under docs/validation/. Supplied
   microchecks do not establish guest graphics, full compatibility or performance.
   Keep reports, captures, helper outputs, games/keys/firmware/APKs ignored.
@@ -116,13 +138,15 @@ reply cancellation, rights, aliases, quotas, cloned clients and residency releas
 SDK ~/Android/Sdk; Rust1.85.1, NDK28.2.13676358, Gradle8.9/AGP8.7.3/Kotlin2.0.21,
 SDK35/build-tools34.0.0/CMake3.22.1/JDK21 targetJava17. Cross-build helper pins
 RUSTC and uses 2 jobs. Do not change global toolchains or touch other workspaces.
+Desktop CMake now requires the owned host Rust archive; run cargo build --offline
+-p emulator-android-ffi first. Gradle tracks examples/gpu/*.bin as inputs.
 Generate host references via reference_report (default, gpu-core, nv) example.
 
 Use tools/qa_android_batch.py for the entire upgrade/run/summary/export/restore/
 log flow. It compares all three Rust groups to the host JSON, not just allPassed.
 It verifies fresh XML before deriving taps, waits for asynchronous save navigation,
 uses bounded retries/timeouts and can resume export/restore from an already
-verified run. The runner can --shutdown its explicitly owned AVD. Initial and
+verified run. For 0.16 pass --gpu-tests 9 --gpu-workload 4. The runner can --shutdown its explicitly owned AVD. Initial and
 resumed attempts/captures must be retained; do not hide app ANRs as infrastructure.
 
 Owned AVD: reports/android-qa/avd, gpu-lab-api35, emulator-5580. Before background
@@ -133,8 +157,9 @@ startup ANR Wait may be handled using its exact current XML; app ANRs fail QA.
 
 ## Next combined work
 
-Move toward the M4 graphics/shader/renderer vertical slice with a known owned
-workload. Batch needed command/state/shader and negative/lifetime tests together;
+Continue the M4 graphics/shader/renderer slice with a known owned workload.
+The color-clear replay is partial progress: guest shader decode/IR/SPIR-V, actual
+draws and live rendering/presentation are still required. Batch needed command/state/shader and negative/lifetime tests together;
 do not require a phone report per small opcode/ioctl. Broader asynchronous GPU
 scheduling, error/event/fence contracts, CPU ISA/runtime/content, audio/input and
 performance remain explicit work. No gameplay compatibility is claimed yet.

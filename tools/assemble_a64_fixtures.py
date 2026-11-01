@@ -21,7 +21,7 @@ def main():
             obj = Path(temporary) / "fixture.o"
             elf = Path(temporary) / "fixture.elf"
             output = Path(temporary) / "fixture.bin"
-            subprocess.run([args.llvm_mc, "-triple=aarch64", "-filetype=obj", str(source), "-o", str(obj)], check=True)
+            subprocess.run([args.llvm_mc, "-triple=aarch64", "-filetype=obj", str(source), "-o", str(obj)], check=True, cwd=examples.parent)
             subprocess.run([args.llvm_ld, "-Ttext=0", "--entry=0", str(obj), "-o", str(elf)], check=True)
             subprocess.run([args.llvm_objcopy, "-O", "binary", "--only-section=.text", str(elf), str(output)], check=True)
             target = source.with_suffix(".nro" if source.parent.name == "homebrew" else ".bin")

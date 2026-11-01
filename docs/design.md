@@ -28,6 +28,9 @@ unmap/address reuse. [NV GPU mapping](nv-gpu-address-space.md) now retains those
 NVMap Free/device Close; speculative mapping snapshots preserve reply rollback.
 [Channels and synchronous submission/completion](nv-channel-batch.md) now
 execute original DMA through NV with persistent state and transactional effects.
+[The color-clear batch](color-clear-batch.md) adds B197 state, ordered prepared
+row writes and bounded decoded-operation replay through Vulkan. The live renderer/
+guest shader interfaces below remain planned.
 Fresh allocation and guest graphics remain open.
 
 ## 1. Process, addresses and memory

@@ -1,12 +1,12 @@
 # Original Vulkan GPU laboratory
 
 This is original host-side diagnostic code shared between a desktop CLI and
-the Android GPU Lab application. It does not emulate Tegra commands, translate
-guest shaders or run Switch games. The C++ implementation uses the NDK/system
+the Android GPU Lab application. The linked original Rust engine now decodes a narrow owned Tegra color-clear
+corpus for offscreen replay. Guest shaders and Switch games remain unsupported. The C++ implementation uses the NDK/system
 Vulkan interfaces. The Android package also links the original Rust workspace
-for CPU/kernel/IPC reference checks; the desktop Vulkan runner remains independent.
+for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-Six bounded offscreen workloads (workload version 3):
+Nine bounded offscreen workloads (workload version 4):
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -25,6 +25,15 @@ Six bounded offscreen workloads (workload version 3):
    dispatch/draw pairs run in one submission, with both encoded inputs retained
    unchanged. See [the sampling and reuse contract](../../docs/bc1-sampling.md).
 
+7. Replay actual command bytes from the interpreted NV color-clear NRO through
+   our decoder and Vulkan clear lowering; all 512 bytes match the guest image
+   and independent CPU formula.
+8. Replay a BGRA target variant, checking storage order and rectangles.
+9. Replay masked clears; preserve prior red/blue/alpha in overlapping regions.
+
+See [the full clear/replay contract](../../docs/color-clear-batch.md). Fixed host
+shaders lower color clears; there is no guest shader translation or live renderer.
+
 The report includes device/driver/API identity, software-renderer status,
 physical feature advertisements, limits, memory heaps, queue families and
 format-query results, plus per-test outcomes and errors. Format entries report
@@ -33,7 +42,7 @@ destination image query. Heap sizes are advertised capacity, not free memory
 or the application's allocation budget. A passing report
 establishes these workloads only. Compressed texture sampling, formats beyond
 linear BC1 RGBA UNORM, stencil,
-additional shader stages, Android swapchain presentation and guest GPU command
+additional shader stages, Android swapchain presentation and general guest GPU command
 handling are not established by these tests.
 
 The allocation section records device-memory requests across all workloads,
@@ -53,6 +62,7 @@ Requirements: glslangValidator and spirv-val. Native desktop builds additionally
 need Vulkan headers/loader, CMake 3.22+, Ninja and a C++17 compiler:
 
 ```sh
+cargo build --offline -p emulator-android-ffi
 cmake -S native/gpu-lab -B target/gpu-lab -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build target/gpu-lab --parallel 2
 target/gpu-lab/gpu-lab-cli
@@ -89,14 +99,10 @@ separate package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version 0.11.0-dev uses schema 3/workload 11: `engine` has nine guest results,
-`gpuCore` has three Rust ownership/DMA cases, and `gpu` has these
-six unchanged native Vulkan results (suite version 3). Combined `allPassed`
-requires all three groups. GPU-core checks are direct engine calls, including
-CPU-executed linear DMA. Engine suite 5 adds a guest NRO using normal HIPC A/B
-descriptors; suite 4 added inline submission through `emu:gpu`. Suite 6 adds
-transfer-memory ownership/copied handles/nvdrv Initialize and copyHandles counts.
-NV device/ioctl submission and guest rendering remain open.
+Version 0.16.0-dev uses schema 4/workload 16: engine fourteen interpreted NROs,
+nv thirty-four kernel API cases, gpuCore three ownership/DMA cases and gpu nine
+Vulkan cases. All four groups must pass. The new EngineReport ABI remains 2;
+a separate fixed-size clear replay value is checked by both C++ and Rust.
 The last completed report is retained across activity recreation.
 Reports from an older workload version are not displayed as current results;
 after upgrading from an earlier workload version, run the updated checks again.

@@ -26,7 +26,7 @@ pub(crate) struct Channel {
     pub space: Option<u32>,
     pub syncpoint: u32,
     pub capacity: Option<usize>,
-    context: bool,
+    context: Option<u32>,
     processor: ChannelProcessor,
 }
 impl Channel {
@@ -36,7 +36,7 @@ impl Channel {
             space: None,
             syncpoint,
             capacity: None,
-            context: false,
+            context: None,
             processor: ChannelProcessor::default(),
         }
     }
@@ -55,13 +55,15 @@ impl Channel {
                 if self.space.is_none() {
                     return Err(3);
                 }
-                if self.context {
+                if self.context.is_some() {
                     return Err(8);
                 }
-                if word(input, 0) != MAXWELL_DMA_COPY_A || word(input, 4) != 0 {
+                if ![MAXWELL_DMA_COPY_A, emulator_gpu::MAXWELL_B].contains(&word(input, 0))
+                    || word(input, 4) != 0
+                {
                     return Err(NOT_SUPPORTED);
                 }
-                self.context = true;
+                self.context = Some(word(input, 0));
                 output[8..16].copy_from_slice(&u64::from(self.syncpoint).to_le_bytes());
             }
             ALLOC_FIFO => {
@@ -93,7 +95,7 @@ impl Channel {
         space: &GpuAddressSpace,
         completed: u32,
     ) -> Result<(Self, Vec<u8>, PreparedSubmission, u32), u32> {
-        if !self.context {
+        if self.context.is_none() {
             return Err(8);
         }
         let capacity = self.capacity.ok_or(3_u32)?;
@@ -111,7 +113,7 @@ impl Channel {
         let next_value = completed.checked_add(1).ok_or(NO_MEMORY)?;
         let (processor, work) = self
             .processor
-            .prepare(space, &input[24..])
+            .prepare_for_class(space, &input[24..], self.context)
             .map_err(|_| BAD_PARAMETER)?;
         let mut next = self.clone();
         next.processor = processor;

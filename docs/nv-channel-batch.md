@@ -95,3 +95,10 @@ This larger batch awaits its phone report. Fixed/large-page maps, full NV bootst
 async scheduling/events, broader CPU ISA, guest shaders/rendering, audio/input,
 content support and commercial games remain unfinished. The six Vulkan cases
 still use native host shaders; they do not render these guest commands.
+
+## Later extension
+
+[0.16 color-clear batch](color-clear-batch.md) also accepts a B197 object context
+and rejects class binds differing from the channel's allocated context. Its
+render-target/clear subset shares the same preflight/rollback/ownership and
+synchronous completion rules. The earlier counts above describe 0.15.
