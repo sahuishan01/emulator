@@ -50,3 +50,43 @@ fn ssa_reads_capture_values_before_register_overwrite() {
         }
     }
 }
+
+#[test]
+fn vertex_generic_export_uses_the_packed_vendor_header_layout() {
+    // NVIDIA SPH Type1 table: common words, all IMAP fields, OMAP system A/B.
+    // The generic OMAP follows 432 bits, not a whole number of 32-bit words.
+    let fields = [32, 32, 32, 32, 32, 24, 8, 128, 16, 16, 40, 8, 24, 8];
+    let generic_start: usize = fields.iter().sum();
+    assert_eq!(generic_start, 432);
+    let mut header = [0u8; 80];
+    let mut set = |start: usize, width: usize, value: u32| {
+        for bit in 0..width {
+            if value & (1 << bit) != 0 {
+                header[(start + bit) / 8] |= 1 << ((start + bit) % 8);
+            }
+        }
+    };
+    set(0, 32, 0x04020461);
+    set(128, 32, 0x1000);
+    set(192, 8, 0xff);
+    set(generic_start - 4, 4, 15);
+    set(generic_start, 4, 15);
+    assert_eq!(
+        u32::from_le_bytes(header[52..56].try_into().unwrap()),
+        0x000ff000
+    );
+    let code = include_bytes!("../../../examples/shaders/texture.vert.bin");
+    let mut program = header.to_vec();
+    program.extend_from_slice(code);
+    let p = emulator_shader::decode_program(&program, Stage::Vertex).unwrap();
+    assert!(p.varying_outputs().is_some());
+    let page = include_bytes!("../../../examples/gpu/texture-rgba-page.bin");
+    assert_eq!(&page[0xa00..0xa50], &header);
+    // Reproduce the initially misplaced word14 map and require rejection.
+    program[54] = 0;
+    program[56] = 15;
+    assert_eq!(
+        emulator_shader::decode_program(&program, Stage::Vertex),
+        Err(emulator_shader::Error::Header)
+    );
+}

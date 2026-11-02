@@ -23,7 +23,7 @@ def shader_data(ops):
 
 def header(vertex):
  w=list(struct.unpack('<20I',sph(vertex)))
- if vertex:w[6]=0xff;w[14]=15
+ if vertex:w[6]=0xff;w[13]|=15<<16
  else:w[6]=15
  return struct.pack('<20I',*w)
 def pixels(updated=False):

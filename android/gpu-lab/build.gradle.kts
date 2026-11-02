@@ -13,8 +13,8 @@ android {
         applicationId = "com.algosculptor.emulator.gpulab"
         minSdk = 31
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.21.0-dev"
+        versionCode = 23
+        versionName = "0.21.1-dev"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
             cmake {

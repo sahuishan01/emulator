@@ -13,7 +13,18 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.21.0-dev
+## Current implementation: 0.21.1-dev
+
+Patch correction: SPH Type1 generic0 OMAP begins at bit432 (word13 upper half),
+Position at428; combined word13=000ff000, word14=0. Independent table-width bit
+packing test checks parser/fixtures and rejects oldword14 map. The initial0.21.0
+candidate shared the incorrect field between parser/generator; final specification
+audit caught it after software tests. Old candidate remains draft/withdrawn, tag
+unchanged for provenance. Deliver onlyv0.21.1-dev, never the withdrawn0.21.0 APK.
+Corrected same-APK47UI/121batch checks pass, including exact exports/cold restore/
+all3 AtomicFile recoveries. Screenshots inspected, empty crash buffers and no
+app fatal/ANR; owned AVD stopped and process awaited. Source/data/API layouts
+remain bounded; physical Mali checkpoint is still pending.
 
 Guest texture/varying batch: original vertex generic0/1 ALD, generic0 AST,
 fragment IPA.PASS screen-linear input and constant-handle TEX.B.LZ 2D RGBA sampling.
@@ -45,13 +56,13 @@ background and retains destroyed textures until Vulkan teardown. Shader-rendered
 normal diagnostic export and AtomicFile backup recovery. Generic imports still
 use text execution; this scene is not a full guest display service or a game.
 
-App0.21.0-dev/code22/schema4/workload22/nativeworkload8.121 checks now: engine16
+App0.21.1-dev/code23/schema4/workload23/nativeworkload9.121 checks now: engine16
 (suite13),NV50(suite3),GPUcore11(suite3),shader25(suite3),Vulkan19. Prior103
-named test records match host0.20 exactly.195 Rust tests/fmt/Clippy pass; fresh
+named test records match host0.20 exactly.196 Rust tests/fmt/Clippy pass; fresh
 host Vulkan19/zero validation errors and pinned two-ABI assembly/lint/signature/
 17exports/16KiB packaging/main-app manifest checks pass. APK SHA256
-f1bf88bc999a7d355e2ba8d976f9c82da9224f6962fbdce97350bdfd96c9f082
-(14,184,481bytes). Actual0.20->0.21 AVD upgrade preserves all old catalog rows
+945eaad2f6b7dd08536c18f16a864e7c4ff3ebf20576e68f6ea12681529794ed
+(10,232,808bytes). Actual0.20->0.21 AVD upgrade preserves all old catalog rows
 and report cache, adds scene.19app/17Catch/11texture UI checks pass with zero
 app crashes/ANRs; scene validates128displayed pixel centers per capture, all3
 patterns/rapid input/rotation/background/repeated surfaces. Full121 diagnostics,

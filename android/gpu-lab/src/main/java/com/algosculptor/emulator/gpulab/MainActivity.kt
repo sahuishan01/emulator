@@ -19,7 +19,7 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 22
+        private const val WORKLOAD_VERSION = 23
     }
 
     private external fun runNvChecks(): ByteArray

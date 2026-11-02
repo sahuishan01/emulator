@@ -24,7 +24,7 @@ pub fn decode_program(bytes: &[u8], stage: Stage) -> Result<Program, Error> {
             }
             expected[13] = 0xf000;
             if program.varying_outputs().is_some() {
-                expected[14] = 15;
+                expected[13] |= 15 << 16;
             }
         }
         Stage::Fragment => {

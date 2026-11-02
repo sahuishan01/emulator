@@ -1,6 +1,6 @@
 # Android original-engine checks
 
-Version 0.21.0-dev embeds the original Rust engine into the Android app, with
+Version 0.21.1-dev embeds the original Rust engine into the Android app, with
 diagnostics under Settings and a [library/import/player foundation](android-app.md).
 The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
@@ -66,10 +66,10 @@ validate the Android C ABI or either Android runtime architecture.
 
 ## Report and device checkpoint
 
-Schema4/workload22 requires all five groups for combined allPassed. One Run all
+Schema4/workload23 requires all five groups for combined allPassed. One Run all
 checks tap runs121 cases: sixteen interpreted NROs (suite13), fifty NV scenarios
 (suite3), eleven GPU-core cases(suite3), twenty-five shader cases(suite3) and
-nineteen Vulkan checks(workload8). Summary/export stay together; older workload
+nineteen Vulkan checks(workload9). Summary/export stay together; older workload
 caches are invalidated. Texture/varying semantics, the new value ABI and visible
 scene are documented in [the texture batch](texture-draw-batch.md).
 
@@ -99,7 +99,7 @@ Historical software/physical records remain under docs/validation/.
 After the owned AVD boots, verify the entire flow with:
 
 ```sh
-python3 tools/qa_android_batch.py --apk android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk --output reports/android-qa/v0.21.0-dev/batch --version 0.21.0-dev --workload 22 --previous-workload 21 --gpu-tests 19 --gpu-workload 8 --engine-reference reports/v0.21-host-engine.json --nv-reference reports/v0.21-host-nv.json --core-reference reports/v0.21-host-gpu-core.json --shader-reference reports/v0.21-host-shader.json --shutdown
+python3 tools/qa_android_batch.py --apk android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk --output reports/android-qa/v0.21.1-dev/batch --version 0.21.1-dev --workload 23 --previous-workload 22 --gpu-tests 19 --gpu-workload 9 --engine-reference reports/v0.21.1-host-engine.json --nv-reference reports/v0.21.1-host-nv.json --core-reference reports/v0.21.1-host-gpu-core.json --shader-reference reports/v0.21.1-host-shader.json --shutdown
 ```
 
 Generate references with the reference_report example (default, nv, gpu-core, shader).

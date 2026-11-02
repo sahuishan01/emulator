@@ -7,7 +7,7 @@ General guest shaders and commercial Switch games remain unsupported. The C++ im
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-Nineteen bounded workloads (native workload version 8). The first nine are:
+Nineteen bounded workloads (native workload version 9). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -105,7 +105,7 @@ retained package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Open Settings → Diagnostics, run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version0.21.0-dev uses schema4/workload22: engine16, nv50, gpuCore11, shader25
+Version0.21.1-dev uses schema4/workload23: engine16, nv50, gpuCore11, shader25
 and gpu19 Vulkan cases. All five groups must pass (121 total). Native cases
 consume SPIR-V emitted by our original SM53 translator: full RGBA output,
 transformed BGRA geometry and ordered draws with two different fragment shaders.

@@ -1,13 +1,13 @@
-# Guest textures on Android (0.21.0-dev)
+# Guest textures on Android (0.21.1-dev)
 
-Final debug APK: 14,184,481 bytes, SHA-256
-`f1bf88bc999a7d355e2ba8d976f9c82da9224f6962fbdce97350bdfd96c9f082`.
-Version code22, report schema4/workload22, native workload8. ARM64/x86_64,
+Final debug APK: 10,232,808 bytes, SHA-256
+`945eaad2f6b7dd08536c18f16a864e7c4ff3ebf20576e68f6ea12681529794ed`.
+Version code23, report schema4/workload23, native workload9. ARM64/x86_64,
 retained application ID/signing identity, private development prerelease.
 
 ## Host and build evidence
 
-All195 Rust tests pass, including the new texture value bridge, exact ABI layouts,
+All196 Rust tests pass, including the new texture value bridge, exact ABI layouts,
 three independent image formulas and invalid-index publication rules. The
 expanded portable corpus covers actual vertex varying/IPA/TEX semantics, missing
 or malformed texture bindings, nonfinite coordinates, unsupported modifiers,
@@ -37,22 +37,21 @@ establish a16KiB-page Android runtime test.
 
 ## Android application and display
 
-The owned API35/x86_64 SwiftShader AVD was started only after98.56% CPU idle,
+The owned API35/x86_64 SwiftShader AVD was started only after97.75% CPU idle,
 nice10/two cores/2048MiB requested (the emulator raises this to2560MiB), and boot
 completion was checked. An earlier startup was refused at41.46% idle. No physical
 ADB target was used.
 
-The actual0.20→0.21 install preserves every existing catalog row and byte-exact
-prior diagnostic cache, and adds the protected texture-scene row without a schema
-change. The dedicated test app data was then cleared for independent import QA;
+The initial0.20→0.21 candidate upgrade preserved the existing catalog/cache and
+seeded the protected scene. The corrected0.21→0.21.1 update independently
+preserves all four existing catalog rows and the byte-exact prior report. The dedicated test app data was then cleared for independent import QA;
 user-device data was not cleared.
 
 All19 library/import/runtime/settings checks pass, including real provider
 cancellation/rotation, invalid/duplicate/module/size rejection, selected-file
 execution/output/fault, removal/private-copy persistence, recents and preferences.
 All17 existing visible Catch/held-control/lifecycle checks pass. No app crash or
-ANR is recorded; final crash buffers are empty. Two picker transitions required
-bounded fresh XML retries.
+ANR is recorded; final crash buffers are empty. A System UI startup ANR required the documented fresh-XML Wait action; no app ANR occurred.
 
 `qa_texture_scene.py` passes11 checks: library launch, actual displayed RGBA
 sampling, BGRA color preservation, changed texture contents, pattern wrap, rapid
@@ -73,12 +72,12 @@ summary is correct. Real picker export, cold restore and recovery of all three
 AtomicFile caches (diagnostics, Catch, texture scene) are byte-exact. Both stopped
 scene/player snapshots are included in the ordinary export.
 
-The authentic pre-upgrade workload21 report was restored only to test cache
+The authentic pre-upgrade workload22 report was restored only to test cache
 invalidation after the dedicated library reset. New passing results were executed,
-not seeded. Save/restore/backup UI transitions each required one bounded XML retry.
+not seeded. One save-picker transition required a bounded fresh XML retry.
 Final crash buffer is empty with no app fatal/ANR. The explicitly owned AVD was
 stopped and its process awaited successfully. Raw evidence remains ignored under
-`reports/android-qa/v0.21.0-dev/` and `reports/v0.21-*`.
+`reports/android-qa/v0.21.1-dev/` and `reports/v0.21.1-*`.
 
 ## Interpretation
 
@@ -89,3 +88,17 @@ General imported-homebrew graphics, tiled/mipped/filtered/compressed textures,
 normal HID/VI/display queues, broader CPU/shaders, audio, saves, JIT, commercial
 games and practical console performance remain open. The visible scene is an
 original reference workload, not a newly playable console title.
+
+
+## Candidate withdrawal and independent header audit
+
+The first0.21.0 candidate completed its software tests with an incorrect vertex
+OMAP placement shared by the parser and fixtures. The final audit of NVIDIA's
+packed SPH Type1 field widths found generic0 at bit432, not bit448. The candidate
+was changed back to draft before user delivery; its source tag remains for
+provenance. The delivered0.21.1 build uses word13=0x000ff000 and word14=0 for
+Position plus generic0. An added independent test serializes the published table
+widths into a byte stream, verifies fixture/parser agreement with that stream,
+and rejects the misplaced word14 header. All software checks described above
+are repeated on the corrected build; the old candidate's passing results alone
+are not used as final evidence. See the [layout calculation](../texture-draw-batch.md#packed-header-correction-0211).

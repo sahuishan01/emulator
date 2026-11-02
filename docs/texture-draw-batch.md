@@ -95,8 +95,23 @@ it. Pattern/rotation/reopen support reports are cached atomically and included
 in the ordinary diagnostic export.
 
 The batch is now121 checks: engine16, NV50, GPU core11, shader25 and Vulkan19.
-Report schema4/workload22 invalidates earlier caches; native workload8 changes
+Report schema4/workload23 invalidates earlier caches; native workload9 changes
 with the expanded corpus. The previous103 named test records remain exact.
 There are no new external Cargo/runtime dependencies. General VI/HID/display
 queues, commercial content, broader ISA/shaders/textures and performance remain
 unfinished; this is a development checkpoint.
+
+
+## Packed-header correction (0.21.1)
+
+The vertex generic0 export map starts at bit432: the five common words and
+complete IMAP section occupy400 bits, followed by32 OMAP system bits. It shares
+word13 with the Position map. Position is bits428..431; generic0 is bits432..435,
+so the combined word is0x000ff000 and word14 remains zero. This follows the
+sequential widths in [NVIDIA's SPH Type1 table](https://nvidia.github.io/open-gpu-doc/Shader-Program-Header/Shader-Program-Header.html).
+An independent test packs the documented fields into a byte stream and checks
+both the parser and owned fixtures, and rejects the misplaced word14 map.
+The initial0.21.0 candidate put generic0 at bit448; its shared parser/fixtures
+agreed and software rendering passed, so the final manual specification audit
+was necessary to find it. That candidate was withdrawn to draft before delivery.
+The delivered build is0.21.1-dev with app workload23/native workload9.
