@@ -288,6 +288,36 @@ impl Rig {
         self.program(&words);
         words.len() as u32
     }
+    fn prepare_draw(&mut self, write: bool, index: usize) {
+        self.prepare_color(write);
+        let page = [
+            include_bytes!("../../../examples/gpu/draw-rgba-page.bin"),
+            include_bytes!("../../../examples/gpu/draw-bgra-page.bin"),
+            include_bytes!("../../../examples/gpu/draw-scissor-page.bin"),
+        ][index];
+        self.m.write(0x8000, page).unwrap();
+    }
+    fn draw_program(&mut self, extras: &[(u32, u32)]) -> u32 {
+        let mut bytes = include_bytes!("../../../examples/gpu/draw-rgba-commands.bin").to_vec();
+        for (offset, data) in extras {
+            bytes.extend(words(&[0x20010000 | (offset / 4), *data]));
+        }
+        self.m.write(0x8000, &bytes).unwrap();
+        (bytes.len() / 4) as u32
+    }
+    fn verify_draw(&mut self, index: usize) {
+        self.verify_image(|x, y| {
+            let mut p = if (4..12).contains(&x) && (2..6).contains(&y) && (index != 2 || x < 8) {
+                [255, 0, 0, 255]
+            } else {
+                [0, 255, 0, 255]
+            };
+            if index == 1 {
+                p.swap(0, 2);
+            }
+            p
+        });
+    }
     fn verify_image(&mut self, expected: impl Fn(u32, u32) -> [u8; 4]) {
         let mut actual = [0; 512];
         self.m.read(0x8800, &mut actual).unwrap();
@@ -813,6 +843,215 @@ pub fn run() -> Vec<CaseResult> {
             r.verify_image(|_, _| [0x55; 4]);
             assert_eq!(r.read(r.point), 1);
         }),
+        ("draw-command-headers-shaders-and-completion", |r| {
+            r.prepare_draw(true, 0);
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+            r.verify_draw(0);
+            assert_eq!(r.read(r.point), 1);
+            assert_eq!(r.submit(3, r.point, 1, 0x400, 2), 0);
+            r.verify_draw(0);
+            assert_eq!(r.read(r.point), 2);
+            // Fetch only the second triangle using a nonzero first vertex.
+            r.m.write(0x8800, &[0; 512]).unwrap();
+            r.m.write_u32(0x8404, 0x40030003).unwrap();
+            assert_eq!(r.submit(2, 0, 0, 0x400, 2), 0);
+            r.verify_image(|x, y| {
+                if (4..12).contains(&x) && (2..6).contains(&y) && x + 2 * y >= 15 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0; 4]
+                }
+            });
+            assert_eq!(r.read(r.point), 3);
+        }),
+        ("draw-bgra-storage-order", |r| {
+            r.prepare_draw(true, 1);
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+            r.verify_draw(1);
+        }),
+        ("draw-scissor-and-overlapping-triangles", |r| {
+            r.prepare_draw(true, 2);
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+            r.verify_draw(2);
+        }),
+        ("draw-invalid-headers-rollback-and-recovery", |r| {
+            r.prepare_draw(true, 0);
+            for (address, bad) in [
+                (0x8a00, 0),
+                (0x8a18, 0),
+                (0x8a34, 0),
+                (0x8b00, 0),
+                (0x8b48, 0),
+            ] {
+                let saved = r.m.read_u32(address).unwrap();
+                r.m.write_u32(address, bad).unwrap();
+                assert_eq!(r.submit(2, 0, 0, 0, 126), 4);
+                r.verify_image(|_, _| [0; 4]);
+                assert_eq!(r.read(r.point), 0);
+                r.m.write_u32(address, saved).unwrap();
+            }
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+            r.verify_draw(0);
+        }),
+        ("draw-invalid-shader-and-register-allocation", |r| {
+            r.prepare_draw(true, 0);
+            let saved = r.m.read_u64(0x8a58).unwrap();
+            r.m.write_u64(0x8a58, 0).unwrap();
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 4);
+            r.verify_image(|_, _| [0; 4]);
+            r.m.write_u64(0x8a58, saved).unwrap();
+            let n = r.draw_program(&[(0x214c, 1), (0x1214, 0x40060000)]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 4);
+            r.verify_image(|_, _| [0; 4]);
+        }),
+        ("draw-invalid-format-range-domain-and-state", |r| {
+            r.prepare_draw(true, 0);
+            for bad in [
+                (0x1160, 0),
+                (0x1c00, 0x1020),
+                (0x1f04, 0xd10),
+                (0x12cc, 1),
+                (0x1360, 1),
+                (0x1918, 1),
+                (0x1380, 1),
+                (0x1a00, 1),
+                (0x121c, 2),
+                (0x13ac, 1),
+                (0xa00, 0),
+                (0x2040, 1),
+                (0x2000, 1),
+                (0x2044, 0xa01),
+            ] {
+                let n = r.draw_program(&[bad, (0x1214, 0x40060000)]);
+                assert_eq!(r.submit(2, 0, 0, 0, n), 4, "{bad:?}");
+                r.verify_image(|_, _| [0; 4]);
+            }
+            r.draw_program(&[]);
+            r.m.write_u32(0x8d0c, 0).unwrap();
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 4);
+            r.m.write_u32(0x8d0c, 1f32.to_bits()).unwrap();
+            r.m.write_u32(0x8d00, f32::MIN_POSITIVE.to_bits()).unwrap();
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 4);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("draw-readonly-target-rejected", |r| {
+            r.prepare_draw(false, 0);
+            // Disable the clear launch so this rejection reaches draw writes.
+            r.m.write_u32(0x8000 + 17 * 8, 0x20010040).unwrap();
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 4);
+            r.verify_image(|_, _| [0; 4]);
+        }),
+        ("draw-late-error-cancels-pixels-state-and-fence", |r| {
+            r.prepare_draw(true, 0);
+            assert_eq!(r.submit(2, 0, 0, 0, 128), 4);
+            r.verify_image(|_, _| [0; 4]);
+            assert_eq!(r.submit(2, 0, 0, 0x400, 2), 4);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("draw-failed-reply-cancels-pixels-and-fence", |r| {
+            r.prepare_draw(true, 0);
+            assert!(r
+                .io_at(
+                    r.channel,
+                    SUBMIT,
+                    &[0, 0, 1, 2, 0, 0, 0, (126 << 10) | 1],
+                    101,
+                    0x6000
+                )
+                .is_err());
+            r.verify_image(|_, _| [0; 4]);
+            assert_eq!(r.read(r.point), 0);
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+            r.verify_draw(0);
+        }),
+        ("draw-output-alias-rejected-before-effects", |r| {
+            r.prepare_draw(true, 0);
+            assert_eq!(
+                r.io_at(
+                    r.channel,
+                    SUBMIT,
+                    &[0, 0, 1, 2, 0, 0, 0, (126 << 10) | 1],
+                    1,
+                    0x8800
+                )
+                .unwrap(),
+                4
+            );
+            r.verify_image(|_, _| [0; 4]);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("draw-active-tls-alias-rejected-before-effects", |r| {
+            r.prepare_draw(true, 0);
+            assert_eq!(r.io(r.nv, 0xc0080101, &[4096, 0]), 0);
+            let obj = r.m.read_u32(0x6004).unwrap();
+            assert_eq!(
+                r.io(r.nv, 0xc0200104, &[obj, 0, 1, 4096, 0, 0, 0x2000, 0]),
+                0
+            );
+            assert_eq!(r.io(r.asfd, MAP, &[0, 0, obj, 0, 0, 0, 0, 0, 0, 0]), 0);
+            let n = r.draw_program(&[(0x804, 0x1000), (0x1214, 0x40060000)]);
+            assert!(r
+                .io_at(
+                    r.channel,
+                    SUBMIT,
+                    &[0, 0, 1, 2, 0, 0, 0, (n << 10) | 1],
+                    1,
+                    0x6000
+                )
+                .is_err());
+            r.verify_image(|_, _| [0; 4]);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        ("draw-closed-owners-and-cloned-client-retained", |r| {
+            r.prepare_draw(true, 0);
+            assert_eq!(r.close(r.nv), 0);
+            assert_eq!(r.close(r.asfd), 0);
+            r.clone_client();
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+            r.verify_draw(0);
+            assert_eq!(r.close(r.channel), 0);
+            assert_eq!(r.read(r.point), 1);
+        }),
+        ("draw-cpu-reuse-does-not-redirect-inputs-or-target", |r| {
+            r.prepare_draw(true, 0);
+            let old = r.m.pin(0x8000, 4096, Permissions::READ_WRITE).unwrap();
+            r.m.map_alias(0xa000, &old, Permissions::READ_WRITE)
+                .unwrap();
+            drop(old);
+            r.m.unmap(0x8000, 4096).unwrap();
+            r.m.map(0x8000, vec![0x55; 4096], Permissions::READ_WRITE)
+                .unwrap();
+            assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+            r.verify_image(|_, _| [0x55; 4]);
+            r.verify(0xa800, 0xff00ff00ff00ff00);
+        }),
+        ("draw-input-output-feedback-rejected", |r| {
+            r.prepare_draw(true, 0);
+            let n = r.draw_program(&[(0x804, 0xa00), (0x1214, 0x40060000)]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 4);
+            r.verify_image(|_, _| [0; 4]);
+            assert_eq!(r.read(r.point), 0);
+        }),
+        (
+            "draw-degenerate-triangles-complete-without-fragments",
+            |r| {
+                r.prepare_draw(true, 0);
+                for vertex in 0..6 {
+                    r.m.write(0x8d00 + vertex * 16, &words(&[0, 0, 0, 0x3f800000]))
+                        .unwrap();
+                }
+                assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+                r.verify_image(|_, _| [0, 0, 0, 255]);
+                assert_eq!(r.read(r.point), 1);
+            },
+        ),
+        ("draw-shared-operation-budget-is-atomic", |r| {
+            r.prepare_draw(true, 0);
+            let n = r.draw_program(&vec![(0x1214, 0x40060000); 64]);
+            assert_eq!(r.submit(2, 0, 0, 0, n), 4);
+            r.verify_image(|_, _| [0; 4]);
+            assert_eq!(r.read(r.point), 0);
+        }),
     ];
     cases
         .iter()
@@ -862,7 +1101,7 @@ mod tests {
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();
-        assert_eq!(cases.len(), 34);
+        assert_eq!(cases.len(), 50);
         for case in cases {
             assert!(case.passed, "{}: {}", case.name, case.error)
         }

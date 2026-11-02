@@ -35,6 +35,7 @@ name = "emulator-gpu"
 version = "0.1.0"
 dependencies = [
  "emulator-memory",
+ "emulator-shader",
 ]
 
 [[package]]

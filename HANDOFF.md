@@ -13,7 +13,7 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.17.0-dev
+## Current implementation: 0.18.0-dev
 
 Twelve original Rust crates, no external Cargo dependencies. Eleven core crates
 forbid unsafe; android-ffi permits export attributes only, with no unsafe blocks
@@ -27,7 +27,7 @@ implementation-plan.md for scope/milestones; M4 guest graphics gate is still ope
   views; no payload copy or revocation. Page tables/coherence remain incomplete.
 - CPU/loader: original integer A64 subset with guest TLS/MRS/SVC, static NRO0
   RX/R/RW/BSS and guarded stack. FP/SIMD/atomics/JIT, NSO/MOD0/linking/full runtime
-  and content/game loading remain open. Fourteen owned NROs are LLVM-assembled.
+  and content/game loading remain open. Fifteen owned NROs are LLVM-assembled.
 - Kernel: 256 handles, one host executor/16 lifetime guest threads, events,
   blocking waits, cancellation, virtual deadlines and cloned session identity.
   One virtual ns/instruction is a reference model, not console frequency.
@@ -44,7 +44,8 @@ implementation-plan.md for scope/milestones; M4 guest graphics gate is still ope
   <=64 launches/4 MiB scratch/copied bytes per batch. Mapping snapshots preserve
   space identity; opaque host mapping IDs never reuse even for canceled branches.
   ChannelProcessor returns isolated successor state plus a cancelable effect.
-  Guest draw/shader translation and host renderer integration remain open.
+  Bounded SPH/shader/draw reference execution now works; live host renderer
+  integration remains open.
 - NVMap/AS: 16 live fds/client; non-reused client-wide object IDs with owning-fd
   checks; 64 objects/owner. Alloc imports existing guest backing (READ/RW, linear,
   cached defaults), not fresh allocation. Import cap 64 MiB/4096 spans/client.
@@ -68,7 +69,7 @@ implementation-plan.md for scope/milestones; M4 guest graphics gate is still ope
   request snapshots. See docs/nv-channel-batch.md for exact operations/limits.
 - Color clears: original B197 context, pitch-linear target 0, RGBA8/BGRA8 UNORM,
   finite colors, clear/scissor rectangles, channel masks and ordered row effects.
-  All required state explicit; no tiled/depth/MRT/layer/draw/shader support.
+  All required state explicit; no tiled/depth/MRT/layer support in the clear subset; draw support is separate below.
   64 operations/4 MiB touched bytes/4096 spans are shared with DMA. Masked clears
   read current backing, full clears need only WRITE. Output/TLS aliases and
   failed replies cancel pixels/state/fences. See docs/color-clear-batch.md.
@@ -79,7 +80,7 @@ implementation-plan.md for scope/milestones; M4 guest graphics gate is still ope
   no live renderer/display handoff. Rust BC1
   decoder/corpus remains independent. No console performance claim.
 
-## Original shader batch (new)
+## Original raw shader batch (0.17 checkpoint)
 
 Dependency-free `crates/shader` decodes raw SM53 32-byte scheduling/instruction
 bundles into immutable typed SSA, evaluates serial reference semantics and emits
@@ -105,21 +106,63 @@ zero word counts. APK verifier now verifies all6 Rust exports in both libraries.
 Vulkan actually consumes emitted vertex/fragment SPIR-V in 3 added exact-pixel
 checks: fullscreen green RGBA; FMUL-scaled red geometry with black border/BGRA
 storage; green then scissored red using different shader pipelines in one job.
-Host supplies vertex layout/draw/scissor; no guest shader header/draw/presentation.
+This older raw-code replay supplies layout/draw/scissor on the host. The new
+guest-command path below derives those fields from actual commands.
 Earlier clear replays still use fixed host shaders, as documented.
+
+## Guest draw command batch (new)
+
+Actual B197 region/pipeline/vertex attribute/stream/limit/viewport/scissor and
+compact0x1214 non-indexed triangle commands now feed original SPH decoding,
+shader SSA/SPIR-V and bounded CPU rasterization. Version3/SASS1 header profile:
+VTG1 vertex/location0/position, PS2 pixel/target0; all other fields fail. Explicit
+pipeline type/register allocation must match body use. GPU capture stops at EXIT
+within2048 bytes. At most96 vertices,64x64 target, w1/no clipping, exact reversible
+1/16 pixel grid, depth/stencil/blend/cull disabled/full RGBA mask. Top-left integer
+coverage, uniform fragment output and transactional row effects. No general GPU
+state/shaders/clip/interpolation/depth/indexing/instancing/async display claims.
+
+Inputs/modules are owned snapshots; pins hold original backing. Output overlap
+with any captured shader/vertex input, including GPU aliases, fails explicitly.
+All64-op/4MiB effects+snapshot/module budgets and4096 pin-span limits shared with
+DMA/clear. Methods preserve order; direct draw-then-DMA test observes new pixels.
+Boxed draw registers deep-clone per request, no shared mutable snapshot metadata.
+
+Original draw-rgba/bgra/scissor command+page fixtures:126words/4096bytes; full
+black clear, full green draw, centered red draw. SPH/SASS offsets a00/b00/c00/e00,
+vertices d00, target800, retained draw at400. New nv-draw.nro runs5571 instructions/
+25IPC/2copies/18A/11B/603bytes; rejects128-word job, checks pixels/fence, closes
+bound owners, redraws from retained state, closes channel/completion2 and restores
+transfer marker42, zero resources. Every pixel independently checked. The older
+clear NRO's equal instruction count is coincidental; separate fixtures/oracles.
+
+16 new actual kernel/NV cases make50: correct pixels, BGRA/scissor, first-vertex
+fetch, invalid headers/shader/registers/formats/ranges/domain/state, readonly draw
+(clear disabled), late/reply rollback, B/TLS aliases, closed owners/clones, CPU
+reuse, feedback, degenerate completion and shared budgets. Four SPH report cases
+make19: positive vertex/pixel,1280 header-bit mutations, truncations/stage errors.
+Shader totals282 instructions/2842 emitted words/30 invocations/1655 rejections.
+
+New emulator_guest_draw_replay_v1 returns50452 bytes/alignment4: header16,
+background60,3 DrawOp x16536, image512/error256. Offsets76/49684/50196 checked;
+record modules/vertices56/8248/16440. Failure counts zero, owned bytes/no pointers.
+Three Vulkan cases derive all shaders/vertices/target/scissor from these guest
+plans (case0 runs actual NRO/page), compare full512 byte readbacks to independent
+oracles/guest image. These are command replays after CPU completion, not live
+renderer or display integration. Current replay fixture ABI supports6 vertices/
+3 records separately from broader CPU limits. See docs/guest-draw-batch.md.
 
 ## Batched Android report
 
-Schema4/workload17: engine14 (suite11), NV34 (suite2, executesGuestCpu:false),
-gpuCore3 (suite2), shader15 (suite1), Vulkan12 (workload5). Run all checks executes
-all78, summarizes actual outcomes and exports one JSON. All five groups required. Older
-workload caches are invalidated; missing groups show incomplete checks.
+Schema4/workload18: engine15(suite12), NV50(suite3, executesGuestCpu:false),
+gpuCore3(suite2), shader19(suite2), Vulkan15(workload6), total102. All five groups
+required; one run/export. Older workload caches are invalidated.
 
 EngineReport ABI 2 remains 8200 bytes/alignment 4/offset 8/payload 8192. Its three
 _v2 exports are unchanged. New emulator_guest_clear_replay_v1(index) is a
 1264-byte/alignment-4 owned value: header, 8 ops x60 bytes, image512/error256.
 Offsets/size are checked in Rust/C++; failures have zero operations/status!=0.
-Host report sizes: engine5302/NV4427/core642/shader2270 bytes.
+Host report sizes: engine5683/NV6557/core642/shader2891 bytes.
 
 New nv-color-clear.nro: 5571 instructions/25 IPC/2 copied handles/18 A/11 B/
 603 descriptor bytes, full independent 128-pixel oracle at image5800, completion2
@@ -134,8 +177,8 @@ DMA/clear queues. GPU effects preserve order and pins through CPU address reuse.
 
 ## Evidence and verification
 
-- 176 Rust tests (including the thirty-four-scenario runner), fmt and Clippy with
-  warnings denied; 25 LLVM fixtures (11 raw/14 NROs); pinned ARM64/x86_64 build,
+- 183 Rust tests (including the thirty-four-scenario runner), fmt and Clippy with
+  warnings denied; 26 LLVM fixtures (11 raw/15 NROs); pinned ARM64/x86_64 build,
   Gradle lint, signature and 16 KiB ELF/ZIP packaging checks pass. Packaging is
   not a 16 KiB Android runtime test. Keep exact APK hash in validation/release notes.
 - Supplied 0.14 phone report passes all 21 prior cases, matching all engine/core
@@ -147,7 +190,9 @@ DMA/clear queues. GPU effects preserve order and pins through CPU address reuse.
   docs/validation/g720-nv-channel-batch.md. All three Rust groups match fresh
   references except architecture. Supplied 0.16 color-clear/replay now passes all60 checks on G720; see
   docs/validation/g720-color-clear-batch.md. All three Rust groups match the host
-  references except architecture. Shader0.17 still awaits physical evidence.
+  references except architecture. Supplied0.17 now passes all78 checks, including three translated shader cases;
+  all four Rust groups match references except architecture. See
+  docs/validation/g720-shader-translation-batch.md. New0.18 awaits physical evidence.
 - Android 0.15 passes all 40 cases with derived summary, upgrade invalidation,
   exact export and cold restore. A save-navigation timing issue in the QA harness
   was fixed with bounded expected-screen polling; resumed verification after AVD
@@ -164,6 +209,13 @@ DMA/clear queues. GPU effects preserve order and pins through CPU address reuse.
   inspected; no app crash/ANR. Desktop12/12 with validation/zero errors. A System UI
   startup ANR Wait was handled via fresh XML; owned AVD shutdown/await succeeded.
   See docs/validation/android-shader-translation-batch.md for APK hash/evidence.
+- Android0.18 passes all102 with four exact Rust reference comparisons, visible
+  summary, upgrade invalidation and exact export/cold restore. Desktop15/15 with
+  validation enabled/zero errors; all previous per-case records unchanged. Both
+  screenshots inspected. System UI startup ANR Wait plus two empty picker XML
+  retries recorded; no app crash/ANR. Owned AVD stopped/awaited. Final APK hash and
+  limits in docs/validation/android-guest-draw-batch.md. All7 Rust exports verified
+  in both libraries.183 Rust tests/26 LLVM fixtures and new draw fixtures pass.
 - Historical software/physical evidence is under docs/validation/. Supplied
   microchecks do not establish guest graphics, full compatibility or performance.
   Keep reports, captures, helper outputs, games/keys/firmware/APKs ignored.
@@ -182,7 +234,7 @@ Use tools/qa_android_batch.py for the entire upgrade/run/summary/export/restore/
 log flow. It compares all four Rust groups to the host JSON, not just allPassed.
 It verifies fresh XML before deriving taps, waits for asynchronous save navigation,
 uses bounded retries/timeouts and can resume export/restore from an already
-verified run. For0.17 pass --gpu-tests12 --gpu-workload5 --shader-reference reports/v0.17-host-shader.json. The runner can --shutdown its explicitly owned AVD. Initial and
+verified run. For0.18 pass --gpu-tests15 --gpu-workload6 --shader-reference reports/v0.18-host-shader.json. The runner can --shutdown its explicitly owned AVD. Initial and
 resumed attempts/captures must be retained; do not hide app ANRs as infrastructure.
 
 Owned AVD: reports/android-qa/avd, gpu-lab-api35, emulator-5580. Before background
@@ -194,9 +246,10 @@ startup ANR Wait may be handled using its exact current XML; app ANRs fail QA.
 ## Next combined work
 
 Continue the M4 graphics/shader/renderer slice with a known owned workload.
-Color-clear replay and raw SM53 translation are partial progress. Connect graphics
-program headers, guest draw methods/state and shader interfaces to a live renderer
-and presentation; the current host draw setup bypasses those guest commands. Batch needed command/state/shader and negative/lifetime tests together;
+Color-clear replay and raw SM53 translation are partial progress. Connect the now-decoded guest graphics
+operations to a live renderer and display/presentation. The offscreen replay
+bridge executes after CPU reference completion; integrate real host completion
+and resource lifetime before expanding asynchronous fences. Batch needed command/state/shader and negative/lifetime tests together;
 do not require a phone report per small opcode/ioctl. Broader asynchronous GPU
 scheduling, error/event/fence contracts, CPU ISA/runtime/content, audio/input and
 performance remain explicit work. No gameplay compatibility is claimed yet.

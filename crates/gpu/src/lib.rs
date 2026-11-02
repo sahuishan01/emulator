@@ -5,6 +5,8 @@ use std::fmt;
 
 mod address_space;
 mod clear;
+mod draw;
+pub use draw::Draw;
 mod methods;
 pub use clear::{ColorClear, BGRA8_UNORM, MAXWELL_B, RGBA8_UNORM};
 mod submission;

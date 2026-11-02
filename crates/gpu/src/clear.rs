@@ -74,6 +74,12 @@ impl ColorRegisters {
         }
         Ok(None)
     }
+    pub(crate) fn draw_target(&self) -> Result<ColorClear, ExecutionError> {
+        let mut copy = self.clone();
+        copy.color = [Some(0); 4];
+        copy.control = Some(0x100);
+        copy.plan(0x3c)
+    }
     fn plan(&self, flags: u32) -> Result<ColorClear, ExecutionError> {
         // Reject depth/stencil, nonzero MRT/layer, empty masks and reserved bits.
         if flags == 0 || flags & !0x3c != 0 {

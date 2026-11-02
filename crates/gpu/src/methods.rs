@@ -29,6 +29,8 @@ pub struct ExecutionStats {
     pub copied_bytes: usize,
     pub clear_launches: usize,
     pub cleared_bytes: usize,
+    pub draw_launches: usize,
+    pub drawn_bytes: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionError {
@@ -41,6 +43,9 @@ pub enum ExecutionError {
     InvalidAddressUpper(u32),
     UnsupportedLaunch(u32),
     UnsupportedColorState,
+    UnsupportedDrawState,
+    Shader(String),
+    DrawInputFeedback,
     UninitializedRegister,
     EmptyCopy,
     Capacity,
@@ -69,7 +74,7 @@ pub(crate) struct MethodState {
 #[derive(Clone, Debug)]
 enum EngineState {
     Dma(DmaRegisters),
-    Color(crate::clear::ColorRegisters),
+    Color(crate::clear::ColorRegisters, Box<crate::draw::Registers>),
 }
 #[derive(Debug)]
 enum CopyInput {
@@ -91,6 +96,9 @@ pub(crate) struct PreparedBatch {
     state: MethodState,
     copies: Vec<Copy>,
     clears: Vec<crate::ColorClear>,
+    draws: Vec<crate::Draw>,
+    draw_inputs: Vec<GpuMemoryRange>,
+    snapshot_bytes: usize,
     stats: ExecutionStats,
 }
 impl PreparedBatch {
@@ -99,6 +107,9 @@ impl PreparedBatch {
     }
     pub(crate) fn clears(&self) -> &[crate::ColorClear] {
         &self.clears
+    }
+    pub(crate) fn draws(&self) -> &[crate::Draw] {
+        &self.draws
     }
     pub(crate) fn stats(&self) -> ExecutionStats {
         self.stats
@@ -160,6 +171,9 @@ impl MethodState {
             state: self.clone(),
             copies: Vec::new(),
             clears: Vec::new(),
+            draws: Vec::new(),
+            draw_inputs: Vec::new(),
+            snapshot_bytes: 0,
             stats: ExecutionStats {
                 methods: writes.len(),
                 ..ExecutionStats::default()
@@ -172,7 +186,9 @@ impl MethodState {
             if offset == 0 {
                 let engine = match write.data {
                     MAXWELL_DMA_COPY_A => EngineState::Dma(DmaRegisters::default()),
-                    crate::MAXWELL_B => EngineState::Color(crate::clear::ColorRegisters::default()),
+                    crate::MAXWELL_B => {
+                        EngineState::Color(crate::clear::ColorRegisters::default(), Box::default())
+                    }
                     _ => return Err(ExecutionError::UnsupportedClass(write.data)),
                 };
                 // This subset binds a class directly. NV object handles and
@@ -183,7 +199,14 @@ impl MethodState {
             let engine = channel
                 .as_mut()
                 .ok_or(ExecutionError::UnboundSubchannel(write.subchannel))?;
-            if let EngineState::Color(registers) = engine {
+            if let EngineState::Color(registers, draw_registers) = engine {
+                if let Some(command) = draw_registers.write(offset, write.data)? {
+                    if let Some(command) = command {
+                        let (draw, pins) = draw_registers.plan(space, registers, command)?;
+                        batch.add_draw(space, draw, pins, limits, &mut spans)?;
+                    }
+                    continue;
+                }
                 let clear = registers
                     .write(offset, write.data)
                     .map_err(|error| match error {
@@ -236,10 +259,16 @@ impl MethodState {
                     if length == 0 {
                         return Err(ExecutionError::EmptyCopy);
                     }
-                    if batch.stats.copy_launches + batch.stats.clear_launches >= limits.launches
+                    if batch.stats.copy_launches
+                        + batch.stats.clear_launches
+                        + batch.stats.draw_launches
+                        >= limits.launches
                         || length
                             > limits.bytes.saturating_sub(
-                                batch.stats.copied_bytes + batch.stats.cleared_bytes,
+                                batch.stats.copied_bytes
+                                    + batch.stats.cleared_bytes
+                                    + batch.stats.drawn_bytes
+                                    + batch.snapshot_bytes,
                             )
                     {
                         return Err(ExecutionError::Capacity);
@@ -290,6 +319,14 @@ impl MethodState {
                 }
             }
         }
+        if batch
+            .draw_inputs
+            .iter()
+            .flat_map(|p| p.backing_ranges())
+            .any(|a| batch.write_ranges().any(|b| overlaps(a, b)))
+        {
+            return Err(ExecutionError::DrawInputFeedback);
+        }
         Ok(batch)
     }
 }
@@ -305,11 +342,15 @@ impl PreparedBatch {
         let length = (clear.rect[2] - clear.rect[0]) as usize * 4;
         let rows = (clear.rect[3] - clear.rect[1]) as usize;
         let bytes = length.checked_mul(rows).ok_or(ExecutionError::Capacity)?;
-        if self.stats.copy_launches + self.stats.clear_launches >= limits.launches
+        if self.stats.copy_launches + self.stats.clear_launches + self.stats.draw_launches
+            >= limits.launches
             || bytes
-                > limits
-                    .bytes
-                    .saturating_sub(self.stats.copied_bytes + self.stats.cleared_bytes)
+                > limits.bytes.saturating_sub(
+                    self.stats.copied_bytes
+                        + self.stats.cleared_bytes
+                        + self.stats.drawn_bytes
+                        + self.snapshot_bytes,
+                )
         {
             return Err(ExecutionError::Capacity);
         }
@@ -365,6 +406,84 @@ impl PreparedBatch {
         self.clears.push(clear);
         self.stats.clear_launches += 1;
         self.stats.cleared_bytes += bytes;
+        Ok(())
+    }
+}
+
+fn overlaps(a: BackingRange, b: BackingRange) -> bool {
+    a.id == b.id && a.offset < b.offset + b.length && b.offset < a.offset + a.length
+}
+impl PreparedBatch {
+    fn add_draw(
+        &mut self,
+        space: &GpuAddressSpace,
+        draw: crate::Draw,
+        pins: Vec<GpuMemoryRange>,
+        limits: ExecutionLimits,
+        spans: &mut usize,
+    ) -> Result<(), ExecutionError> {
+        let coverage = draw.coverage()?;
+        let s = draw.surface;
+        let bytes = coverage.iter().filter(|p| **p).count() * 4;
+        let snapshots = pins.iter().map(GpuMemoryRange::len).sum::<usize>()
+            + (draw.vertex_spirv.len() + draw.fragment_spirv.len()) * 4;
+        if self.stats.copy_launches + self.stats.clear_launches + self.stats.draw_launches
+            >= limits.launches
+            || bytes + snapshots
+                > limits.bytes.saturating_sub(
+                    self.stats.copied_bytes
+                        + self.stats.cleared_bytes
+                        + self.stats.drawn_bytes
+                        + self.snapshot_bytes,
+                )
+        {
+            return Err(ExecutionError::Capacity);
+        }
+        *spans += pins
+            .iter()
+            .map(|p| p.backing_ranges().count())
+            .sum::<usize>();
+        if *spans > crate::address_space::MAX_BACKING_SPANS {
+            return Err(ExecutionError::Capacity);
+        }
+        let (color, mask) = s.storage_color();
+        for y in 0..s.height {
+            let mut x = 0;
+            while x < s.width {
+                if !coverage[(y * s.width + x) as usize] {
+                    x += 1;
+                    continue;
+                }
+                let first = x;
+                while x < s.width && coverage[(y * s.width + x) as usize] {
+                    x += 1;
+                }
+                let length = ((x - first) * 4) as usize;
+                let address =
+                    GpuVa(s.address.0 + u64::from(y) * u64::from(s.pitch) + u64::from(first) * 4);
+                let target = space
+                    .pin(address, length, Access::Write)
+                    .map_err(ExecutionError::Memory)?;
+                *spans += target.backing_ranges().count();
+                if *spans > crate::address_space::MAX_BACKING_SPANS {
+                    return Err(ExecutionError::Capacity);
+                }
+                self.copies.push(Copy {
+                    source: CopyInput::Solid {
+                        color,
+                        mask,
+                        previous: None,
+                    },
+                    target,
+                    buffer: vec![0; length],
+                });
+            }
+        }
+        self.draw_inputs.extend(pins);
+        self.snapshot_bytes += snapshots;
+        self.draws.push(draw);
+        self.stats.draw_launches += 1;
+        self.stats.drawn_bytes += bytes;
         Ok(())
     }
 }

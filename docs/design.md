@@ -165,7 +165,10 @@ the guest semantics require, rather than eagerly copying every pointer or
 retaining arbitrary mutable host slices across threads.
 
 The initial [implemented shader IR](shader-translation-batch.md) carries Bits32/F32
-SSA, a single vertex input/position interface and fragment color output. Broader IR
+SSA, a single vertex input/position interface and fragment color output. The
+[bounded draw path](guest-draw-batch.md) now captures SPH/shaders/vertices from GPU
+memory, prepares row effects and replays guest-selected Vulkan state. Live
+backend/presentation integration remains planned. Broader IR
 will carry control flow, stage inputs/outputs,
 memory effects, texture operations and required numerical semantics. Lower
 guest operations to native host features or a tested emulation path. Geometry,

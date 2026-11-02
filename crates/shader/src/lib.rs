@@ -2,8 +2,10 @@
 //! Raw instruction bundles only. Stage/interface metadata is supplied explicitly;
 //! graphics program headers, branching, textures and shader memory are unsupported.
 use std::fmt;
+mod header;
 pub mod reference;
 mod spirv;
+pub use header::{decode_program, HEADER_BYTES};
 pub use spirv::emit;
 
 pub const MAX_CODE_BYTES: usize = 2048;
@@ -15,6 +17,7 @@ pub enum Stage {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
+    Header,
     Length,
     Budget,
     Schedule { offset: usize },
@@ -69,6 +72,7 @@ pub struct Program {
     pub(crate) values: Vec<Value>,
     pub(crate) outputs: [usize; 4],
     instructions: usize,
+    required_registers: usize,
 }
 impl Program {
     pub fn stage(&self) -> Stage {
@@ -79,6 +83,9 @@ impl Program {
     }
     pub fn outputs(&self) -> [usize; 4] {
         self.outputs
+    }
+    pub fn required_registers(&self) -> usize {
+        self.required_registers
     }
     pub fn instruction_count(&self) -> usize {
         self.instructions
@@ -226,5 +233,9 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
         values,
         outputs: [x, y, z, w],
         instructions,
+        required_registers: regs[..255]
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |r| r + 1),
     })
 }

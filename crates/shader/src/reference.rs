@@ -307,6 +307,64 @@ fn run_case(index: usize, c: &mut Counts) -> Result<(), String> {
             }
             c.evaluate(&clone, [1, 2, 3, 4], [1, 2, 3, 4])?;
         }
+        15 | 16 => {
+            let page = include_bytes!("../../../examples/gpu/draw-rgba-page.bin");
+            let (start, stage, raw) = if index == 15 {
+                (0xa00, Stage::Vertex, FIXTURES[0].2)
+            } else {
+                (0xb00, Stage::Fragment, FIXTURES[2].2)
+            };
+            let p = crate::decode_program(&page[start..start + 80 + raw.len()], stage)
+                .map_err(|e| e.to_string())?;
+            c.instructions += p.instruction_count();
+            c.spirv_words += emit(&p).map_err(|e| e.to_string())?.len();
+            c.evaluate(
+                &p,
+                [1, 2, 3, 4],
+                if index == 15 {
+                    [1, 2, 3, 4]
+                } else {
+                    [0., 1., 0., 1.].map(f32::to_bits)
+                },
+            )?;
+        }
+        17 => {
+            let page = include_bytes!("../../../examples/gpu/draw-rgba-page.bin");
+            for (start, stage, len) in [(0xa00, Stage::Vertex, 112), (0xb00, Stage::Fragment, 144)]
+            {
+                for byte in 0..80 {
+                    for bit in 0..8 {
+                        let mut mutant = page[start..start + len].to_vec();
+                        mutant[byte] ^= 1 << bit;
+                        if crate::decode_program(&mutant, stage) != Err(Error::Header) {
+                            return Err("Unsupported header bit accepted".into());
+                        }
+                        c.rejected += 1;
+                    }
+                }
+            }
+        }
+        18 => {
+            let page = include_bytes!("../../../examples/gpu/draw-rgba-page.bin");
+            for (start, stage, len) in [(0xa00, Stage::Vertex, 112), (0xb00, Stage::Fragment, 144)]
+            {
+                for end in 0..len {
+                    if crate::decode_program(&page[start..start + end], stage).is_ok() {
+                        return Err("Truncated program accepted".into());
+                    }
+                    c.rejected += 1;
+                }
+                let wrong = if stage == Stage::Vertex {
+                    Stage::Fragment
+                } else {
+                    Stage::Vertex
+                };
+                if crate::decode_program(&page[start..start + len], wrong) != Err(Error::Header) {
+                    return Err("Header stage mismatch accepted".into());
+                }
+                c.rejected += 1;
+            }
+        }
         _ => return Err("Unknown case".into()),
     }
     Ok(())
@@ -329,6 +387,10 @@ pub fn run() -> Vec<Case> {
         "unsupported-opcodes-and-flow",
         "translation-budgets",
         "owned-plan-determinism",
+        "vertex-program-header-interface",
+        "fragment-program-header-target",
+        "header-flags-and-maps-rejected",
+        "program-truncation-and-stage-mismatch",
     ];
     names
         .into_iter()

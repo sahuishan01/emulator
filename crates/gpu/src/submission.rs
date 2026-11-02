@@ -129,6 +129,9 @@ pub struct PreparedSubmission {
     batch: crate::methods::PreparedBatch,
 }
 impl PreparedSubmission {
+    pub fn draws(&self) -> &[crate::Draw] {
+        self.batch.draws()
+    }
     pub fn color_clears(&self) -> &[crate::ColorClear] {
         self.batch.clears()
     }

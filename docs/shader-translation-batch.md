@@ -11,6 +11,9 @@ vertex buffers, pipelines and draw calls. Graphics program headers and guest dra
 methods do not feed this translator yet. The M4 gate requiring a guest executable
 through services, commands/shaders and presentation remains open.
 
+The later [0.18 draw batch](guest-draw-batch.md) adds SPH parsing and guest draw
+commands. This document records the0.17 raw-code checkpoint and its limits.
+
 ## Exact supported input
 
 Complete little-endian 32-byte bundles: one 64-bit scheduling word, three 64-bit

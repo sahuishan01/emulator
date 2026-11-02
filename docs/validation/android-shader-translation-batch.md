@@ -41,7 +41,8 @@ was hidden. The full QA command returned0, shut down only emulator-5580 and its
 process was awaited. Raw reports/captures/tool binaries/logs remain ignored.
 
 The [supplied0.16 G720 report](g720-color-clear-batch.md) passes all60 previous
-phone cases. This new78-case batch awaits one physical report. Host draw setup
+phone cases. The later [supplied0.17 G720 report](g720-shader-translation-batch.md) passes all78
+checks on the physical phone. Host draw setup
 still supplies stage metadata, vertex layout and draw/scissor calls; guest
 program headers, draw commands, live renderer/display integration, game startup
 and Z-A remain unfinished. Debug-signed development diagnostic.

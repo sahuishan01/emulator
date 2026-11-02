@@ -42,3 +42,20 @@ static_assert(offsetof(ShaderDraw,vertex)==16 && offsetof(ShaderDraw,fragment)==
 static_assert(offsetof(ShaderDraw,vertices)==16400 && offsetof(ShaderDraw,pixels)==16496);
 static_assert(offsetof(ShaderDraw,error)==17008);
 extern "C" ShaderDraw emulator_shader_draw_v1(std::uint32_t index);
+
+struct GuestDrawOp {
+    std::uint32_t address_upper,address_lower,width,height,pitch,format,rect[4],mask,vertex_count,vertex_words,fragment_words;
+    std::uint32_t vertex[2048],fragment[2048],vertices[24];
+};
+struct GuestDrawReplay {
+    std::uint32_t abi_version,status,draw_count,image_bytes;
+    ClearOp background;
+    GuestDrawOp draws[3];
+    std::uint8_t pixels[512];
+    char error[256];
+};
+static_assert(sizeof(GuestDrawOp)==16536 && alignof(GuestDrawOp)==4);
+static_assert(offsetof(GuestDrawOp,vertex)==56 && offsetof(GuestDrawOp,fragment)==8248 && offsetof(GuestDrawOp,vertices)==16440);
+static_assert(sizeof(GuestDrawReplay)==50452 && alignof(GuestDrawReplay)==4);
+static_assert(offsetof(GuestDrawReplay,draws)==76 && offsetof(GuestDrawReplay,pixels)==49684 && offsetof(GuestDrawReplay,error)==50196);
+extern "C" GuestDrawReplay emulator_guest_draw_replay_v1(std::uint32_t index);

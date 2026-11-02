@@ -2,8 +2,10 @@
 //! C callers receive initialized bytes, never Rust pointers or allocations.
 use emulator_session::{RunOutcome, Session, LOAD_BASE};
 use std::fmt::Write;
+mod draws;
 mod gpu_core;
 mod graphics;
+pub use draws::DrawReplay;
 mod shaders;
 pub use graphics::ClearReplay;
 pub use shaders::ShaderDraw;
@@ -215,6 +217,18 @@ fn reference_checks() -> String {
             ipc_buffers: (18, 11, 603),
             copy_handles: 2,
         },
+        Case {
+            name: "guest-nv-shader-draws",
+            image: draws::IMAGE,
+            message: draws::MESSAGE,
+            instructions: 5571,
+            ipc_calls: 25,
+            memory: Some((0x4040, 2)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (18, 11, 603),
+            copy_handles: 2,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -263,6 +277,9 @@ fn reference_checks() -> String {
                 || stats.cancelled_waits != case.cancellations
             {
                 return Err("Reference guest output, lifetime or execution trace mismatch".into());
+            }
+            if case.name == "guest-nv-shader-draws" {
+                draws::verify_guest(&session)?;
             }
             if case.name == "guest-nv-color-clears" {
                 graphics::verify_guest(&session)?;
@@ -318,7 +335,7 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":11,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":12,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -368,7 +385,7 @@ fn nv_reference_checks() -> String {
     let cases = emulator_services::reference::run();
     let passed = cases.iter().all(|c| c.passed);
     let tests=cases.iter().map(|c|format!("{{\"name\":{},\"passed\":{},\"ipcCalls\":{},\"verifiedBytes\":{},\"handlesAfterExit\":{},\"error\":{}}}",quote(c.name),c.passed,c.ipc_calls,c.verified_bytes,c.handles_after_exit.map_or_else(||"null".into(),|v|v.to_string()),quote(&c.error))).collect::<Vec<_>>().join(",");
-    format!("{{\"scope\":\"original-nv-protocol-reference\",\"suiteVersion\":2,\"executesGuestCpu\":false,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",quote(std::env::consts::ARCH),tests,passed)
+    format!("{{\"scope\":\"original-nv-protocol-reference\",\"suiteVersion\":3,\"executesGuestCpu\":false,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",quote(std::env::consts::ARCH),tests,passed)
 }
 
 /// Fixed-size owned clear-plan/image bridge; no Rust pointers cross the ABI.
@@ -388,6 +405,12 @@ pub extern "C" fn emulator_shader_draw_v1(index: u32) -> ShaderDraw {
     shaders::draw(index)
 }
 
+/// Fixed owned guest draw plans, translated modules and exact image oracle.
+#[no_mangle]
+pub extern "C" fn emulator_guest_draw_replay_v1(index: u32) -> DrawReplay {
+    draws::replay(index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,7 +422,7 @@ mod tests {
         assert_eq!(result.abi_version, 2);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 14);
+        assert_eq!(text.matches("\"passed\":true").count(), 15);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));
@@ -427,8 +450,8 @@ mod tests {
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert_eq!(result.abi_version, 2);
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 34);
-        assert_eq!(text.matches("\"handlesAfterExit\":0").count(), 34);
+        assert_eq!(text.matches("\"passed\":true").count(), 50);
+        assert_eq!(text.matches("\"handlesAfterExit\":0").count(), 50);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

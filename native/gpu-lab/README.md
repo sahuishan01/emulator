@@ -102,11 +102,13 @@ separate package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version 0.17.0-dev uses schema4/workload17: engine14, nv34, gpuCore3, shader15
-and gpu12 Vulkan cases. All five groups must pass (78 total). New native cases
+Version0.18.0-dev uses schema4/workload18: engine15, nv50, gpuCore3, shader19
+and gpu15 Vulkan cases. All five groups must pass (102 total). New native cases
 consume SPIR-V emitted by our original SM53 translator: full RGBA output,
 transformed BGRA geometry and ordered draws with two different fragment shaders.
-Host code supplies the draw setup; guest draw commands/presentation remain open.
+The three new guest-command replays derive shaders, vertices, target and scissor
+from actual B197 commands and SPH headers, including an interpreted NRO.
+Live renderer/presentation remains open. See [the draw contract](../../docs/guest-draw-batch.md).
 See [the exact subset](../../docs/shader-translation-batch.md). EngineReport ABI2
 is retained; fixed clear and shader value ABIs have checked Rust/C++ offsets.
 The last completed report is retained across activity recreation.

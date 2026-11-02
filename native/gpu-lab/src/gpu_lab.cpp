@@ -977,6 +977,105 @@ bool translated_shader_draw(Context& context,uint32_t index) {
     return true;
 }
 
+bool guest_draw_command_replay(Context& context,uint32_t index) {
+    const auto replay=emulator_guest_draw_replay_v1(index);
+    if(replay.abi_version!=1 || replay.status || replay.draw_count!=2 || replay.image_bytes!=512)
+        throw std::runtime_error(std::string("Guest draw replay failed: ")+std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
+    const auto& background=replay.background;
+    if(background.width!=16 || background.height!=8 || background.pitch!=64 || (background.format!=0xd5 && background.format!=0xcf)
+        || background.rect[0]!=0 || background.rect[1]!=0 || background.rect[2]!=16 || background.rect[3]!=8 || background.mask!=15)
+        throw std::runtime_error("Guest draw background ABI mismatch");
+    const VkFormat format=background.format==0xcf ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+    const auto color=context.image(format,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_COLOR_BIT,16,8);
+    const auto readback=context.buffer(512,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    VkAttachmentDescription attachment{};
+    attachment.format=format;attachment.samples=VK_SAMPLE_COUNT_1_BIT;attachment.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp=VK_ATTACHMENT_STORE_OP_STORE;attachment.stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;attachment.finalLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    const VkAttachmentReference ref{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};subpass.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount=1;subpass.pColorAttachments=&ref;
+    std::array<VkSubpassDependency,2> dependencies{};
+    dependencies[0].srcSubpass=VK_SUBPASS_EXTERNAL;dependencies[0].dstSubpass=0;
+    dependencies[0].srcStageMask=VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;dependencies[0].dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[0].dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[1].srcSubpass=0;dependencies[1].dstSubpass=VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;dependencies[1].dstStageMask=VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dependencies[1].srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;dependencies[1].dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+    auto pass_info=structure<VkRenderPassCreateInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
+    pass_info.attachmentCount=1;pass_info.pAttachments=&attachment;pass_info.subpassCount=1;pass_info.pSubpasses=&subpass;
+    pass_info.dependencyCount=dependencies.size();pass_info.pDependencies=dependencies.data();
+    VkRenderPass pass{};check(vkCreateRenderPass(context.device,&pass_info,nullptr,&pass),"create translated shader pass");context.render_passes.push_back(pass);
+    auto framebuffer_info=structure<VkFramebufferCreateInfo>(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
+    framebuffer_info.renderPass=pass;framebuffer_info.attachmentCount=1;framebuffer_info.pAttachments=&color.view;
+    framebuffer_info.width=16;framebuffer_info.height=8;framebuffer_info.layers=1;
+    VkFramebuffer framebuffer{};check(vkCreateFramebuffer(context.device,&framebuffer_info,nullptr,&framebuffer),"create translated shader framebuffer");context.framebuffers.push_back(framebuffer);
+    auto layout_info=structure<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
+    VkPipelineLayout layout{};check(vkCreatePipelineLayout(context.device,&layout_info,nullptr,&layout),"create translated shader layout");context.pipeline_layouts.push_back(layout);
+    auto pipeline=[&](const GuestDrawOp& source) {
+        if (!source.vertex_words || source.vertex_words>2048 || !source.fragment_words || source.fragment_words>2048 || source.vertex[0]!=0x07230203 || source.fragment[0]!=0x07230203)
+            throw std::runtime_error("Invalid translated fragment shader");
+        std::array<VkPipelineShaderStageCreateInfo,2> stages{};
+        for(auto& stage:stages)stage=structure<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
+        stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=context.shader(source.vertex,source.vertex_words);stages[0].pName="main";
+        stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=context.shader(source.fragment,source.fragment_words);stages[1].pName="main";
+        const VkVertexInputBindingDescription binding{0,4*sizeof(float),VK_VERTEX_INPUT_RATE_VERTEX};
+        const VkVertexInputAttributeDescription attribute{0,0,VK_FORMAT_R32G32B32A32_SFLOAT,0};
+        auto vertex=structure<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
+        vertex.vertexBindingDescriptionCount=1;vertex.pVertexBindingDescriptions=&binding;vertex.vertexAttributeDescriptionCount=1;vertex.pVertexAttributeDescriptions=&attribute;
+        auto assembly=structure<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        const VkViewport viewport{0,0,16,8,0,1};const VkRect2D scissor{{0,0},{16,8}};
+        auto viewport_info=structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
+        viewport_info.viewportCount=1;viewport_info.pViewports=&viewport;viewport_info.scissorCount=1;viewport_info.pScissors=&scissor;
+        auto raster=structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
+        raster.polygonMode=VK_POLYGON_MODE_FILL;raster.cullMode=VK_CULL_MODE_NONE;raster.lineWidth=1;
+        auto multisample=structure<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);multisample.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState blend_attachment{};blend_attachment.colorWriteMask=15;
+        auto blend=structure<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);blend.attachmentCount=1;blend.pAttachments=&blend_attachment;
+        const VkDynamicState scissor_dynamic=VK_DYNAMIC_STATE_SCISSOR;
+        auto dynamic=structure<VkPipelineDynamicStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO);dynamic.dynamicStateCount=1;dynamic.pDynamicStates=&scissor_dynamic;
+        auto info=structure<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
+        info.stageCount=stages.size();info.pStages=stages.data();info.pVertexInputState=&vertex;info.pInputAssemblyState=&assembly;
+        info.pViewportState=&viewport_info;info.pRasterizationState=&raster;info.pMultisampleState=&multisample;
+        info.pColorBlendState=&blend;info.pDynamicState=&dynamic;info.layout=layout;info.renderPass=pass;
+        VkPipeline handle{};const auto result=vkCreateGraphicsPipelines(context.device,VK_NULL_HANDLE,1,&info,nullptr,&handle);
+        if(handle)context.pipelines.push_back(handle);check(result,"create translated shader pipeline");return handle;
+    };
+    std::array<Buffer,3> vertex_buffers{};
+    std::array<VkPipeline,3> draw_pipelines{};
+    for(uint32_t i=0;i<replay.draw_count;++i) {
+        const auto& d=replay.draws[i];
+        if(d.address_upper!=background.address_upper || d.address_lower!=background.address_lower || d.width!=16 || d.height!=8
+            || d.pitch!=64 || d.format!=background.format || d.mask!=15 || d.vertex_count!=6
+            || d.rect[0]>d.rect[2] || d.rect[1]>d.rect[3] || d.rect[2]>16 || d.rect[3]>8)
+            throw std::runtime_error("Guest draw operation ABI mismatch");
+        vertex_buffers[i]=context.buffer(sizeof(d.vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        context.write(vertex_buffers[i],d.vertices,sizeof(d.vertices));
+        draw_pipelines[i]=pipeline(d);
+    }
+    const auto command=context.begin();
+    for(uint32_t i=0;i<replay.draw_count;++i)
+        buffer_barrier(command,vertex_buffers[i],VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+    VkClearValue initial{};std::memcpy(initial.color.float32,background.color,sizeof(background.color));
+    auto begin=structure<VkRenderPassBeginInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
+    begin.renderPass=pass;begin.framebuffer=framebuffer;begin.renderArea={{0,0},{16,8}};begin.clearValueCount=1;begin.pClearValues=&initial;
+    vkCmdBeginRenderPass(command,&begin,VK_SUBPASS_CONTENTS_INLINE);
+    for(uint32_t i=0;i<replay.draw_count;++i) {
+        const auto& d=replay.draws[i];
+        if(d.rect[0]==d.rect[2] || d.rect[1]==d.rect[3])continue;
+        const VkDeviceSize offset=0;vkCmdBindVertexBuffers(command,0,1,&vertex_buffers[i].handle,&offset);
+        const VkRect2D scissor{{static_cast<int32_t>(d.rect[0]),static_cast<int32_t>(d.rect[1])},{d.rect[2]-d.rect[0],d.rect[3]-d.rect[1]}};
+        vkCmdSetScissor(command,0,1,&scissor);vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,draw_pipelines[i]);
+        vkCmdDraw(command,d.vertex_count,1,0,0);
+    }
+    vkCmdEndRenderPass(command);
+    VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={16,8,1};
+    vkCmdCopyImageToBuffer(command,color.handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback.handle,1,&copy);
+    buffer_barrier(command,readback,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
+    context.submit(command);const auto actual=context.read(readback);
+    return actual.size()==512 && std::equal(actual.begin(),actual.end(),replay.pixels);
+}
+
 } // namespace
 
 GpuReport run_gpu_checks() {
@@ -1000,14 +1099,17 @@ GpuReport run_gpu_checks() {
         tests.push_back({"sm53-translated-rgba-draw",translated_shader_draw(context,0),"Original SM53 vertex/fragment code -> typed IR -> emitted SPIR-V; every RGBA pixel matches"});
         tests.push_back({"sm53-transformed-bgra-draw",translated_shader_draw(context,1),"Translated FMUL transforms position; geometry coverage, clear border and BGRA bytes match"});
         tests.push_back({"sm53-shader-change-ordered-draws",translated_shader_draw(context,2),"Two translated fragment shaders draw green then scoped red in one submission; all pixels match"});
+        tests.push_back({"guest-nv-draw-command-replay",guest_draw_command_replay(context,0),"Interpreted NRO -> NV commands -> SPH/shader/vertex/draw decode -> Vulkan; all512 bytes match guest and independent oracle"});
+        tests.push_back({"owned-nv-bgra-draw-command-replay",guest_draw_command_replay(context,1),"Decoded guest BGRA draw state, shader headers, transformed geometry and byte storage match"});
+        tests.push_back({"owned-nv-scissor-draw-command-replay",guest_draw_command_replay(context,2),"Decoded guest scissor and vertex transforms preserve surrounding pixels across ordered draws"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 12 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 15 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":5,\"scope\":\"host-vulkan-clear-replay-and-sm53-shaders\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":6,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion

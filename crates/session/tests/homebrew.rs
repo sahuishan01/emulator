@@ -364,3 +364,29 @@ fn guest_color_clear_batch_checks_pixels_rejection_fences_and_closed_owners() {
         }
     }
 }
+
+#[test]
+fn guest_shader_draws_submit_via_nv_and_keep_backing_after_owner_close() {
+    let mut s =
+        Session::from_nro(include_bytes!("../../../examples/homebrew/nv-draw.nro")).unwrap();
+    assert_eq!(s.run(10000).unwrap(), RunOutcome::Exited);
+    assert_eq!(s.instructions(), 5571);
+    assert_eq!(s.kernel().ipc_records().len(), 25);
+    assert_eq!(s.kernel().live_handle_count(), 0);
+    assert_eq!(s.kernel().live_transfer_memory_count(), 0);
+    assert_eq!(s.memory().lent_bytes(), 0);
+    assert_eq!(s.memory().read_u64(LOAD_BASE + 0x4040).unwrap(), 2);
+    assert_eq!(s.memory().read_u64(LOAD_BASE + 0x3000).unwrap(), 42);
+    let mut pixels = [0; 512];
+    s.memory().read(LOAD_BASE + 0x5800, &mut pixels).unwrap();
+    for y in 0..8 {
+        for x in 0..16 {
+            let p = if (4..12).contains(&x) && (2..6).contains(&y) {
+                [255, 0, 0, 255]
+            } else {
+                [0, 255, 0, 255]
+            };
+            assert_eq!(&pixels[(y * 16 + x) * 4..(y * 16 + x + 1) * 4], &p);
+        }
+    }
+}

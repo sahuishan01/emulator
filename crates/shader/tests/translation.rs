@@ -2,7 +2,7 @@ use emulator_shader::{decode, emit, reference, Stage};
 #[test]
 fn portable_batch_passes_actual_semantics_and_rejections() {
     let cases = reference::run();
-    assert_eq!(cases.len(), 15);
+    assert_eq!(cases.len(), 19);
     for case in cases {
         assert!(case.passed, "{case:?}");
     }
