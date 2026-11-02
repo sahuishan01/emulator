@@ -18,17 +18,17 @@ static jbyteArray copy_engine_report(JNIEnv* env, const EngineReport& report) {
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_MainActivity_runEngineChecks(JNIEnv* env, jobject) {
+Java_com_algosculptor_emulator_gpulab_Diagnostics_runEngineChecks(JNIEnv* env, jobject) {
     return copy_engine_report(env, emulator_run_reference_guests_v2());
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_MainActivity_runGpuCoreChecks(JNIEnv* env, jobject) {
+Java_com_algosculptor_emulator_gpulab_Diagnostics_runGpuCoreChecks(JNIEnv* env, jobject) {
     return copy_engine_report(env, emulator_run_gpu_core_checks_v2());
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_MainActivity_runGpuChecks(JNIEnv* env, jobject) {
+Java_com_algosculptor_emulator_gpulab_Diagnostics_runGpuChecks(JNIEnv* env, jobject) {
     try {
         const auto report = run_gpu_checks();
         const auto bytes = env->NewByteArray(static_cast<jsize>(report.json.size()));
@@ -42,12 +42,12 @@ Java_com_algosculptor_emulator_gpulab_MainActivity_runGpuChecks(JNIEnv* env, job
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_MainActivity_runNvChecks(JNIEnv* env, jobject) {
+Java_com_algosculptor_emulator_gpulab_Diagnostics_runNvChecks(JNIEnv* env, jobject) {
     return copy_engine_report(env, emulator_run_nv_checks_v2());
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_MainActivity_runShaderChecks(JNIEnv* env, jobject) {
+Java_com_algosculptor_emulator_gpulab_Diagnostics_runShaderChecks(JNIEnv* env, jobject) {
     return copy_engine_report(env, emulator_run_shader_checks_v2());
 }
 
@@ -113,10 +113,10 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_algosculptor_emulator_gpulab_NativePrograms_stop(JNIEnv*,jobject) { (void)emulator_program_close_v1(); }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_TextureActivity_startScene(JNIEnv* env,jobject,jobject surface,jint variant) {
+Java_com_algosculptor_emulator_gpulab_NativeScenes_start(JNIEnv* env,jobject,jobject surface,jint variant) {
     auto* window=ANativeWindow_fromSurface(env,surface);
     if(!window)return demo_bytes(env,"{\"running\":false,\"error\":\"Android surface unavailable\"}");
     const auto result=start_texture_scene(window,static_cast<unsigned>(variant));ANativeWindow_release(window);return demo_bytes(env,result);
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_algosculptor_emulator_gpulab_TextureActivity_stopScene(JNIEnv* env,jobject) { return demo_bytes(env,stop_texture_scene()); }
+Java_com_algosculptor_emulator_gpulab_NativeScenes_stop(JNIEnv* env,jobject) { return demo_bytes(env,stop_texture_scene()); }

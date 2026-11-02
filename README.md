@@ -67,19 +67,22 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.22.0-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.22.1-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
-Diagnostics and report export are under **Settings → Diagnostics**.
+Tap **Test all & export JSON** on the home screen to display all six patterns,
+run all 134 checks and automatically save the JSON in **Downloads/Emulator**.
+The result offers **Share JSON**. See [one-tap testing](docs/one-tap-testing.md).
+Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.22.0-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.22.0-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.22.0-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.22.1-dev).
 The existing Android application ID/signing identity is retained for updates.
 This is a debug development build, not a production-ready commercial-game emulator.
-See [indexed geometry](docs/indexed-geometry-batch.md) and [build verification](docs/validation/android-indexed-batch.md).
+See [indexed geometry](docs/indexed-geometry-batch.md) and [build verification](docs/validation/android-one-tap.md).
 
 ## Play our original homebrew
 
@@ -193,16 +196,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.22.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.22.1-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.22.0-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.22.0-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.22.0-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.22.1-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.

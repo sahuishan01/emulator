@@ -14,9 +14,6 @@ import org.json.JSONObject
 
 /** One worker owns native Vulkan and retains a destroyed texture until teardown. */
 class TextureActivity : Activity(), TextureView.SurfaceTextureListener {
-    companion object { init { System.loadLibrary("emulator_gpu_lab") } }
-    private external fun startScene(surface: Surface, variant: Int): ByteArray
-    private external fun stopScene(): ByteArray
     private val thread = HandlerThread("TextureScene")
     private lateinit var worker: Handler
     private lateinit var view: TextureView
@@ -24,7 +21,7 @@ class TextureActivity : Activity(), TextureView.SurfaceTextureListener {
     @Volatile private var generation = 0
     private var resumed = false
     private var variant = 0
-    private val patterns = arrayOf("Texture", "BGRA texture", "Updated texture", "Indexed byte quad", "Indexed short quad", "Indexed triangle")
+    private val patterns = NativeScenes.patterns
     private var recorded = false
     private val store get() = (application as EmulatorApplication).library
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,7 +43,7 @@ class TextureActivity : Activity(), TextureView.SurfaceTextureListener {
         value.put("capturedAtEpochMs", System.currentTimeMillis())
         try { ReportStore.write(this, "last-texture-report.json", value.toString(2)) } catch (_: Exception) { }
     }
-    private fun closeNative() { persist(JSONObject(String(stopScene(), Charsets.UTF_8))) }
+    private fun closeNative() { persist(JSONObject(String(NativeScenes.stop(), Charsets.UTF_8))) }
     private fun start(texture: SurfaceTexture) {
         val current = ++generation; val pattern = variant; status.text = "Rendering pattern ${pattern + 1}…"
         worker.post {
@@ -54,7 +51,7 @@ class TextureActivity : Activity(), TextureView.SurfaceTextureListener {
             closeNative()
             if (current != generation) return@post
             val surface = Surface(texture)
-            val result = try { JSONObject(String(startScene(surface, pattern), Charsets.UTF_8)) }
+            val result = try { JSONObject(String(NativeScenes.start(surface, pattern), Charsets.UTF_8)) }
                 catch (error: Exception) { JSONObject().put("error", error.message ?: "Could not render this scene.") }
                 finally { surface.release() }
             persist(result)

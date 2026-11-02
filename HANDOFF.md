@@ -13,7 +13,43 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.22.0-dev indexed geometry
+## Current implementation: 0.22.1-dev one-tap testing
+
+User explicitly requests one button for all patterns, tests and JSON export.
+Home now offers **Test all & export JSON**, launching nonexported BatchActivity.
+A single native-owning worker displays all six patterns (native GPU pixel check,
+completion/presentation1 + consumer surface update; ~1.5sec each), then runs all
+134 checks and automatically publishes JSON to Downloads/Emulator through
+MediaStore pending -> write/close -> publish. No picker or new permission.
+Unique filenames preserve older files; optional Share JSON opens chooser with
+read grant. Failed saves expose Retry export. Completed UI lists pattern results.
+
+Diagnostics/NativeScenes share bindings/report builder with manual flows. Rust
+engine and18 value exports unchanged. App0.22.1-dev/code25/schema4/workload25/
+native10;134 diagnostic counts unchanged17/50/20/25/22. patternBatch adds six
+ordered run-ID snapshots/proof/times/totals; rootallPassed requires all patterns
+and groups. Cancel/paused generation cannot export. Foreground/surface-size
+changes restart unfinished runs; completed rotation/share do not re-export.
+Native teardown precedes retained SurfaceTexture release. Published JSON remains
+immutable in manual Diagnostics while auxiliary AtomicFile caches still recover.
+See docs/one-tap-testing.md and docs/validation/android-one-tap.md.
+Final APK10,745,493bytes/SHA256018e55f83ec24a70e346bbaeb84df5b599f82ddeeeb3bbd519a52a93f919d0fb.
+Android assembly/lint/signature/twoABI/18exports/16KiB/strict-manifest pass.
+Final one-tap14 flows/6captures768points and manual14/10captures1280points pass.
+Two fresh automatic134-check runs match all four Rust host groups exceptarch;
+Downloads media entries have MIMEapplication/json/pending0/exact cache bytes.
+Cancel exportsnone; interrupted rotations/backgrounds restart with fresh IDs,
+completed rotation/share don't duplicate exports. Cold cached pattern proof and
+real manual picker export/both present cache backup recoveries are byte-exact.
+The final report remains immutable after later manual scene use. Screenshots
+inspected; empty crash buffers/no app fatal/ANR. Owned AVD stopped/awaited.
+Rust/fixtures unchanged from previous200test/30fixture checkpoint. No new physical
+Mali evidence; no commercial game support. New QA script same-version reruns
+must pass --previous-workload25; first0.22 upgrade uses default24. A prior harness
+failed by considering a cached same-workload result; final run excludes all old
+and abandoned IDs. Final evidence:reports/android-qa/v0.22.1-dev/one-tap-final-verified/.
+
+## Previous implementation: 0.22.0-dev indexed geometry
 
 Supplied _21_ physical report:0.21.1/schema4/workload23/native9, RMX5061/MT6989,
 Android16/API36/Mali-G720 Immortalis MC12;121/121 checks pass. Four Rust groups

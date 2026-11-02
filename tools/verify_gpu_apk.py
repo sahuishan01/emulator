@@ -24,7 +24,7 @@ def verify_main_app(apk, aapt):
         name = re.search(r'android:name[^\n]*="([^"]+)"', block).group(1)
         exported = re.search(r'android:exported[^\n]*\(type 0x12\)(0x[0-9a-f]+)', block).group(1)
         activities[name.rsplit('.', 1)[-1]] = exported != '0x0'
-    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False, 'TextureActivity': False}, activities
+    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False, 'TextureActivity': False, 'BatchActivity': False}, activities
     with zipfile.ZipFile(apk) as archive:
         assert not any(n.startswith('assets/') and n.endswith('.nro') for n in archive.namelist()), "QA documents leaked into main APK"
     return dict(label='Emulator', launcher='HomeActivity', exportedActivities=['HomeActivity'], permissions=[], qaDocumentsExcluded=True)

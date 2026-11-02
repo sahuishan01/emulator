@@ -18,6 +18,9 @@ display/HID and asynchronous GPU integration remain open; see [the exact draw su
 The [main Android application foundation](android-app.md) now owns a searchable
 SQLite library, bounded SAF imports, actual static-NRO text execution, settings
 and the existing Catch player. The laboratory remains available for support. The [texture batch](texture-draw-batch.md) now connects screen-linear varyings and one explicit-LOD sampled image to guest descriptors, reference pixels and Vulkan, with a visible library scene. The [indexed batch](indexed-geometry-batch.md) adds captured byte/u16/u32 elements, first-index slicing, signed base vertices and actual Vulkan indexed draws; byte elements widen to u16 without a driver extension.
+The [one-tap test workflow](one-tap-testing.md) now owns visible pattern sequencing,
+shared diagnostics and automatic app-owned Downloads publication. Completed reports
+retain all six pattern proofs and remain immutable when reopened for manual export.
 See [the supported shader subset](shader-translation-batch.md).
 The color-clear batch adds original B197 operations and offscreen Vulkan replay
 of decoded guest commands; see [the exact scope](color-clear-batch.md).

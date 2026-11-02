@@ -128,7 +128,7 @@ def main():
             call('shell', 'am', 'force-stop', package)
             launch_diagnostics('open-diagnostics')
             wait_button('resumed', 'export report')
-            notes.append('Export/restore resumed after the initial save UI transition outlasted its first XML dump')
+            notes.append('Export/restore validation resumed from an existing successful current-workload report')
             print('Resuming the recorded successful batch', flush=True)
         else:
             old = saved()

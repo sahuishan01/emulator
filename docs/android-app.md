@@ -1,7 +1,9 @@
-# Android application (0.20 foundation, 0.22 indexed geometry)
+# Android application (0.20 foundation, 0.22.1 automatic testing)
 
 The launcher is a library, with the original Catch player, the 0.21 guest texture scene, supported static
-NRO imports, text-mode execution, recents and settings. The existing laboratory
+NRO imports, text-mode execution, recents and settings. The home screen also offers
+[one-tap patterns, diagnostics and JSON export](one-tap-testing.md) through
+**Test all & export JSON**, saving into Downloads/Emulator. The existing laboratory
 is a private support activity under Settings → Diagnostics. The application ID
 and debug signing identity remain unchanged so this development build can update
 an existing installation. No commercial game compatibility is implied.

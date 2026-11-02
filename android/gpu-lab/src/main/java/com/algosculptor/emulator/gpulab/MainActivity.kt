@@ -3,7 +3,6 @@ package com.algosculptor.emulator.gpulab
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Typeface
-import android.os.Build
 import android.os.Bundle
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -14,24 +13,19 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.CancellationException
 
 class MainActivity : Activity() {
     companion object {
-        init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 24
     }
 
-    private external fun runNvChecks(): ByteArray
-    private external fun runShaderChecks(): ByteArray
-    private external fun runGpuChecks(): ByteArray
-    private external fun runEngineChecks(): ByteArray
-    private external fun runGpuCoreChecks(): ByteArray
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var output: TextView
     private lateinit var runButton: Button
     private lateinit var exportButton: Button
     private var report: String? = null
+    @Volatile private var active = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,9 +86,9 @@ class MainActivity : Activity() {
         try {
             val saved = ReportStore.read(this, "last-report.json")
             if (saved != null) {
-                if (JSONObject(saved).optInt("workloadVersion", 0) == WORKLOAD_VERSION) {
+                if (JSONObject(saved).optInt("workloadVersion", 0) == Diagnostics.WORKLOAD_VERSION) {
                     report = saved
-                    output.text = summarize(saved)
+                    output.text = Diagnostics.summary(saved)
                     exportButton.isEnabled = true
                 } else {
                     output.text = "Ready. Run checks again for this version's updated tests."
@@ -107,104 +101,29 @@ class MainActivity : Activity() {
         super.onResume()
         try {
             report?.let { captured ->
-                val value = JSONObject(captured); attachCapturedReports(value)
-                report = value.toString(2); ReportStore.write(this, "last-report.json", report!!)
-                output.text = summarize(report!!)
+                val value = JSONObject(captured)
+                if (!value.has("automaticExport")) {
+                    Diagnostics.attachCapturedReports(this, value)
+                    report = value.toString(2); ReportStore.write(this, "last-report.json", report!!)
+                } else Diagnostics.attachCapturedReports(this, JSONObject()) // Recover ancillary caches; keep the published report immutable.
+                output.text = Diagnostics.summary(report!!)
             }
         } catch (_: Exception) { }
     }
-    private fun attachCapturedReports(target: JSONObject) {
-        for ((name, key) in listOf("last-demo-report.json" to "demo", "last-texture-report.json" to "textureScene")) {
-            try { ReportStore.read(this, name)?.let { captured ->
-                val value = JSONObject(captured)
-                if (value.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) target.put(key, value)
-            } } catch (_: Exception) { }
-        }
-    }
-
-    private fun summarize(text: String): String = try {
-        val root = JSONObject(text)
-        var total = 0
-        var passed = 0
-        var complete = true
-        val groups = listOf("engine" to "Guest", "nv" to "NV batch", "gpuCore" to "GPU core", "shader" to "Shaders", "gpu" to "Vulkan")
-        val details = groups.map { (key, label) ->
-            val tests = root.optJSONObject(key)?.optJSONArray("tests")
-            val count = tests?.length() ?: 0
-            if (count == 0) complete = false
-            val good = (0 until count).count { tests!!.getJSONObject(it).optBoolean("passed", false) }
-            total += count
-            passed += good
-            "$label: $good/$count"
-        }
-        val title = if (!complete) "Checks incomplete. See errors below" else if (root.optBoolean("allPassed", false) && total > 0) "All $total checks passed" else "$passed/$total checks passed; see failures below"
-        "$title\n${details.joinToString(" · ")}\n\n$text"
-    } catch (_: Exception) { text }
-
     private fun runChecks() {
         runButton.isEnabled = false
         exportButton.isEnabled = false
         output.text = "Running the full test batch…"
         worker.execute {
-            val result = try {
-                val engine = try {
-                    JSONObject(String(runEngineChecks(), Charsets.UTF_8))
-                } catch (error: Exception) {
-                    JSONObject().put("scope", "original-guest-reference-programs").put("allPassed", false)
-                        .put("error", error.message ?: error.javaClass.simpleName)
-                }
-                val gpuCore = try {
-                    JSONObject(String(runGpuCoreChecks(), Charsets.UTF_8))
-                } catch (error: Exception) {
-                    JSONObject().put("scope", "original-gpu-memory-and-command-reference").put("allPassed", false)
-                        .put("error", error.message ?: error.javaClass.simpleName)
-                }
-                val nv = try {
-                    JSONObject(String(runNvChecks(), Charsets.UTF_8))
-                } catch (error: Exception) {
-                    JSONObject().put("scope", "original-nv-protocol-reference").put("allPassed", false)
-                        .put("error", error.message ?: error.javaClass.simpleName)
-                }
-                val shader = try {
-                    JSONObject(String(runShaderChecks(), Charsets.UTF_8))
-                } catch (error: Exception) {
-                    JSONObject().put("scope", "original-sm53-shader-reference").put("allPassed", false)
-                        .put("error", error.message ?: error.javaClass.simpleName)
-                }
-                val gpu = try {
-                    JSONObject(String(runGpuChecks(), Charsets.UTF_8))
-                } catch (error: Exception) {
-                    JSONObject().put("scope", "host-vulkan-only").put("allPassed", false)
-                        .put("error", error.message ?: error.javaClass.simpleName)
-                }
-                JSONObject().apply {
-                    attachCapturedReports(this)
-                    put("schemaVersion", 4)
-                    put("workloadVersion", WORKLOAD_VERSION)
-                    put("scope", "original-engine-gpu-core-and-host-vulkan")
-                    put("engine", engine)
-                    put("gpuCore", gpuCore)
-                    put("nv", nv)
-                    put("gpu", gpu)
-                    put("shader", shader)
-                    put("allPassed", engine.optBoolean("allPassed", false) && gpuCore.optBoolean("allPassed", false) && nv.optBoolean("allPassed", false) && shader.optBoolean("allPassed", false) && gpu.optBoolean("allPassed", false))
-                    put("phoneModel", Build.MODEL)
-                    put("manufacturer", Build.MANUFACTURER)
-                    put("socModel", Build.SOC_MODEL)
-                    put("androidVersion", Build.VERSION.RELEASE)
-                    put("androidSdk", Build.VERSION.SDK_INT)
-                    put("appVersion", packageManager.getPackageInfo(packageName, 0).versionName)
-                    put("capturedAtEpochMs", System.currentTimeMillis())
-                }.toString(2)
-            } catch (error: Exception) {
-                JSONObject().put("scope", "original-engine-gpu-core-and-host-vulkan").put("allPassed", false)
-                    .put("error", error.message ?: error.javaClass.simpleName).toString(2)
-            }
+            val result = try { Diagnostics.run(applicationContext, { !active }).toString(2) }
+                catch (_: CancellationException) { return@execute }
+                catch (error: Exception) { JSONObject().put("allPassed", false).put("error", error.message ?: error.javaClass.simpleName).toString(2) }
+            if (!active) return@execute
             try { ReportStore.write(this, "last-report.json", result) } catch (_: Exception) { }
             runOnUiThread {
                 if (!isFinishing && !isDestroyed) {
                     report = result
-                    output.text = summarize(result)
+                    output.text = Diagnostics.summary(result)
                     runButton.isEnabled = true
                     exportButton.isEnabled = true
                 }
@@ -229,6 +148,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        active = false
         worker.shutdown()
         super.onDestroy()
     }

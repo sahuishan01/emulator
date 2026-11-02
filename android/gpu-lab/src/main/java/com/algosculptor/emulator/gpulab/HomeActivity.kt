@@ -44,6 +44,7 @@ class HomeActivity : Activity() {
         root.addView(top); ui.space(root, 22)
         root.addView(ui.text("Your library", 30f, bold = true)); ui.space(root, 6)
         root.addView(ui.text("Play included homebrew or import your own.", 15f, ui.muted)); ui.space(root, 18)
+        root.addView(ui.button(BatchActivity.ACTION_LABEL, true) { startActivity(Intent(this, BatchActivity::class.java)) })
         importButton = ui.button("Import homebrew", true) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
@@ -111,7 +112,7 @@ class HomeActivity : Activity() {
         })
     }
     private fun details(entry: LibraryEntry) {
-        val text = if (entry.id == "builtin:catch") "Included homebrew. Drag the screen, hold Left/Right, or use a D-pad.\n\nSessions played: ${entry.launches}" else if (entry.id == "builtin:textures") "Included guest graphics scene. Three texture variants with sampled colors, coordinates and geometry.\n\nScenes opened: ${entry.launches}" else
+        val text = if (entry.id == "builtin:catch") "Included homebrew. Drag the screen, hold Left/Right, or use a D-pad.\n\nSessions played: ${entry.launches}" else if (entry.id == "builtin:textures") "Included guest graphics scene. Six texture and indexed geometry patterns.\n\nScenes opened: ${entry.launches}" else
             "NRO0 · ${entry.bytes} bytes\nSessions started: ${entry.launches}\n\nThis build runs a limited static homebrew subset. A valid file may still require instructions or services that are not implemented."
         val dialog = AlertDialog.Builder(this).setTitle(entry.title).setMessage(text).setPositiveButton("Close", null)
         if (!entry.included) dialog.setNeutralButton("Remove") { _, _ ->
