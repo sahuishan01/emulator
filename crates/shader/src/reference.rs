@@ -39,6 +39,8 @@ pub struct Case {
     pub counts: Counts,
     pub error: String,
 }
+#[path = "texture_reference.rs"]
+mod texture_checks;
 fn code(instructions: &[u64]) -> Vec<u8> {
     let mut words = instructions.to_vec();
     while words.len() % 3 != 0 {
@@ -76,7 +78,7 @@ impl Counts {
         Ok(p)
     }
     fn evaluate(&mut self, p: &Program, input: [u32; 4], expected: [u32; 4]) -> Result<(), String> {
-        if p.evaluate(input) != expected {
+        if p.evaluate(input).map_err(|e| e.to_string())? != expected {
             return Err("Independent invocation oracle mismatch".into());
         }
         self.invocations += 1;
@@ -392,7 +394,7 @@ pub fn run() -> Vec<Case> {
         "header-flags-and-maps-rejected",
         "program-truncation-and-stage-mismatch",
     ];
-    names
+    let mut cases: Vec<_> = names
         .into_iter()
         .enumerate()
         .map(|(i, name)| {
@@ -407,5 +409,7 @@ pub fn run() -> Vec<Case> {
                 error: result.err().unwrap_or_default(),
             }
         })
-        .collect()
+        .collect();
+    cases.extend(texture_checks::run());
+    cases
 }

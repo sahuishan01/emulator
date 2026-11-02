@@ -1,6 +1,6 @@
-# Android application foundation (0.20)
+# Android application (0.20 foundation, 0.21 textures)
 
-The launcher is now a library, with the original Catch player, supported static
+The launcher is a library, with the original Catch player, the 0.21 guest texture scene, supported static
 NRO imports, text-mode execution, recents and settings. The existing laboratory
 is a private support activity under Settings → Diagnostics. The application ID
 and debug signing identity remain unchanged so this development build can update
@@ -16,7 +16,7 @@ depend on a picker URI remaining available after import.
 
 SQLite schema 1 stores an opaque ID, display title, private filename, byte count,
 mode, last-played time, launch count and last result. Catch has a protected built-in
-entry; imported entries use the full file SHA-256. Metadata is separate from guest
+entry; the texture scene is also protected and is seeded idempotently into existing catalogs. Imported entries use the full file SHA-256. Metadata is separate from guest
 memory and does not constitute a save state. Search matches display titles locally.
 Missing private files disable launch and explain how to recover.
 
@@ -75,11 +75,13 @@ background in-memory resume feature.
 
 The library uses a full-page scroll in landscape; program output/settings scroll
 in either orientation. The only exported activity is HomeActivity. The diagnostics
-still run all 103 cases and export one report. Both report caches use synchronized
+now run all 121 cases and export one report. The diagnostics, Catch and texture-scene caches use synchronized
 AtomicFile writes and bounded reads, including backup recovery. No QA document
 provider or its fixtures ship in the main APK.
 
 ## Remaining production work
+
+The [texture scene](texture-draw-batch.md) presents actual sampled guest shader output, supports three variants, recreates on rotation/foreground and skips superseded queued work. Its support snapshot joins the ordinary report export. Imported programs still use the text runner.
 
 This is the application foundation, not production readiness. Broader CPU/runtime,
 module loading, normal HID/VI/BufferQueue, general graphics/shaders, audio,

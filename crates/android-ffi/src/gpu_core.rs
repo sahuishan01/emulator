@@ -1,5 +1,5 @@
 //! Actual CPU/GPU backing, command capture and original DMA method checks.
-//! Separate from guest NROs/native Vulkan; no guest shaders or fences execute.
+//! Includes owned sampled-draw reference cases; native Vulkan is checked separately.
 use emulator_gpu::{
     ExecutionLimits, GpuAddressSpace, GpuVa, QueueLimits, QueueStats, SubmissionQueue,
     LINEAR_DMA_LAUNCH, MAXWELL_DMA_COPY_A,
@@ -254,5 +254,15 @@ pub fn report() -> String {
         };
         tests.push(format!("{{\"name\":{},\"passed\":{},\"capturedSubmissions\":{},\"decodedWrites\":{},\"residentBytesAfterRelease\":{},\"copyLaunches\":{},\"copiedBytes\":{},\"error\":{}}}",super::quote(name),passed,captures,writes,resident,launches,copied,super::quote(&error)));
     }
-    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":2,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
+    for case in super::textures::cases() {
+        all &= case.passed;
+        tests.push(format!(
+            "{{\"name\":{},\"passed\":{},\"verifiedItems\":{},\"error\":{}}}",
+            super::quote(case.name),
+            case.passed,
+            case.checks,
+            super::quote(&case.error)
+        ));
+    }
+    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":3,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
 }

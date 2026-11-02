@@ -2,7 +2,7 @@ use emulator_shader::{decode, emit, reference, Stage};
 #[test]
 fn portable_batch_passes_actual_semantics_and_rejections() {
     let cases = reference::run();
-    assert_eq!(cases.len(), 19);
+    assert_eq!(cases.len(), 25);
     for case in cases {
         assert!(case.passed, "{case:?}");
     }
@@ -38,7 +38,7 @@ fn ssa_reads_capture_values_before_register_overwrite() {
     let (_, _, bytes) = reference::FIXTURES[1];
     let p = decode(bytes, Stage::Vertex).unwrap();
     assert_eq!(
-        p.evaluate([2., 4., 0., 1.].map(f32::to_bits)),
+        p.evaluate([2., 4., 0., 1.].map(f32::to_bits)).unwrap(),
         [1., 2., 0., 1.].map(f32::to_bits)
     );
     for (id, v) in p.values().iter().enumerate() {

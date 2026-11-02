@@ -7,8 +7,8 @@ Current implemented slice: bounded region memory, static NRO loading, A64
 interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
 event/thread waits, cancellation and virtual deadlines in one process. The Android
 application has a private SQLite library, bounded file-picker imports, static NRO
-text execution, settings and the live Catch player. Support diagnostics run fifteen
-guest checks, fifty NV cases, three GPU-core cases, nineteen shader cases and sixteen
+text execution, settings and the live Catch player. Support diagnostics run sixteen
+guest checks, fifty NV cases, eleven GPU-core cases, twenty-five shader cases and nineteen
 Vulkan workloads, with report export. Broader synchronization and general guest
 graphics remain planned. See [the implemented app contracts](android-app.md), [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.
@@ -35,7 +35,11 @@ row writes and bounded decoded-operation replay through Vulkan. A synchronous
 [live homebrew backend](live-homebrew.md) now waits for Vulkan completion before
 guest publication and presents through an Android window. General display queues
 and asynchronous coherence below remain planned.
-Fresh allocation and guest graphics remain open.
+The [texture batch](texture-draw-batch.md) adds screen-linear generic varyings,
+constant-handle TEX.B.LZ sampling and bounded TIC/TSC/data captures. Prepared pixel
+rows now carry actual interpolated fragment results. Captured descriptor/texture
+inputs participate in feedback/alias rejection and retained backing ownership.
+Fresh allocation and general guest graphics remain open.
 
 ## 1. Process, addresses and memory
 

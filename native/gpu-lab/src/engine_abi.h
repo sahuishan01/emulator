@@ -60,6 +60,22 @@ static_assert(sizeof(GuestDrawReplay)==50452 && alignof(GuestDrawReplay)==4);
 static_assert(offsetof(GuestDrawReplay,draws)==76 && offsetof(GuestDrawReplay,pixels)==49684 && offsetof(GuestDrawReplay,error)==50196);
 extern "C" GuestDrawReplay emulator_guest_draw_replay_v1(std::uint32_t index);
 
+struct TexturedDraw {
+    GuestDrawOp draw;
+    std::uint32_t varyings[24], texture_width, texture_height, texture_bytes;
+    std::uint8_t texture[16384];
+};
+struct TextureReplay {
+    std::uint32_t abi_version,status,draw_count,image_bytes;
+    ClearOp background;
+    TexturedDraw draws[3];
+    std::uint8_t pixels[512];
+    char error[256];
+};
+static_assert(sizeof(TexturedDraw)==33028 && alignof(TexturedDraw)==4 && offsetof(TexturedDraw,varyings)==16536 && offsetof(TexturedDraw,texture)==16644);
+static_assert(sizeof(TextureReplay)==99928 && alignof(TextureReplay)==4 && offsetof(TextureReplay,draws)==76 && offsetof(TextureReplay,pixels)==99160 && offsetof(TextureReplay,error)==99672);
+extern "C" TextureReplay emulator_texture_replay_v1(std::uint32_t index);
+
 struct LiveDraw {
     std::uint32_t abi_version,status,draw_count,image_bytes;
     ClearOp background;

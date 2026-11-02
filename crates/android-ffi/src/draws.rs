@@ -169,6 +169,8 @@ fn build(index: u32, out: &mut DrawReplay) -> Result<(), String> {
     for (out, draw) in out.draws.iter_mut().zip(work.draws()) {
         let s = draw.surface;
         if draw.vertices.len() != 6
+            || draw.texture.is_some()
+            || draw.vertex.varying_outputs().is_some()
             || draw.vertex_spirv.len() > 2048
             || draw.fragment_spirv.len() > 2048
         {

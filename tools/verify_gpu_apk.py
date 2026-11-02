@@ -24,7 +24,7 @@ def verify_main_app(apk, aapt):
         name = re.search(r'android:name[^\n]*="([^"]+)"', block).group(1)
         exported = re.search(r'android:exported[^\n]*\(type 0x12\)(0x[0-9a-f]+)', block).group(1)
         activities[name.rsplit('.', 1)[-1]] = exported != '0x0'
-    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False}, activities
+    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False, 'TextureActivity': False}, activities
     with zipfile.ZipFile(apk) as archive:
         assert not any(n.startswith('assets/') and n.endswith('.nro') for n in archive.namelist()), "QA documents leaked into main APK"
     return dict(label='Emulator', launcher='HomeActivity', exportedActivities=['HomeActivity'], permissions=[], qaDocumentsExcluded=True)
@@ -87,7 +87,7 @@ def verify(apk, signer, main_app=False):
                     symbols.add(data[start:end].decode("ascii"))
             required = {"emulator_run_reference_guests_v2", "emulator_run_gpu_core_checks_v2",
                         "emulator_run_nv_checks_v2", "emulator_guest_clear_replay_v1",
-                        "emulator_run_shader_checks_v2", "emulator_shader_draw_v1", "emulator_guest_draw_replay_v1", "emulator_demo_start_v1", "emulator_demo_step_v1", "emulator_demo_stop_v1", "emulator_program_begin_v1", "emulator_program_append_v1", "emulator_program_inspect_v1", "emulator_program_start_v1", "emulator_program_step_v1", "emulator_program_close_v1"}
+                        "emulator_run_shader_checks_v2", "emulator_shader_draw_v1", "emulator_guest_draw_replay_v1", "emulator_demo_start_v1", "emulator_demo_step_v1", "emulator_demo_stop_v1", "emulator_program_begin_v1", "emulator_program_append_v1", "emulator_program_inspect_v1", "emulator_program_start_v1", "emulator_program_step_v1", "emulator_program_close_v1", "emulator_texture_replay_v1"}
             assert required <= symbols, f"Missing engine exports: {required - symbols}"
             libraries.append({"name": name, "machine": machine, "zipPayloadOffset": payload_offset,
                               "loadSegments": loads, "minimumAlignment": 16384, "verifiedEngineExports": sorted(required)})

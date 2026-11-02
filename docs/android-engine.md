@@ -1,15 +1,15 @@
 # Android original-engine checks
 
-Version 0.20.0-dev embeds the original Rust engine into the Android app, with
+Version 0.21.0-dev embeds the original Rust engine into the Android app, with
 diagnostics under Settings and a [library/import/player foundation](android-app.md).
 The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
-The app's worker calls Rust once to execute fifteen original NRO fixtures
-described in [kernel-ipc.md](kernel-ipc.md), runs fifty integrated NV protocol scenarios, separately runs three actual GPU-core
-memory/command cases, including original DMA execution, runs nineteen portable shader scenarios, then calls the sixteen-test
+The app's worker calls Rust once to execute sixteen original NRO fixtures
+described in [kernel-ipc.md](kernel-ipc.md), runs fifty integrated NV protocol scenarios, separately runs eleven actual GPU-core
+memory/command cases, including original DMA execution, runs twenty-five portable shader scenarios, then calls the nineteen-test
 C++ Vulkan suite (six native cases, three clear replays, three translated-shader draws,
-three guest-command draw replays and a live guest check). The Rust checks validate actual debug output, instruction/IPC
+three guest-command draw replays, a live guest check and three sampled-texture replays). The Rust checks validate actual debug output, instruction/IPC
 counts, guest memory results and zero remaining handles after process exit.
 The result is not hardcoded successful output. Each native group reports its
 own failure; one failed group does not discard the other's diagnostic report.
@@ -66,11 +66,12 @@ validate the Android C ABI or either Android runtime architecture.
 
 ## Report and device checkpoint
 
-Schema4/workload18 keeps engine/nv/gpuCore/gpu, adds shader and requires all five
-for combined allPassed. One Run all checks tap runs102 cases: fifteen interpreted
-NROs (suite12), fifty NV scenarios (suite3), three GPU-core cases(suite2),
-nineteen shader cases(suite2) and fifteen Vulkan checks(workload6). Summary/export
-stay together and older workload caches are invalidated.
+Schema4/workload22 requires all five groups for combined allPassed. One Run all
+checks tap runs121 cases: sixteen interpreted NROs (suite13), fifty NV scenarios
+(suite3), eleven GPU-core cases(suite3), twenty-five shader cases(suite3) and
+nineteen Vulkan checks(workload8). Summary/export stay together; older workload
+caches are invalidated. Texture/varying semantics, the new value ABI and visible
+scene are documented in [the texture batch](texture-draw-batch.md).
 
 The new color-clear NRO executes 5571 instructions/25 IPC/2 copies/18 A/11 B/
 603 descriptor bytes and closes all handles/transfer objects/loans. Every pixel
@@ -86,7 +87,7 @@ and replays its actual command bytes through the original decoder. Other cases
 replay owned BGRA/masked fixtures. Fixed host shaders lower clear operations;
 the separate raw SM53 subset now translates owned shaders to SPIR-V for three
 new Vulkan draws. The new guest-command replay also derives shaders/vertices/
-scissor from B197 state; live backend/display integration remains open. The new shader
+scissor from B197 state. The live Catch and texture scene now present; general display services remain open. The new shader
 value ABI and exact semantics are in [shader translation](shader-translation-batch.md).
 All four EngineReport exports retain ABI2.
 
@@ -98,7 +99,7 @@ Historical software/physical records remain under docs/validation/.
 After the owned AVD boots, verify the entire flow with:
 
 ```sh
-python3 tools/qa_android_batch.py --apk android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk --output reports/android-qa/v0.18.0-dev --version 0.18.0-dev --workload 18 --previous-workload 17 --gpu-tests 15 --gpu-workload 6 --engine-reference reports/v0.18-host-engine.json --nv-reference reports/v0.18-host-nv.json --core-reference reports/v0.18-host-gpu-core.json --shader-reference reports/v0.18-host-shader.json --shutdown
+python3 tools/qa_android_batch.py --apk android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk --output reports/android-qa/v0.21.0-dev/batch --version 0.21.0-dev --workload 22 --previous-workload 21 --gpu-tests 19 --gpu-workload 8 --engine-reference reports/v0.21-host-engine.json --nv-reference reports/v0.21-host-nv.json --core-reference reports/v0.21-host-gpu-core.json --shader-reference reports/v0.21-host-shader.json --shutdown
 ```
 
 Generate references with the reference_report example (default, nv, gpu-core, shader).

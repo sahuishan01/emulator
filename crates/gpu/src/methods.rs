@@ -78,6 +78,7 @@ enum EngineState {
 }
 #[derive(Debug)]
 enum CopyInput {
+    Prepared,
     Memory(GpuMemoryRange),
     Solid {
         color: [u8; 4],
@@ -129,6 +130,7 @@ impl PreparedBatch {
             // Read at execution time so a later launch sees earlier writes,
             // including through a different virtual address of the same backing.
             match &copy.source {
+                CopyInput::Prepared => {}
                 CopyInput::Memory(source) => {
                     source.read(&mut copy.buffer).expect("prepared read pin")
                 }
@@ -425,9 +427,9 @@ impl PreparedBatch {
         limits: ExecutionLimits,
         spans: &mut usize,
     ) -> Result<(), ExecutionError> {
-        let coverage = draw.coverage()?;
+        let pixels = draw.raster()?;
         let s = draw.surface;
-        let bytes = coverage.iter().filter(|p| **p).count() * 4;
+        let bytes = pixels.iter().filter(|p| p.is_some()).count() * 4;
         let snapshots = pins.iter().map(GpuMemoryRange::len).sum::<usize>()
             + (draw.vertex_spirv.len() + draw.fragment_spirv.len()) * 4;
         if self.stats.copy_launches + self.stats.clear_launches + self.stats.draw_launches
@@ -449,16 +451,15 @@ impl PreparedBatch {
         if *spans > crate::address_space::MAX_BACKING_SPANS {
             return Err(ExecutionError::Capacity);
         }
-        let (color, mask) = s.storage_color();
         for y in 0..s.height {
             let mut x = 0;
             while x < s.width {
-                if !coverage[(y * s.width + x) as usize] {
+                if pixels[(y * s.width + x) as usize].is_none() {
                     x += 1;
                     continue;
                 }
                 let first = x;
-                while x < s.width && coverage[(y * s.width + x) as usize] {
+                while x < s.width && pixels[(y * s.width + x) as usize].is_some() {
                     x += 1;
                 }
                 let length = ((x - first) * 4) as usize;
@@ -472,13 +473,11 @@ impl PreparedBatch {
                     return Err(ExecutionError::Capacity);
                 }
                 self.copies.push(Copy {
-                    source: CopyInput::Solid {
-                        color,
-                        mask,
-                        previous: None,
-                    },
+                    source: CopyInput::Prepared,
                     target,
-                    buffer: vec![0; length],
+                    buffer: (first..x)
+                        .flat_map(|x| pixels[(y * s.width + x) as usize].expect("covered pixel"))
+                        .collect(),
                 });
             }
         }

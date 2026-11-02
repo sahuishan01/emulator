@@ -10,6 +10,7 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".DemoActivity" android:exported="false" />
+        <activity android:name=".TextureActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".ProgramActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="false" />

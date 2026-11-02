@@ -43,20 +43,49 @@ pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
     let void = b.declare(19, &[]);
     let uint = b.declare(21, &[32, 0]);
     let float = b.declare(22, &[32]);
+    let vec2 = program.texture_handle.map(|_| b.declare(23, &[float, 2]));
     let vec4 = b.declare(23, &[float, 4]);
     let ptr_out = b.declare(32, &[3, vec4]);
     let function_type = b.declare(33, &[void]);
     let output = b.id();
     instruction(&mut b.declarations, 59, &[ptr_out, output, 3]);
-    let input = if program.stage == Stage::Vertex {
+    let mut inputs = vec![];
+    if program.stage == Stage::Vertex || program.input_mask != 0 {
         let ptr = b.declare(32, &[1, vec4]);
+        let count = if program.stage == Stage::Vertex && program.input_mask & 0xf0 != 0 {
+            2
+        } else {
+            1
+        };
+        for i in 0..count {
+            let var = b.id();
+            instruction(&mut b.declarations, 59, &[ptr, var, 1]);
+            instruction(&mut b.annotations, 71, &[var, 30, i]);
+            if program.stage == Stage::Fragment {
+                instruction(&mut b.annotations, 71, &[var, 13]);
+            }
+            inputs.push(var);
+        }
+    }
+    let varying = program.varying.map(|_| {
         let var = b.id();
-        instruction(&mut b.declarations, 59, &[ptr, var, 1]);
+        instruction(&mut b.declarations, 59, &[ptr_out, var, 3]);
         instruction(&mut b.annotations, 71, &[var, 30, 0]);
-        Some(var)
-    } else {
-        None
-    };
+        instruction(&mut b.annotations, 71, &[var, 13]); // NoPerspective
+        var
+    });
+    let sampler = program.texture_handle.map(|_| {
+        let image = b.declare(25, &[float, 1, 0, 0, 0, 1, 0]);
+        let ty = b.declare(27, &[image]);
+        let ptr = b.declare(32, &[0, ty]);
+        let var = b.id();
+        instruction(&mut b.declarations, 59, &[ptr, var, 0]);
+        instruction(&mut b.annotations, 71, &[var, 34, 0]);
+        instruction(&mut b.annotations, 71, &[var, 33, 0]);
+        let zero = b.id();
+        instruction(&mut b.declarations, 43, &[float, zero, 0]);
+        (var, ty, zero)
+    });
     if program.stage == Stage::Vertex {
         instruction(&mut b.annotations, 71, &[output, 11, 0]);
     } else {
@@ -66,7 +95,8 @@ pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
     let label = b.id();
     instruction(&mut b.body, 54, &[void, main, 0, function_type]);
     instruction(&mut b.body, 248, &[label]);
-    let loaded = input.map(|i| b.result(61, vec4, &[i]));
+    let loaded: Vec<_> = inputs.iter().map(|i| b.result(61, vec4, &[*i])).collect();
+    let sampler = sampler.map(|(var, ty, zero)| (b.result(61, ty, &[var]), zero));
     let mut ids = Vec::with_capacity(program.values.len());
     for value in &program.values {
         let id = match value.op {
@@ -76,11 +106,7 @@ pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
                 id
             }
             Op::Input(c) => {
-                let f = b.result(
-                    81,
-                    float,
-                    &[loaded.expect("validated vertex interface"), u32::from(c)],
-                );
+                let f = b.result(81, float, &[loaded[c as usize / 4], u32::from(c % 4)]);
                 b.result(124, uint, &[f])
             }
             Op::BitsToFloat(a) => b.result(124, float, &[ids[a]]),
@@ -98,6 +124,17 @@ pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
                 instruction(&mut b.annotations, 71, &[id, 42]); // NoContraction
                 id
             }
+            Op::Sample {
+                coordinates,
+                component,
+            } => {
+                let uv = coordinates.map(|i| b.result(124, float, &[ids[i]]));
+                let uv = b.result(80, vec2.expect("texture vector type"), &uv);
+                let (image, zero) = sampler.expect("validated texture instruction");
+                let rgba = b.result(88, vec4, &[image, uv, 2, zero]);
+                let f = b.result(81, float, &[rgba, u32::from(component)]);
+                b.result(124, uint, &[f])
+            }
         };
         debug_assert!(matches!(value.ty, Type::Bits32 | Type::F32));
         ids.push(id);
@@ -105,6 +142,11 @@ pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
     let outputs = program.outputs.map(|i| b.result(124, float, &[ids[i]]));
     let vector = b.result(80, vec4, &outputs);
     instruction(&mut b.body, 62, &[output, vector]);
+    if let (Some(out), Some(values)) = (varying, program.varying) {
+        let outputs = values.map(|i| b.result(124, float, &[ids[i]]));
+        let vector = b.result(80, vec4, &outputs);
+        instruction(&mut b.body, 62, &[out, vector]);
+    }
     instruction(&mut b.body, 253, &[]);
     instruction(&mut b.body, 56, &[]);
     let mut module = vec![0x07230203, 0x00010000, 0, b.next, 0];
@@ -117,8 +159,9 @@ pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
         0,
         output,
     ];
-    if let Some(input) = input {
-        entry.push(input);
+    entry.extend(inputs);
+    if let Some(varying) = varying {
+        entry.push(varying);
     }
     instruction(&mut module, 15, &entry);
     if program.stage == Stage::Fragment {

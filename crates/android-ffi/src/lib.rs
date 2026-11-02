@@ -7,6 +7,8 @@ pub use program::ProgramChunk;
 mod demo;
 pub use demo::{DemoStatus, LiveDraw};
 mod draws;
+mod textures;
+pub use textures::{TextureReplay, TexturedDraw};
 mod gpu_core;
 mod graphics;
 pub use draws::DrawReplay;
@@ -233,6 +235,18 @@ fn reference_checks() -> String {
             ipc_buffers: (18, 11, 603),
             copy_handles: 2,
         },
+        Case {
+            name: "guest-nv-sampled-textures",
+            image: textures::IMAGE,
+            message: textures::MESSAGE,
+            instructions: 5571,
+            ipc_calls: 25,
+            memory: Some((0x4040, 2)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (18, 11, 603),
+            copy_handles: 2,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -284,6 +298,9 @@ fn reference_checks() -> String {
             }
             if case.name == "guest-nv-shader-draws" {
                 draws::verify_guest(&session)?;
+            }
+            if case.name == "guest-nv-sampled-textures" {
+                textures::verify_guest(&session)?;
             }
             if case.name == "guest-nv-color-clears" {
                 graphics::verify_guest(&session)?;
@@ -339,7 +356,7 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":12,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":13,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -356,6 +373,11 @@ pub extern "C" fn emulator_run_gpu_core_checks_v2() -> EngineReport {
         gpu_core::report,
         "original-gpu-memory-and-command-reference",
     )
+}
+
+#[no_mangle]
+pub extern "C" fn emulator_texture_replay_v1(index: u32) -> TextureReplay {
+    textures::replay(index)
 }
 
 fn encode_report(run: fn() -> String, scope: &str) -> EngineReport {
@@ -426,7 +448,7 @@ mod tests {
         assert_eq!(result.abi_version, 2);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 15);
+        assert_eq!(text.matches("\"passed\":true").count(), 16);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));
@@ -437,7 +459,7 @@ mod tests {
         assert_eq!(report.abi_version, 2);
         let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 3);
+        assert_eq!(text.matches("\"passed\":true").count(), 11);
         assert!(text.contains(
             "\"capturedSubmissions\":2,\"decodedWrites\":4,\"residentBytesAfterRelease\":0"
         ));

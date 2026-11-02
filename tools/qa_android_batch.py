@@ -196,6 +196,8 @@ def main():
         backups = ['last-report.json']
         if 'demo' in report:
             backups.append('last-demo-report.json')
+        if 'textureScene' in report:
+            backups.append('last-texture-report.json')
         backup_bytes = {name: call('exec-out', 'run-as', package, 'cat', 'files/' + name) for name in backups}
         for name in backups:
             call('shell', 'run-as', package, 'mv', 'files/' + name, 'files/' + name + '.bak')

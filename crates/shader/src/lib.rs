@@ -1,6 +1,6 @@
 //! Original bounded Maxwell SM53 shader subset, SSA bit/float IR and SPIR-V.
 //! Raw instruction bundles only. Stage/interface metadata is supplied explicitly;
-//! graphics program headers, branching, textures and shader memory are unsupported.
+//! bounded vertex varyings and one explicit-LOD 2D texture binding are supported.
 use std::fmt;
 mod header;
 pub mod reference;
@@ -27,6 +27,8 @@ pub enum Error {
     MissingExit,
     AfterExit { offset: usize },
     MissingOutput,
+    Invocation,
+    TextureBinding,
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -50,6 +52,10 @@ pub enum Op {
     FloatToBits(usize),
     Add(usize, usize),
     Multiply(usize, usize),
+    Sample {
+        coordinates: [usize; 2],
+        component: u8,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Value {
@@ -71,6 +77,9 @@ pub struct Program {
     pub(crate) stage: Stage,
     pub(crate) values: Vec<Value>,
     pub(crate) outputs: [usize; 4],
+    pub(crate) varying: Option<[usize; 4]>,
+    pub(crate) input_mask: u8,
+    pub(crate) texture_handle: Option<u32>,
     instructions: usize,
     required_registers: usize,
 }
@@ -90,21 +99,91 @@ impl Program {
     pub fn instruction_count(&self) -> usize {
         self.instructions
     }
-    /// Independent serial reference semantics for an invocation. No GPU state.
-    pub fn evaluate(&self, input: [u32; 4]) -> [u32; 4] {
+    pub fn input_mask(&self) -> u8 {
+        self.input_mask
+    }
+    pub fn texture_handle(&self) -> Option<u32> {
+        self.texture_handle
+    }
+    pub fn varying_outputs(&self) -> Option<[usize; 4]> {
+        self.varying
+    }
+    /// Legacy single-vector invocation rejects shaders requiring extra inputs.
+    pub fn evaluate(&self, input: [u32; 4]) -> Result<[u32; 4], Error> {
+        if self.stage == Stage::Vertex && self.input_mask & 0xf0 != 0 {
+            return Err(Error::Invocation);
+        }
+        Ok(self.invoke([input, [0; 4]], None)?.output)
+    }
+    /// Independent scalar semantics. Images are checked views, never GPU pointers.
+    pub fn invoke(
+        &self,
+        input: [[u32; 4]; 2],
+        image: Option<SampledImage<'_>>,
+    ) -> Result<Invocation, Error> {
+        if self.texture_handle.is_some() != image.is_some() {
+            return Err(Error::TextureBinding);
+        }
+        if let Some(image) = image {
+            image.validate()?;
+        }
         let mut bits = Vec::with_capacity(self.values.len());
         for value in &self.values {
             let x = match value.op {
                 Op::Constant(x) => x,
-                Op::Input(c) => input[c as usize],
+                Op::Input(c) => input[c as usize / 4][c as usize % 4],
                 Op::BitsToFloat(a) | Op::FloatToBits(a) => bits[a],
                 Op::Add(a, b) => (f32::from_bits(bits[a]) + f32::from_bits(bits[b])).to_bits(),
                 Op::Multiply(a, b) => (f32::from_bits(bits[a]) * f32::from_bits(bits[b])).to_bits(),
+                Op::Sample {
+                    coordinates,
+                    component,
+                } => image
+                    .ok_or(Error::TextureBinding)?
+                    .sample(coordinates.map(|i| f32::from_bits(bits[i])))?[component as usize],
             };
             bits.push(x);
         }
-        self.outputs.map(|i| bits[i])
+        Ok(Invocation {
+            output: self.outputs.map(|i| bits[i]),
+            varying: self.varying.map(|v| v.map(|i| bits[i])),
+        })
     }
+}
+#[derive(Clone, Copy, Debug)]
+pub struct SampledImage<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: &'a [u8],
+}
+impl SampledImage<'_> {
+    fn validate(self) -> Result<(), Error> {
+        if self.width == 0
+            || self.height == 0
+            || self.width > 64
+            || self.height > 64
+            || self.pixels.len() != self.width as usize * self.height as usize * 4
+        {
+            return Err(Error::TextureBinding);
+        }
+        Ok(())
+    }
+    fn sample(self, uv: [f32; 2]) -> Result<[u32; 4], Error> {
+        if uv.iter().any(|x| !x.is_finite()) {
+            return Err(Error::Invocation);
+        }
+        let x = ((uv[0].clamp(0., 1.) * self.width as f32).floor() as u32).min(self.width - 1);
+        let y = ((uv[1].clamp(0., 1.) * self.height as f32).floor() as u32).min(self.height - 1);
+        let at = ((y * self.width + x) * 4) as usize;
+        Ok(std::array::from_fn(|c| {
+            (self.pixels[at + c] as f32 / 255.).to_bits()
+        }))
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Invocation {
+    pub output: [u32; 4],
+    pub varying: Option<[u32; 4]>,
 }
 fn value(values: &mut Vec<Value>, ty: Type, op: Op) -> usize {
     let id = values.len();
@@ -134,6 +213,9 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
     let mut regs = [None; 256];
     regs[255] = Some(zero);
     let mut outputs = [None; 4];
+    let mut varying = [None; 4];
+    let mut texture_handle = None;
+    let mut input_mask = 0u8;
     let mut exit = false;
     let mut instructions = 0;
     for (bundle, bytes) in code.chunks_exact(32).enumerate() {
@@ -186,7 +268,17 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
                 let load = w >> 52 == 0xefd;
                 let attr = ((w >> 20) & 0x3ff) as usize;
                 let count = (((w >> 47) & 3) + 1) as usize;
-                let base = if load { 0x80 } else { 0x70 };
+                let base = if load {
+                    if attr >= 0x90 {
+                        0x90
+                    } else {
+                        0x80
+                    }
+                } else if attr >= 0x80 {
+                    0x80
+                } else {
+                    0x70
+                };
                 if stage != Stage::Vertex
                     || attr % 4 != 0
                     || attr < base
@@ -199,11 +291,49 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
                 for c in 0..count {
                     let component = (attr - base) / 4 + c;
                     if load {
+                        let component = component + if base == 0x90 { 4 } else { 0 };
+                        input_mask |= 1 << component;
                         regs[d as usize + c] =
                             Some(value(&mut values, Type::Bits32, Op::Input(component as u8)));
+                    } else if base == 0x80 {
+                        varying[component] = Some(read(&regs, d + c as u8, offset)?);
                     } else {
                         outputs[component] = Some(read(&regs, d + c as u8, offset)?);
                     }
+                }
+                None
+            } else if w & !0x0000003ff00000ff == 0xe003ff800ff7ff00 {
+                // IPA.PASS, center sample, direct generic0, RZ multiplier.
+                let attr = ((w >> 28) & 0x3ff) as usize;
+                if stage != Stage::Fragment || !(0x80..0x90).contains(&attr) || attr % 4 != 0 {
+                    return Err(Error::Interface { offset });
+                }
+                let c = (attr - 0x80) / 4;
+                input_mask |= 1 << c;
+                Some(value(&mut values, Type::Bits32, Op::Input(c as u8)))
+            } else if w & !0x000000000ff0ffff == 0xdeb80027a0070000 {
+                // TEX.B.LZ, 2D, all RGBA, no modifiers, static bindless handle.
+                if stage != Stage::Fragment || d > 251 || a == 255 {
+                    return Err(Error::Interface { offset });
+                }
+                let coordinates = [read(&regs, a, offset)?, read(&regs, a + 1, offset)?];
+                let handle = read(&regs, b, offset)?;
+                let Op::Constant(handle) = values[handle].op else {
+                    return Err(Error::TextureBinding);
+                };
+                if texture_handle.is_some_and(|old| old != handle) {
+                    return Err(Error::TextureBinding);
+                }
+                texture_handle = Some(handle);
+                for c in 0..4 {
+                    regs[d as usize + c] = Some(value(
+                        &mut values,
+                        Type::Bits32,
+                        Op::Sample {
+                            coordinates,
+                            component: c as u8,
+                        },
+                    ));
                 }
                 None
             } else if w == 0xe30000000007000f {
@@ -228,10 +358,21 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
     let [Some(x), Some(y), Some(z), Some(w)] = outputs else {
         return Err(Error::MissingOutput);
     };
+    let varying = if varying.iter().all(Option::is_none) {
+        None
+    } else {
+        let [Some(x), Some(y), Some(z), Some(w)] = varying else {
+            return Err(Error::MissingOutput);
+        };
+        Some([x, y, z, w])
+    };
     Ok(Program {
         stage,
         values,
         outputs: [x, y, z, w],
+        varying,
+        input_mask,
+        texture_handle,
         instructions,
         required_registers: regs[..255]
             .iter()

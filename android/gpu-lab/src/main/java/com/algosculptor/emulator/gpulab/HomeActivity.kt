@@ -80,7 +80,7 @@ class HomeActivity : Activity() {
         visible.forEach { entry ->
             ui.space(titles, 14)
             val card = ui.card()
-            if (entry.included) {
+            if (entry.id == "builtin:catch") {
                 card.addView(object : View(this) {
                     private val paint = Paint()
                     init { contentDescription = "Catch preview: green square and red paddle" }
@@ -95,23 +95,23 @@ class HomeActivity : Activity() {
             card.addView(ui.label(if (entry.included) "INCLUDED HOMEBREW" else "IMPORTED · STATIC NRO"))
             ui.space(card, 6); card.addView(ui.text(entry.title, 23f, bold = true)); ui.space(card, 6)
             val missing = !entry.included && store.file(entry) == null
-            card.addView(ui.text(if (missing) "File missing. Remove this entry and import it again." else if (entry.included) "Move the paddle. Catch the falling square." else if (entry.result.isEmpty()) "Ready to try · compatibility untested" else entry.result, 14f, ui.muted))
+            card.addView(ui.text(if (missing) "File missing. Remove this entry and import it again." else if (entry.id == "builtin:catch") "Move the paddle. Catch the falling square." else if (entry.id == "builtin:textures") "View textured geometry from our guest program." else if (entry.result.isEmpty()) "Ready to try · compatibility untested" else entry.result, 14f, ui.muted))
             if (entry.lastPlayed > 0) { ui.space(card, 8); card.addView(ui.text("Last played ${DateUtils.getRelativeTimeSpanString(entry.lastPlayed, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS)}", 12f, ui.muted)) }
             ui.space(card, 14)
             val actions = LinearLayout(this)
-            actions.addView(ui.button(if (entry.included) "Play Catch" else "Run homebrew", true) { launch(entry) }.apply { isEnabled = !missing }, LinearLayout.LayoutParams(0, -2, 1f))
+            actions.addView(ui.button(if (entry.id == "builtin:catch") "Play Catch" else if (entry.id == "builtin:textures") "Open scene" else "Run homebrew", true) { launch(entry) }.apply { isEnabled = !missing }, LinearLayout.LayoutParams(0, -2, 1f))
             actions.addView(ui.button("Details") { details(entry) })
             card.addView(actions); titles.addView(card)
         }
         ui.space(titles, 18)
     }
     private fun launch(entry: LibraryEntry) {
-        startActivity(Intent(this, if (entry.included) DemoActivity::class.java else ProgramActivity::class.java).apply {
+        startActivity(Intent(this, if (entry.id == "builtin:catch") DemoActivity::class.java else if (entry.id == "builtin:textures") TextureActivity::class.java else ProgramActivity::class.java).apply {
             putExtra("entryId", entry.id); putExtra("playerMode", true)
         })
     }
     private fun details(entry: LibraryEntry) {
-        val text = if (entry.included) "Included homebrew. Drag the screen, hold Left/Right, or use a D-pad.\n\nSessions played: ${entry.launches}" else
+        val text = if (entry.id == "builtin:catch") "Included homebrew. Drag the screen, hold Left/Right, or use a D-pad.\n\nSessions played: ${entry.launches}" else if (entry.id == "builtin:textures") "Included guest graphics scene. Three texture variants with sampled colors, coordinates and geometry.\n\nScenes opened: ${entry.launches}" else
             "NRO0 · ${entry.bytes} bytes\nSessions started: ${entry.launches}\n\nThis build runs a limited static homebrew subset. A valid file may still require instructions or services that are not implemented."
         val dialog = AlertDialog.Builder(this).setTitle(entry.title).setMessage(text).setPositiveButton("Close", null)
         if (!entry.included) dialog.setNeutralButton("Remove") { _, _ ->

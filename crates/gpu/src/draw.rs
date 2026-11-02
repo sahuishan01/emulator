@@ -5,12 +5,14 @@ use crate::{
 use emulator_memory::Access;
 use emulator_shader::{decode_program, emit, Program, Stage};
 
-/// Owned host-independent draw. Surface color is the constant fragment result;
-/// vertices are captured input bits, before evaluating the guest vertex shader.
+/// Owned host-independent draw. Captured inputs precede guest shader execution;
+/// surface color is used only for the uniform fragment fast path.
 #[derive(Clone, Debug)]
 pub struct Draw {
     pub surface: ColorClear,
     pub vertices: Vec<[u32; 4]>,
+    pub varying_inputs: Vec<[u32; 4]>,
+    pub texture: Option<crate::SampledTexture>,
     pub vertex: Program,
     pub fragment: Program,
     pub vertex_spirv: Vec<u32>,
@@ -23,6 +25,9 @@ pub(crate) struct Registers {
     stream: [Option<u32>; 4],
     limit: [Option<u32>; 2],
     attribute: Option<u32>,
+    attribute1: Option<u32>,
+    texture_mode: Option<u32>,
+    texture_pools: [[Option<u32>; 3]; 2],
     region: [Option<u32>; 2],
     pipeline: [[Option<u32>; 3]; 6],
     disabled: [Option<u32>; 4],
@@ -47,6 +52,10 @@ impl Registers {
             0x1c00..=0x1c0c => self.stream[((offset - 0x1c00) / 4) as usize] = Some(data),
             0x1f00..=0x1f04 => self.limit[((offset - 0x1f00) / 4) as usize] = Some(data),
             0x1160 => self.attribute = Some(data),
+            0x1164 => self.attribute1 = Some(data),
+            0xf10 => self.texture_mode = Some(data),
+            0x1574..=0x157c => self.texture_pools[0][((offset - 0x1574) / 4) as usize] = Some(data),
+            0x155c..=0x1564 => self.texture_pools[1][((offset - 0x155c) / 4) as usize] = Some(data),
             0x1608..=0x160c => self.region[((offset - 0x1608) / 4) as usize] = Some(data),
             0x2000..=0x214c => {
                 let slot = ((offset - 0x2000) / 64) as usize;
@@ -120,10 +129,7 @@ impl Registers {
                 return Err(invalid());
             }
         }
-        if required(self.attribute)? != 0x38200000
-            || required(self.stream[0])? != 0x1010
-            || required(self.stream[3])? != 0
-        {
+        if required(self.attribute)? != 0x38200000 || required(self.stream[3])? != 0 {
             return Err(invalid());
         }
         for (i, p) in self.pipeline.iter().enumerate() {
@@ -173,9 +179,39 @@ impl Registers {
         };
         let vertex = program(1, Stage::Vertex)?;
         let fragment = program(5, Stage::Fragment)?;
+        let extra = vertex.input_mask() & 0xf0 != 0;
+        let stride = if extra { 32 } else { 16 };
+        if required(self.stream[0])? != 0x1000 | stride as u32
+            || extra && required(self.attribute1)? != 0x38200800
+            || fragment.input_mask() != 0 && vertex.varying_outputs().is_none()
+        {
+            return Err(invalid());
+        }
+        let texture = if let Some(handle) = fragment.texture_handle() {
+            if required(self.texture_mode)? != 1 {
+                return Err(invalid());
+            }
+            let mut pools = [[0; 3]; 2];
+            for (out, source) in pools.iter_mut().zip(self.texture_pools) {
+                for (out, field) in out.iter_mut().zip(source) {
+                    *out = required(field)?;
+                }
+            }
+            Some(crate::sampled_texture::capture(
+                space, pools, handle, &mut pins,
+            )?)
+        } else {
+            None
+        };
         let vertex_spirv = emit(&vertex).map_err(|e| E::Shader(e.to_string()))?;
         let fragment_spirv = emit(&fragment).map_err(|e| E::Shader(e.to_string()))?;
-        surface.color = fragment.evaluate([0; 4]);
+        surface.color = if fragment.input_mask() == 0 && texture.is_none() {
+            fragment
+                .evaluate([0; 4])
+                .map_err(|e| E::Shader(e.to_string()))?
+        } else {
+            [0; 4]
+        };
         if surface
             .color
             .iter()
@@ -185,30 +221,48 @@ impl Registers {
         }
         let begin = address(required(self.stream[1])?, required(self.stream[2])?)?;
         let limit = address(required(self.limit[0])?, required(self.limit[1])?)?;
-        let start = begin.checked_add((first * 16) as u64).ok_or_else(invalid)?;
-        let end = start.checked_add((count * 16) as u64).ok_or_else(invalid)?;
+        let start = begin
+            .checked_add((first * stride) as u64)
+            .ok_or_else(invalid)?;
+        let end = start
+            .checked_add((count * stride) as u64)
+            .ok_or_else(invalid)?;
         if begin % 4 != 0 || end == 0 || end - 1 > limit {
             return Err(invalid());
         }
-        let bytes = capture(space, GpuVa(start), count * 16, &mut pins)?;
+        let bytes = capture(space, GpuVa(start), count * stride, &mut pins)?;
         let vertices = bytes
-            .chunks_exact(16)
+            .chunks_exact(stride)
             .map(|v| {
                 std::array::from_fn(|c| {
                     u32::from_le_bytes(v[c * 4..c * 4 + 4].try_into().expect("word"))
                 })
             })
             .collect();
+        let varying_inputs = bytes
+            .chunks_exact(stride)
+            .map(|v| {
+                if extra {
+                    std::array::from_fn(|c| {
+                        u32::from_le_bytes(v[16 + c * 4..20 + c * 4].try_into().expect("word"))
+                    })
+                } else {
+                    [0; 4]
+                }
+            })
+            .collect();
         let draw = Draw {
             surface,
             vertices,
+            varying_inputs,
+            texture,
             vertex,
             fragment,
             vertex_spirv,
             fragment_spirv,
         };
         // Validate vertex domain and raster bounds before exposing a plan.
-        draw.coverage()?;
+        draw.raster()?;
         Ok((draw, pins))
     }
 }
@@ -233,12 +287,25 @@ fn capture(
 impl Draw {
     /// Fixed 1/16-pixel grid, pixel-center sampling and top-left edge ownership.
     /// Only finite, unclipped w=1 positions on this grid are accepted. Fragment
-    /// output is uniform and depth/blending/culling are explicitly disabled.
-    pub(crate) fn coverage(&self) -> Result<Vec<bool>, E> {
+    /// attributes interpolate screen-linearly; depth/blending/culling are disabled.
+    pub(crate) fn raster(&self) -> Result<Vec<Option<[u8; 4]>>, E> {
         let s = self.surface;
+        if self.vertices.len() != self.varying_inputs.len() || s.width > 64 || s.height > 64 {
+            return Err(invalid());
+        }
         let mut points = vec![];
-        for input in &self.vertices {
-            let p = self.vertex.evaluate(*input).map(f32::from_bits);
+        let mut attributes = vec![];
+        for (input, extra) in self.vertices.iter().zip(&self.varying_inputs) {
+            let invocation = self
+                .vertex
+                .invoke([*input, *extra], None)
+                .map_err(|e| E::Shader(e.to_string()))?;
+            let p = invocation.output.map(f32::from_bits);
+            let varying = invocation.varying.unwrap_or([0; 4]).map(f32::from_bits);
+            if varying.iter().any(|x| !x.is_finite()) {
+                return Err(invalid());
+            }
+            attributes.push(varying);
             if p.iter().any(|x| !x.is_finite())
                 || p[3] != 1.
                 || !(0.0..=1.0).contains(&p[2])
@@ -263,15 +330,27 @@ impl Draw {
             }
             points.push([xy[0] as i64, xy[1] as i64]);
         }
-        let mut coverage = vec![false; (s.width * s.height) as usize];
-        for triangle in points.chunks_exact(3) {
+        let mut pixels = vec![None; (s.width * s.height) as usize];
+        let uniform = self.fragment.input_mask() == 0 && self.texture.is_none();
+        let constant = if uniform {
+            Some(
+                self.fragment
+                    .evaluate([0; 4])
+                    .map_err(|e| E::Shader(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        for (triangle, varying) in points.chunks_exact(3).zip(attributes.chunks_exact(3)) {
             let [a, mut b, mut c] = [triangle[0], triangle[1], triangle[2]];
+            let [av, mut bv, mut cv] = [varying[0], varying[1], varying[2]];
             let area = edge(a, b, c);
             if area == 0 {
                 continue;
             }
             if area < 0 {
                 std::mem::swap(&mut b, &mut c);
+                std::mem::swap(&mut bv, &mut cv);
             }
             for y in s.rect[1]..s.rect[3] {
                 for x in s.rect[0]..s.rect[2] {
@@ -280,11 +359,37 @@ impl Draw {
                         let e = edge(u, v, p);
                         e > 0 || e == 0 && (v[1] < u[1] || v[1] == u[1] && v[0] > u[0])
                     });
-                    coverage[(y * s.width + x) as usize] |= inside;
+                    if inside {
+                        let color = if let Some(color) = constant {
+                            color
+                        } else {
+                            let weights = [edge(b, c, p), edge(c, a, p), edge(a, b, p)];
+                            let area = edge(a, b, c) as f64;
+                            let input = std::array::from_fn(|i| {
+                                ((weights[0] as f64 * av[i] as f64
+                                    + weights[1] as f64 * bv[i] as f64
+                                    + weights[2] as f64 * cv[i] as f64)
+                                    / area) as f32
+                            });
+                            self.fragment
+                                .invoke(
+                                    [input.map(f32::to_bits), [0; 4]],
+                                    self.texture.as_ref().map(|t| t.image()),
+                                )
+                                .map_err(|e| E::Shader(e.to_string()))?
+                                .output
+                        };
+                        if color.iter().any(|x| !f32::from_bits(*x).is_finite()) {
+                            return Err(invalid());
+                        }
+                        let mut surface = s;
+                        surface.color = color;
+                        pixels[(y * s.width + x) as usize] = Some(surface.storage_color().0);
+                    }
                 }
             }
         }
-        Ok(coverage)
+        Ok(pixels)
     }
 }
 fn edge(a: [i64; 2], b: [i64; 2], p: [i64; 2]) -> i64 {

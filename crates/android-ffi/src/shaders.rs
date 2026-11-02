@@ -74,7 +74,7 @@ pub fn report() -> String {
     let cases = reference::run();
     let passed = cases.iter().all(|c| c.passed);
     let tests=cases.iter().map(|c|format!("{{\"name\":{},\"passed\":{},\"decodedInstructions\":{},\"spirvWords\":{},\"verifiedInvocations\":{},\"rejectedPrograms\":{},\"error\":{}}}",quote(c.name),c.passed,c.counts.instructions,c.counts.spirv_words,c.counts.invocations,c.counts.rejected,quote(&c.error))).collect::<Vec<_>>().join(",");
-    format!("{{\"scope\":\"original-sm53-shader-reference\",\"suiteVersion\":2,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",quote(std::env::consts::ARCH),tests,passed)
+    format!("{{\"scope\":\"original-sm53-shader-reference\",\"suiteVersion\":3,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",quote(std::env::consts::ARCH),tests,passed)
 }
 #[cfg(test)]
 mod tests {
@@ -106,7 +106,7 @@ mod tests {
         let r = crate::emulator_run_shader_checks_v2();
         let s = std::str::from_utf8(&r.bytes[..r.length as usize]).unwrap();
         assert!(s.ends_with("\"allPassed\":true}"), "{s}");
-        assert_eq!(s.matches("\"passed\":true").count(), 19);
+        assert_eq!(s.matches("\"passed\":true").count(), 25);
         assert!(r.bytes[r.length as usize..].iter().all(|b| *b == 0));
     }
 }

@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <type_traits>
 
 namespace {
 constexpr uint32_t SIDE = 64;
@@ -1022,7 +1023,34 @@ bool translated_shader_draw(Context& context,uint32_t index) {
     return true;
 }
 
+const GuestDrawOp& draw_source(const GuestDrawOp& draw) { return draw; }
+const GuestDrawOp& draw_source(const TexturedDraw& draw) { return draw.draw; }
+struct TextureBinding { Image image; Buffer upload; VkDescriptorSet set; };
+VkDescriptorSetLayout texture_layout(Context& c) {
+    VkDescriptorSetLayoutBinding binding{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr};
+    auto info=structure<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
+    info.bindingCount=1;info.pBindings=&binding;VkDescriptorSetLayout layout{};
+    check(vkCreateDescriptorSetLayout(c.device,&info,nullptr,&layout),"create guest texture layout");c.descriptor_layouts.push_back(layout);return layout;
+}
+TextureBinding texture_binding(Context& c,const TexturedDraw& d,VkDescriptorSetLayout layout) {
+    if(!d.texture_width || !d.texture_height || d.texture_width>64 || d.texture_height>64 || d.texture_bytes!=d.texture_width*d.texture_height*4 || d.texture_bytes>sizeof(d.texture))throw std::runtime_error("Guest texture ABI bounds");
+    const auto image=c.image(VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT,VK_IMAGE_ASPECT_COLOR_BIT,d.texture_width,d.texture_height);
+    const auto upload=c.buffer(d.texture_bytes,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);c.write(upload,d.texture,d.texture_bytes);
+    auto sampler_info=structure<VkSamplerCreateInfo>(VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO);
+    sampler_info.magFilter=sampler_info.minFilter=VK_FILTER_NEAREST;sampler_info.mipmapMode=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler_info.addressModeU=sampler_info.addressModeV=sampler_info.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VkSampler sampler{};check(vkCreateSampler(c.device,&sampler_info,nullptr,&sampler),"create guest sampler");c.samplers.push_back(sampler);
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1};
+    auto pool_info=structure<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);pool_info.maxSets=1;pool_info.poolSizeCount=1;pool_info.pPoolSizes=&size;
+    VkDescriptorPool pool{};check(vkCreateDescriptorPool(c.device,&pool_info,nullptr,&pool),"create guest sampler pool");c.descriptor_pools.push_back(pool);
+    auto allocate=structure<VkDescriptorSetAllocateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);allocate.descriptorPool=pool;allocate.descriptorSetCount=1;allocate.pSetLayouts=&layout;
+    VkDescriptorSet set{};check(vkAllocateDescriptorSets(c.device,&allocate,&set),"allocate guest sampler set");
+    VkDescriptorImageInfo image_info{sampler,image.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    auto write=structure<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);write.dstSet=set;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;write.pImageInfo=&image_info;
+    vkUpdateDescriptorSets(c.device,1,&write,0,nullptr);return {image,upload,set};
+}
 template<class Replay> bool render_guest_commands(Context& context,const Replay& replay,Image* rendered = nullptr) {
+    constexpr bool textured=std::is_same_v<Replay,TextureReplay>;
     const auto w=replay.background.width, h=replay.background.height;
     const auto bytes=static_cast<size_t>(w)*h*4;
     if(replay.abi_version!=1 || replay.status || replay.draw_count!=2 || replay.image_bytes!=bytes)
@@ -1057,6 +1085,8 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
     framebuffer_info.width=w;framebuffer_info.height=h;framebuffer_info.layers=1;
     VkFramebuffer framebuffer{};check(vkCreateFramebuffer(context.device,&framebuffer_info,nullptr,&framebuffer),"create translated shader framebuffer");context.framebuffers.push_back(framebuffer);
     auto layout_info=structure<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
+    VkDescriptorSetLayout sampler_layout{};
+    if constexpr(textured){sampler_layout=texture_layout(context);layout_info.setLayoutCount=1;layout_info.pSetLayouts=&sampler_layout;}
     VkPipelineLayout layout{};check(vkCreatePipelineLayout(context.device,&layout_info,nullptr,&layout),"create translated shader layout");context.pipeline_layouts.push_back(layout);
     auto pipeline=[&](const GuestDrawOp& source) {
         if (!source.vertex_words || source.vertex_words>2048 || !source.fragment_words || source.fragment_words>2048 || source.vertex[0]!=0x07230203 || source.fragment[0]!=0x07230203)
@@ -1065,10 +1095,10 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         for(auto& stage:stages)stage=structure<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
         stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=context.shader(source.vertex,source.vertex_words);stages[0].pName="main";
         stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=context.shader(source.fragment,source.fragment_words);stages[1].pName="main";
-        const VkVertexInputBindingDescription binding{0,4*sizeof(float),VK_VERTEX_INPUT_RATE_VERTEX};
-        const VkVertexInputAttributeDescription attribute{0,0,VK_FORMAT_R32G32B32A32_SFLOAT,0};
+        const VkVertexInputBindingDescription binding{0,(textured?8u:4u)*sizeof(float),VK_VERTEX_INPUT_RATE_VERTEX};
+        const std::array<VkVertexInputAttributeDescription,2> attributes{{{0,0,VK_FORMAT_R32G32B32A32_SFLOAT,0},{1,0,VK_FORMAT_R32G32B32A32_SFLOAT,16}}};
         auto vertex=structure<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
-        vertex.vertexBindingDescriptionCount=1;vertex.pVertexBindingDescriptions=&binding;vertex.vertexAttributeDescriptionCount=1;vertex.pVertexAttributeDescriptions=&attribute;
+        vertex.vertexBindingDescriptionCount=1;vertex.pVertexBindingDescriptions=&binding;vertex.vertexAttributeDescriptionCount=textured?2:1;vertex.pVertexAttributeDescriptions=attributes.data();
         auto assembly=structure<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         const VkViewport viewport{0,0,static_cast<float>(w),static_cast<float>(h),0,1};const VkRect2D scissor{{0,0},{w,h}};
         auto viewport_info=structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
@@ -1088,30 +1118,47 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         if(handle)context.pipelines.push_back(handle);check(result,"create translated shader pipeline");return handle;
     };
     std::array<Buffer,3> vertex_buffers{};
+    std::array<TextureBinding,3> textures{};
     std::array<VkPipeline,3> draw_pipelines{};
     for(uint32_t i=0;i<replay.draw_count;++i) {
-        const auto& d=replay.draws[i];
+        const auto& d=draw_source(replay.draws[i]);
         if(d.address_upper!=background.address_upper || d.address_lower!=background.address_lower || d.width!=w || d.height!=h
             || d.pitch!=w*4 || d.format!=background.format || d.mask!=15 || d.vertex_count!=6
             || d.rect[0]>d.rect[2] || d.rect[1]>d.rect[3] || d.rect[2]>w || d.rect[3]>h)
             throw std::runtime_error("Guest draw operation ABI mismatch");
-        vertex_buffers[i]=context.buffer(sizeof(d.vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        context.write(vertex_buffers[i],d.vertices,sizeof(d.vertices));
+        if constexpr(textured) {
+            const auto& source=replay.draws[i];std::array<uint32_t,48> inputs{};
+            for(size_t v=0;v<6;++v) {std::copy_n(d.vertices+v*4,4,inputs.data()+v*8);std::copy_n(source.varyings+v*4,4,inputs.data()+v*8+4);}
+            vertex_buffers[i]=context.buffer(sizeof(inputs),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);context.write(vertex_buffers[i],inputs.data(),sizeof(inputs));
+            textures[i]=texture_binding(context,source,sampler_layout);
+        } else {
+            vertex_buffers[i]=context.buffer(sizeof(d.vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            context.write(vertex_buffers[i],d.vertices,sizeof(d.vertices));
+        }
         draw_pipelines[i]=pipeline(d);
     }
     const auto command=context.begin();
     for(uint32_t i=0;i<replay.draw_count;++i)
         buffer_barrier(command,vertex_buffers[i],VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+    if constexpr(textured) for(uint32_t i=0;i<replay.draw_count;++i){
+        const auto& t=textures[i];const auto& d=replay.draws[i];
+        buffer_barrier(command,t.upload,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+        image_barrier(command,t.image.handle,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,0,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
+        VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={d.texture_width,d.texture_height,1};
+        vkCmdCopyBufferToImage(command,t.upload.handle,t.image.handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+        image_barrier(command,t.image.handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,VK_ACCESS_SHADER_READ_BIT);
+    }
     VkClearValue initial{};std::memcpy(initial.color.float32,background.color,sizeof(background.color));
     auto begin=structure<VkRenderPassBeginInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
     begin.renderPass=pass;begin.framebuffer=framebuffer;begin.renderArea={{0,0},{w,h}};begin.clearValueCount=1;begin.pClearValues=&initial;
     vkCmdBeginRenderPass(command,&begin,VK_SUBPASS_CONTENTS_INLINE);
     for(uint32_t i=0;i<replay.draw_count;++i) {
-        const auto& d=replay.draws[i];
+        const auto& d=draw_source(replay.draws[i]);
         if(d.rect[0]==d.rect[2] || d.rect[1]==d.rect[3])continue;
         const VkDeviceSize offset=0;vkCmdBindVertexBuffers(command,0,1,&vertex_buffers[i].handle,&offset);
         const VkRect2D scissor{{static_cast<int32_t>(d.rect[0]),static_cast<int32_t>(d.rect[1])},{d.rect[2]-d.rect[0],d.rect[3]-d.rect[1]}};
         vkCmdSetScissor(command,0,1,&scissor);vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,draw_pipelines[i]);
+        if constexpr(textured)vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&textures[i].set,0,nullptr);
         vkCmdDraw(command,d.vertex_count,1,0,0);
     }
     vkCmdEndRenderPass(command);
@@ -1196,7 +1243,9 @@ public:
         ready_images.resize(swap_images.size());
         for(auto& ready:ready_images)check(vkCreateSemaphore(context.device,&sem,nullptr,&ready),"per-image present semaphore");
     }
-    void present(const Image& source) {
+    void present(const Image& source,uint32_t width,uint32_t height,VkFormat format) {
+        VkFormatProperties properties{};vkGetPhysicalDeviceFormatProperties(context.physical,format,&properties);
+        if(!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT))throw std::runtime_error("Source format cannot be presented by blit");
         uint32_t index=0;
         auto result=vkAcquireNextImageKHR(context.device,swapchain,1'000'000'000ull,acquired,VK_NULL_HANDLE,&index);
         if(result!=VK_SUBOPTIMAL_KHR)check(result,"acquire Android image");
@@ -1213,11 +1262,13 @@ public:
         // Serialize the letterbox clear and the overlapping destination blit.
         barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
-        const auto side=std::min(extent.width,extent.height), x=(extent.width-side)/2,y=(extent.height-side)/2;
-        VkImageBlit blit{};blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};blit.srcOffsets[1]={64,64,1};
+        uint32_t dw=extent.width,dh=std::max(1u,static_cast<uint32_t>(static_cast<uint64_t>(dw)*height/width));
+        if(dh>extent.height){dh=extent.height;dw=std::max(1u,static_cast<uint32_t>(static_cast<uint64_t>(dh)*width/height));}
+        const auto x=(extent.width-dw)/2,y=(extent.height-dh)/2;
+        VkImageBlit blit{};blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};blit.srcOffsets[1]={static_cast<int32_t>(width),static_cast<int32_t>(height),1};
         blit.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
         blit.dstOffsets[0]={static_cast<int32_t>(x),static_cast<int32_t>(y),0};
-        blit.dstOffsets[1]={static_cast<int32_t>(x+side),static_cast<int32_t>(y+side),1};
+        blit.dstOffsets[1]={static_cast<int32_t>(x+dw),static_cast<int32_t>(y+dh),1};
         vkCmdBlitImage(command,source.handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,swap_images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_NEAREST);
         barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=0;
@@ -1241,7 +1292,7 @@ public:
         check(vkQueueWaitIdle(context.queue),"presentation queue idle");
         ++presented;
     }
-    uint32_t render(const LiveDraw& draw) noexcept {
+    template<class Replay> uint32_t render(const Replay& draw) noexcept {
         try {
             context.clear_workloads();
             check(vkResetCommandPool(context.device,context.command_pool,0),"reset live frame commands");
@@ -1249,7 +1300,7 @@ public:
             if(!render_guest_commands(context,draw,&image))throw std::runtime_error("Live guest Vulkan pixels differ from serial raster oracle");
             if(context.validation_errors)throw std::runtime_error("Vulkan validation error");
             ++completed;
-            if(swapchain)present(image);
+            if(swapchain)present(image,draw.background.width,draw.background.height,draw.background.format==0xcf?VK_FORMAT_B8G8R8A8_UNORM:VK_FORMAT_R8G8B8A8_UNORM);
             return 0;
         } catch(const std::exception& e) {error=e.what();return 1;}
     }
@@ -1300,14 +1351,15 @@ GpuReport run_gpu_checks() {
         tests.push_back({"owned-nv-bgra-draw-command-replay",guest_draw_command_replay(context,1),"Decoded guest BGRA draw state, shader headers, transformed geometry and byte storage match"});
         tests.push_back({"owned-nv-scissor-draw-command-replay",guest_draw_command_replay(context,2),"Decoded guest scissor and vertex transforms preserve surrounding pixels across ordered draws"});
         tests.push_back({"live-homebrew-frames-input-and-completion",live_homebrew_check(),"111 interpreted homebrew frames; live Vulkan completion before guest publication; catches, misses, reset and resource release"});
+        for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-sampled-texture-rgba","guest-sampled-texture-bgra","guest-sampled-texture-updated"}[i],render_guest_commands(context,emulator_texture_replay_v1(i)),"Guest SPH/IPA/TEX/TIC/TSC -> original SPIR-V and Vulkan; every byte matches independent sampling and raster oracles"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 16 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 19 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":7,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":8,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1356,3 +1408,32 @@ std::string step_homebrew(uint32_t x,uint32_t reset) {
 std::string stop_homebrew() {
     const auto s=emulator_demo_stop_v1();const auto result=demo_json(s,false,s.status ? std::string(s.error,strnlen(s.error,sizeof(s.error))) : "");live.reset();return result;
 }
+
+namespace {
+thread_local std::unique_ptr<LiveRenderer> texture_scene;
+thread_local unsigned texture_variant=0;
+std::string texture_scene_json(bool running,const std::string& error="") {
+    const auto* scene=texture_scene.get();std::ostringstream j;
+    j << "{\"scope\":\"original-guest-texture-scene\",\"running\":" << (running?"true":"false")
+      << ",\"variant\":" << texture_variant << ",\"renderWidth\":16,\"renderHeight\":8"
+      << ",\"completedFrames\":" << (scene?scene->completed:0) << ",\"presentedFrames\":" << (scene?scene->presented:0)
+      << ",\"pixelsVerified\":" << (scene && scene->completed ? "true":"false")
+      << ",\"deviceName\":" << quoted(scene?scene->context.properties.deviceName:"")
+      << ",\"isSoftwareRenderer\":" << (scene && scene->context.properties.deviceType==VK_PHYSICAL_DEVICE_TYPE_CPU?"true":"false")
+      << ",\"validationErrors\":" << (scene?scene->context.validation_errors.load():0)
+      << ",\"frameAllocationCount\":" << (scene?scene->context.allocations.size():0)
+      << ",\"error\":" << quoted(error) << "}";return j.str();
+}
+}
+std::string start_texture_scene(void* window,unsigned variant) {
+    try {
+        texture_scene.reset();texture_variant=variant;
+        if(variant>2)throw std::runtime_error("Unknown texture scene variant");
+        texture_scene=std::make_unique<LiveRenderer>();texture_scene->initialize(window);
+        const auto replay=emulator_texture_replay_v1(variant);
+        if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
+        if(texture_scene->render(replay))throw std::runtime_error(texture_scene->error);
+        return texture_scene_json(true);
+    }catch(const std::exception& e){const auto result=texture_scene_json(false,e.what());texture_scene.reset();return result;}
+}
+std::string stop_texture_scene() {const auto result=texture_scene_json(false,texture_scene?texture_scene->error:"");texture_scene.reset();return result;}

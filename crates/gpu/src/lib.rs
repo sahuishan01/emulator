@@ -7,6 +7,8 @@ mod address_space;
 mod clear;
 mod draw;
 pub use draw::Draw;
+mod sampled_texture;
+pub use sampled_texture::SampledTexture;
 mod graphics;
 pub use graphics::{GraphicsBackend, GraphicsFrame};
 mod methods;

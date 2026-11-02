@@ -75,7 +75,7 @@ def main():
   visible('Play Catch','landscape-library');shot('library-landscape');call('shell','settings','put','system','user_rotation','0');home()
   # A slow pipe gives real cancellation and rotation coverage, not a synthetic callback.
   choose('slow-hello.nro');tap('Cancel import','cancel-import');wait('Import cancelled.','cancelled')
-  rows=catalog('after-cancel');assert len(rows)==1,rows
+  rows=catalog('after-cancel');assert len(rows)==2,rows
   assert not call('exec-out','run-as',pkg,'find','files/library','-name','.import-*').strip()
   tap('Dismiss','dismiss-cancel');choose('slow-ipc.nro');wait('Cancel import','import-before-rotation')
   call('shell','settings','put','system','accelerometer_rotation','0');call('shell','settings','put','system','user_rotation','1')
@@ -83,15 +83,15 @@ def main():
   call('shell','settings','put','system','user_rotation','0');wait('Your library','portrait')
   rows=catalog('after-rotation');assert any(row[1]=='slow-ipc.nro' for row in rows),rows
   tap('Dismiss','dismiss-added');choose('hello.nro');wait('Added hello.nro','hello-added');shot('library-imported')
-  tap('Dismiss','dismiss-hello');choose('duplicate.nro');wait('already in your library','duplicate-rejected',contains=True);assert len(catalog('after-duplicate'))==3
-  tap('Dismiss','dismiss-duplicate');choose('invalid.nro');wait('missing NRO0','invalid-rejected',contains=True);assert len(catalog('after-invalid'))==3
-  tap('Dismiss','dismiss-invalid');choose('module.nro');wait('module headers','module-rejected',contains=True);assert len(catalog('after-module'))==3
-  tap('Dismiss','dismiss-module');choose('oversize.nro');wait('up to 32 MiB','oversize-rejected',contains=True);assert len(catalog('after-oversize'))==3
+  tap('Dismiss','dismiss-hello');choose('duplicate.nro');wait('already in your library','duplicate-rejected',contains=True);assert len(catalog('after-duplicate'))==4
+  tap('Dismiss','dismiss-duplicate');choose('invalid.nro');wait('missing NRO0','invalid-rejected',contains=True);assert len(catalog('after-invalid'))==4
+  tap('Dismiss','dismiss-invalid');choose('module.nro');wait('module headers','module-rejected',contains=True);assert len(catalog('after-module'))==4
+  tap('Dismiss','dismiss-module');choose('oversize.nro');wait('up to 32 MiB','oversize-rejected',contains=True);assert len(catalog('after-oversize'))==4
   assert not call('exec-out','run-as',pkg,'find','files/library','-name','.import-*').strip()
   tap('Dismiss','dismiss-oversize');choose('bad-opcode.nro');wait('Added bad-opcode.nro','bad-opcode-added')
   call('shell','am','force-stop',pkg);home();r=dump('search-fault');edit=next(n for n in r.iter('node') if n.get('class')=='android.widget.EditText');tapnode(edit);call('shell','input','text','bad-opcode');call('shell','input','keyevent','4')
   tap('Run homebrew','run-fault');wait('unsupported A64','explicit-guest-fault',contains=True);shot('program-fault');tap('Back to library','fault-back')
-  remove('bad-opcode.nro','remove-fault');assert len(catalog('after-remove'))==3
+  remove('bad-opcode.nro','remove-fault');assert len(catalog('after-remove'))==4
   call('shell','am','force-stop',pkg);home()
   # Select hello through search so Run refers to the chosen uploaded file.
   r=dump('search-hello');edit=next(n for n in r.iter('node') if n.get('class')=='android.widget.EditText');tapnode(edit);call('shell','input','text','hello');call('shell','input','keyevent','4')

@@ -15,8 +15,8 @@ discovery/IPC, shared cloned-session lifetimes, events, thread scheduling,
 blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
-The Android app embeds this engine, fifteen guest checks, fifty NV API scenarios,
-three GPU core cases, nineteen shader cases and sixteen Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
+The Android app embeds this engine, sixteen guest checks, fifty NV API scenarios,
+eleven GPU core cases, twenty-five shader cases and nineteen Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
@@ -63,19 +63,19 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.20.0-dev** app opens a persistent, searchable homebrew library. It includes
-Catch, imports supported static `.nro` files through Android's file picker, runs
+The **0.21.0-dev** app opens a persistent, searchable homebrew library. It includes
+Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
 Diagnostics and report export are under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.20.0-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.20.0-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.20.0-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.21.0-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.21.0-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.21.0-dev).
 The existing Android application ID/signing identity is retained for updates.
 This is a debug development build, not a production-ready commercial-game emulator.
-See [the exact build and Android verification](docs/validation/android-app-foundation.md).
+See [the texture implementation](docs/texture-draw-batch.md) and [build verification](docs/validation/android-texture-batch.md).
 
 ## Play our original homebrew
 
@@ -85,6 +85,14 @@ use Pause/Resume and Reset. The emulated NRO performs the game logic and GPU sub
 is a64x64 homebrew reference demo, with an emulator-owned input/display mailbox.
 Commercial games, full Horizon display/HID and practical console performance
 remain unsupported. See [the execution path and limits](docs/live-homebrew.md).
+
+## View guest textures
+
+Open **Texture scene → Open scene** in the library. **Next pattern** cycles through
+RGBA, BGRA and updated texture variants. This renders our captured guest shaders,
+vertex coordinates and texture descriptors through Vulkan; it is not a prerecorded
+image. The original guest tests pixels, rollback and resource lifetime. See the
+[exact supported texture and varying profile](docs/texture-draw-batch.md).
 
 ## Run our homebrew executable
 
@@ -163,7 +171,7 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/cli` | NRO/raw-program execution and demo |
 | `crates/android-ffi` | Bounded diagnostics, live Catch and value-only imported-program upload/execution |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
-| `examples/homebrew` | Sixteen original homebrew sources and assembled NRO fixtures (fifteen reference cases plus Catch) |
+| `examples/homebrew` | Seventeen original homebrew sources and assembled NRO fixtures (sixteen reference cases plus Catch) |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
 | `android/gpu-lab` | Main Android library/import/player/settings and support diagnostics/export |
 | `tools/qa-documents` | Separate test-only SAF provider; never part of the main APK |
@@ -180,16 +188,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.20.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.21.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.20.0-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.20.0-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.21.0-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.21.0-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.20.0-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.21.0-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.
@@ -217,9 +225,9 @@ Output: `android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`.
 The APK includes arm64-v8a and x86_64 libraries. For support, open **Settings → Diagnostics**, select **Run all checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. Schema4/workload21 separates fifteen guest checks (`engine`), three GPU-core
-cases (`gpuCore`), fifty NV scenarios (`nv`), nineteen shader cases (`shader`) and
-sixteen Vulkan cases (`gpu`). All103 run together, with one summary and export. See [the Android boundary](docs/android-engine.md)
+devices. Schema4/workload22 separates sixteen guest checks (`engine`), eleven GPU-core
+cases (`gpuCore`), fifty NV scenarios (`nv`), twenty-five shader cases (`shader`) and
+nineteen Vulkan cases (`gpu`). All121 run together, with one summary and export. See [the Android boundary](docs/android-engine.md)
 for its build, report schema and verification limits.
 
 ## Validation
@@ -239,10 +247,11 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has194 Rust tests and28 independently assembled fixtures
-(11 raw A64 programs and fifteen NROs). Verify guest draw pages with
+The current suite has195 Rust tests and29 independently assembled fixtures
+(12 raw A64 programs and seventeen NROs). Verify guest draw pages with
 `python3 tools/generate_draw_fixtures.py --check` and emitted shader modules with
 `python3 tools/generate_shader_fixtures.py --check --validate-spirv`.
+Verify texture/varying fixtures with `python3 tools/generate_texture_fixtures.py --check --validate-spirv`.
 Verify the BC1 fixture with `python3 tools/generate_bc1_fixture.py --check`.
 All six Vulkan workloads passed on desktop llvmpipe with zero validation
 errors and on an Android 15 SwiftShader AVD. A deliberately stale update in a

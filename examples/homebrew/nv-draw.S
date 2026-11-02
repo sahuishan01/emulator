@@ -1,6 +1,11 @@
 // Original static NRO0 fixture. All labels are resolved by LLVM, not our decoder.
 .text
+.ifdef TEXTURED_FIXTURE
+.include "examples/gpu/texture-profile.inc"
+.equ MESSAGE_LENGTH, 68
+.else
 .equ MESSAGE_LENGTH, 69
+.endif
 .global _start
 _start:
     b entry
@@ -212,25 +217,44 @@ entry:
     cbnz w9, failed
     open_device open_ctrl_request, ctrl_path, w18
     // Reject a full clear/draw batch with a bad final method; no pixels/fence commit.
+.ifdef TEXTURED_FIXTURE
+    submit_arguments 2, TEXTURED_COMMAND_WORDS + 2, 0, 0
+.else
     submit_arguments 2, 128, 0, 0
+.endif
     install_ioctl submit_request, w21
     expect_error 4
     ldr x9, [x27, #0x800]
     cbnz x9, failed
     check_point 0
+.ifdef TEXTURED_FIXTURE
+    submit_arguments 2, TEXTURED_COMMAND_WORDS, 0, 0
+.else
     submit_arguments 2, 126, 0, 0
+.endif
     ioctl_request submit_request, w21
     check_fence 1
     check_point 1
     // Check green border and red center; the host checks every pixel.
     ldr w9, [x27, #0x800]
-    add w9, w9, #0xff0, lsl #12
-    add w9, w9, #0x100
-    cbnz w9, failed
-    ldr w9, [x27, #0x8a0]
+.ifdef TEXTURED_FIXTURE
     add w9, w9, #0xff0, lsl #12
     add w9, w9, #0xf, lsl #12
     add w9, w9, #0xf01
+.else
+    add w9, w9, #0xff0, lsl #12
+    add w9, w9, #0x100
+.endif
+    cbnz w9, failed
+    ldr w9, [x27, #0x8a0]
+.ifdef TEXTURED_FIXTURE
+    add w9, w9, #0xff0, lsl #12
+    add w9, w9, #0x100
+.else
+    add w9, w9, #0xff0, lsl #12
+    add w9, w9, #0xf, lsl #12
+    add w9, w9, #0xf01
+.endif
     cbnz w9, failed
     close_device w23
     close_device w28
@@ -272,7 +296,11 @@ gpu_path:
 ctrl_path:
     .ascii "/dev/nvhost-ctrl"
 message:
+.ifdef TEXTURED_FIXTURE
+    .ascii "Guest textures passed: coordinates, samples, rollback and lifetime.\n"
+.else
     .ascii "Guest draws passed: headers, shaders, pixels, rollback and lifetime.\n"
+.endif
 message_end:
     .if (message_end-message) != MESSAGE_LENGTH
     .error "debug message length changed"
@@ -434,6 +462,10 @@ result_storage:
     .quad 0
     .balign 4096
 imported_source:
+.ifdef TEXTURED_FIXTURE
+    .incbin "examples/gpu/texture-rgba-page.bin"
+.else
     .incbin "examples/gpu/draw-rgba-page.bin"
+.endif
     .balign 4096
 image_end:

@@ -16,8 +16,8 @@ Z-A. Success claims must name the build, device, driver, title version and scene
 Current foundation: twelve original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
-virtual timeouts/cancellation and CLI/Android execution. Sixteen owned NROs exercise
-the implemented behavior. All194 Rust tests and28 independent
+virtual timeouts/cancellation and CLI/Android execution. Seventeen owned NROs exercise
+the implemented behavior. All195 Rust tests and29 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
@@ -58,6 +58,12 @@ not guest
 graphics. APK export/state retention are exercised
 separately from graphics;
 guest rendering, shader translation and commercial game support remain open.
+
+The [0.21 texture batch](texture-draw-batch.md) adds actual sampled guest shaders,
+vertex-to-fragment coordinates, checked texture/sampler descriptors, reference
+raster pixels and Vulkan replay/presentation. The library includes a texture scene.
+The combined corpus is121 checks; the previous103 records remain unchanged.
+This is a bounded nearest/RGBA8/pitch-linear/w1 profile, not general game graphics.
 
 ## Milestones and dependency gates
 

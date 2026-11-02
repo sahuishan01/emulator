@@ -27,7 +27,7 @@ class EmulatorApplication : Application() {
 
 data class LibraryEntry(val id: String, val title: String, val filename: String, val bytes: Long,
     val mode: String, val lastPlayed: Long, val launches: Int, val result: String) {
-    val included: Boolean get() = id == "builtin:catch"
+    val included: Boolean get() = id == "builtin:catch" || id == "builtin:textures"
 }
 data class ImportStatus(val busy: Boolean = false, val message: String = "", val error: Boolean = false)
 
@@ -54,6 +54,7 @@ class LibraryStore(private val app: Context) {
     }
     init {
         worker.execute {
+            db.writableDatabase.execSQL("INSERT OR IGNORE INTO titles(id,title,filename,bytes,mode) VALUES('builtin:textures','Texture scene','',0,'textures')")
             val indexed = entries().map { it.filename }.toSet()
             directory.listFiles()?.forEach { file ->
                 if (file.name.startsWith(".import-") || (file.name.matches(Regex("[0-9a-f]{64}\\.nro")) && file.name !in indexed)) file.delete()
@@ -101,7 +102,7 @@ class LibraryStore(private val app: Context) {
             var outcome = ImportStatus(message = "Import failed.", error = true)
             try {
                 val current = entries()
-                require(current.size < 129) { "The library can contain up to 128 imported files." }
+                require(current.count { !it.included } < 128) { "The library can contain up to 128 imported files." }
                 val used = current.sumOf { it.bytes }
                 val name = app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null, cancellation)?.use { c ->
                     if (c.moveToFirst()) c.getString(0) else null

@@ -19,7 +19,7 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 21
+        private const val WORKLOAD_VERSION = 22
     }
 
     private external fun runNvChecks(): ByteArray
@@ -106,16 +106,20 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         try {
-            val captured = ReportStore.read(this, "last-demo-report.json")
-            if (captured != null && report != null) {
-                val demo = JSONObject(captured)
-                if (demo.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) {
-                    report = JSONObject(report!!).put("demo", demo).toString(2)
-                    ReportStore.write(this, "last-report.json", report!!)
-                    output.text = summarize(report!!)
-                }
+            report?.let { captured ->
+                val value = JSONObject(captured); attachCapturedReports(value)
+                report = value.toString(2); ReportStore.write(this, "last-report.json", report!!)
+                output.text = summarize(report!!)
             }
         } catch (_: Exception) { }
+    }
+    private fun attachCapturedReports(target: JSONObject) {
+        for ((name, key) in listOf("last-demo-report.json" to "demo", "last-texture-report.json" to "textureScene")) {
+            try { ReportStore.read(this, name)?.let { captured ->
+                val value = JSONObject(captured)
+                if (value.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) target.put(key, value)
+            } } catch (_: Exception) { }
+        }
     }
 
     private fun summarize(text: String): String = try {
@@ -174,11 +178,7 @@ class MainActivity : Activity() {
                         .put("error", error.message ?: error.javaClass.simpleName)
                 }
                 JSONObject().apply {
-                    val capturedDemo = ReportStore.read(this@MainActivity, "last-demo-report.json")
-                    try { if (capturedDemo != null) {
-                        val demo = JSONObject(capturedDemo)
-                        if (demo.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) put("demo", demo)
-                    } } catch (_: Exception) { }
+                    attachCapturedReports(this)
                     put("schemaVersion", 4)
                     put("workloadVersion", WORKLOAD_VERSION)
                     put("scope", "original-engine-gpu-core-and-host-vulkan")

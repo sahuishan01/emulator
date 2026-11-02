@@ -13,7 +13,54 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.20.0-dev
+## Current implementation: 0.21.0-dev
+
+Guest texture/varying batch: original vertex generic0/1 ALD, generic0 AST,
+fragment IPA.PASS screen-linear input and constant-handle TEX.B.LZ 2D RGBA sampling.
+Typed SSA/reference invocation/direct SPIR-V (NoPerspective, explicit LOD0,
+set0/binding0). SPH maps derive from actual supported interfaces. Descriptor
+methods f10/1574..157c/155c..1564 capture TIC/TSC/texture bytes. Only pitch-linear
+RGBA8 UNORM/normalized/nearest/clamp/no-mip/identity swizzle,1..64 dimensions,
+32-byte pitch alignment/max256,256-aligned pools. Broader formats/tiling/LOD,
+dynamic handles/perspective/depth/indexed draws and VI/HID remain open.
+
+Per-fragment raster rows now carry interpolated shader samples. Texture/header/
+sampler pins join shader/vertex feedback and backing-identity checks. Whole-batch
+input/output feedback fails; source changes between jobs are recaptured. New
+original nv-texture.NRO shares our owned NV assembly harness;5571instructions,
+25IPC/18A/11B/603bytes/2copiedhandles, late rollback/closed owners/completion2.
+Original nv-draw.NRO binary remains identical.17 owned NROs/29 LLVM fixtures.
+
+New export emulator_texture_replay_v1 is99928bytes/align4: header+ClearOp to76,
+3xTexturedDraw33028 (old DrawOp16536+varyings96+texture metadata12+bytes16384),
+pixels at99160/error99672. Old16 exports/layouts unchanged,17total. Old value
+converters explicitly reject new texture/varying state they cannot represent.
+All four new SASS listings match NVIDIA nvdisasmSM53; emitted modules pass spirv-val.
+
+Main library seeds protected builtin:textures idempotently into schema1 catalogs;
+included entries don't consume128 import slots. TextureActivity/Open scene offers
+3actual guest variants; its single worker skips superseded jobs, closes on
+background and retains destroyed textures until Vulkan teardown. Shader-rendered
+16x8 source preserves aspect at presentation. last-texture-report.json joins
+normal diagnostic export and AtomicFile backup recovery. Generic imports still
+use text execution; this scene is not a full guest display service or a game.
+
+App0.21.0-dev/code22/schema4/workload22/nativeworkload8.121 checks now: engine16
+(suite13),NV50(suite3),GPUcore11(suite3),shader25(suite3),Vulkan19. Prior103
+named test records match host0.20 exactly.195 Rust tests/fmt/Clippy pass; fresh
+host Vulkan19/zero validation errors and pinned two-ABI assembly/lint/signature/
+17exports/16KiB packaging/main-app manifest checks pass. APK SHA256
+f1bf88bc999a7d355e2ba8d976f9c82da9224f6962fbdce97350bdfd96c9f082
+(14,184,481bytes). Actual0.20->0.21 AVD upgrade preserves all old catalog rows
+and report cache, adds scene.19app/17Catch/11texture UI checks pass with zero
+app crashes/ANRs; scene validates128displayed pixel centers per capture, all3
+patterns/rapid input/rotation/background/repeated surfaces. Full121 diagnostics,
+exact host comparisons/export/cold restore/all3 AtomicFile backup recoveries
+pass. Screenshots inspected; empty final crash buffers; owned AVD stopped/awaited.
+See docs/validation/android-texture-batch.md for evidence and cache provenance.
+New code/UI still needs target-phone use; no new physical report supplied.
+
+## Main application foundation (0.20 historical checkpoint)
 
 Main app foundation: HomeActivity launcher/Emulator label, SQLite library with
 included Catch, SHA-256 private-copy SAF imports, search/details/remove/recents,
@@ -66,7 +113,7 @@ implementation-plan.md for scope/milestones; M4 guest graphics gate is still ope
   views; no payload copy or revocation. Page tables/coherence remain incomplete.
 - CPU/loader: original integer A64 subset with guest TLS/MRS/SVC, static NRO0
   RX/R/RW/BSS and guarded stack. FP/SIMD/atomics/JIT, NSO/MOD0/linking/full runtime
-  and content/game loading remain open. Fifteen owned NROs are LLVM-assembled.
+  and content/game loading remain open. Seventeen owned NROs are LLVM-assembled.
 - Kernel: 256 handles, one host executor/16 lifetime guest threads, events,
   blocking waits, cancellation, virtual deadlines and cloned session identity.
   One virtual ns/instruction is a reference model, not console frequency.
@@ -347,8 +394,8 @@ startup ANR Wait may be handled using its exact current XML; app ANRs fail QA.
 
 ## Next combined work
 
-Keep the visible Catch path functional while broadening guest graphics:
-textured geometry, vertex/fragment interfaces, depth/indexed draws and the
+Keep the visible Catch and texture paths functional while broadening guest graphics:
+tiled/filtered/mipped textures, broader interfaces, depth/indexed draws and the
 required guest services. Implement normal display-buffer handoff/VI/BufferQueue
 and HID to replace the diagnostic mailbox for broader programs. Grow CPU/runtime
 and executable loading against real independent homebrew needs. Preserve the

@@ -7,7 +7,7 @@ acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
 event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
-Rust engine for fifteen original guest checks
+Rust engine for sixteen original guest checks
 alongside three GPU memory/command reference cases and the Vulkan laboratory. The user
 supplied a physical G720 0.3.0-dev report passing all six current workloads,
 including BC1 conversion, sampling and updates. The supplied 0.16 report now passes all60
@@ -17,7 +17,7 @@ A bounded synchronous live homebrew backend and Android window now work; general
 display/HID and asynchronous GPU integration remain open; see [the exact draw subset](guest-draw-batch.md).
 The [main Android application foundation](android-app.md) now owns a searchable
 SQLite library, bounded SAF imports, actual static-NRO text execution, settings
-and the existing Catch player. The laboratory remains available for support.
+and the existing Catch player. The laboratory remains available for support. The [texture batch](texture-draw-batch.md) now connects screen-linear varyings and one explicit-LOD sampled image to guest descriptors, reference pixels and Vulkan, with a visible library scene.
 See [the supported shader subset](shader-translation-batch.md).
 The color-clear batch adds original B197 operations and offscreen Vulkan replay
 of decoded guest commands; see [the exact scope](color-clear-batch.md).

@@ -7,7 +7,7 @@ General guest shaders and commercial Switch games remain unsupported. The C++ im
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-Sixteen bounded workloads (native workload version 7). The first nine are:
+Nineteen bounded workloads (native workload version 8). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -36,7 +36,7 @@ See [the full clear/replay contract](../../docs/color-clear-batch.md). Fixed hos
 shaders lower color clears. Three additional workloads consume our original
 SM53 translator output: full RGBA draw, transformed red BGRA draw and ordered
 green/red pipeline changes. Cases 13–15 replay decoded guest draws. Case 16 runs
-111 live Catch guest frames without a window, including score/miss/reset.
+111 live Catch guest frames without a window, including score/miss/reset. Cases17–19 add actual guest sampled RGBA/BGRA/updated-texture draws; see [the texture batch](../../docs/texture-draw-batch.md).
 General guest display integration remains open.
 See [the supported shader subset](../../docs/shader-translation-batch.md).
 
@@ -105,8 +105,8 @@ retained package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Open Settings → Diagnostics, run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version0.20.0-dev uses schema4/workload21: engine15, nv50, gpuCore3, shader19
-and gpu16 Vulkan cases. All five groups must pass (103 total). Native cases
+Version0.21.0-dev uses schema4/workload22: engine16, nv50, gpuCore11, shader25
+and gpu19 Vulkan cases. All five groups must pass (121 total). Native cases
 consume SPIR-V emitted by our original SM53 translator: full RGBA output,
 transformed BGRA geometry and ordered draws with two different fragment shaders.
 The three new guest-command replays derive shaders, vertices, target and scissor
@@ -135,7 +135,7 @@ development build, not a production graphics backend.
 The app now presents our own Catch NRO through live NV submissions, original shader
 translation and a synchronous Vulkan completion callback. TextureView/window,
 per-image present synchronization and touch controls are implemented. The normal
-batch has16 Vulkan cases/103 total; the new111-frame test runs without a window.
+batch now has19 Vulkan cases/121 total; the new111-frame test runs without a window.
 Visible display/control/lifecycle QA is separate. See [the exact contract](../../docs/live-homebrew.md).
 The previous replay tests remain unchanged; general display queues and games are open.
 

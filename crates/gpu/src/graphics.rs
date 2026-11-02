@@ -53,10 +53,9 @@ impl PreparedSubmission {
             {
                 return Err("Live draws must share the framebuffer and have <=6 vertices".into());
             }
-            let coverage = draw.coverage().map_err(|e| e.to_string())?;
-            let (color, _) = s.storage_color();
-            for (pixel, covered) in pixels.chunks_exact_mut(4).zip(coverage) {
-                if covered {
+            let raster = draw.raster().map_err(|e| e.to_string())?;
+            for (pixel, color) in pixels.chunks_exact_mut(4).zip(raster) {
+                if let Some(color) = color {
                     pixel.copy_from_slice(&color);
                 }
             }

@@ -111,3 +111,12 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_algosculptor_emulator_gpulab_NativePrograms_step(JNIEnv* env,jobject,jint budget) { return copy_engine_report(env,emulator_program_step_v1(static_cast<uint32_t>(budget))); }
 extern "C" JNIEXPORT void JNICALL
 Java_com_algosculptor_emulator_gpulab_NativePrograms_stop(JNIEnv*,jobject) { (void)emulator_program_close_v1(); }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_TextureActivity_startScene(JNIEnv* env,jobject,jobject surface,jint variant) {
+    auto* window=ANativeWindow_fromSurface(env,surface);
+    if(!window)return demo_bytes(env,"{\"running\":false,\"error\":\"Android surface unavailable\"}");
+    const auto result=start_texture_scene(window,static_cast<unsigned>(variant));ANativeWindow_release(window);return demo_bytes(env,result);
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_TextureActivity_stopScene(JNIEnv* env,jobject) { return demo_bytes(env,stop_texture_scene()); }
