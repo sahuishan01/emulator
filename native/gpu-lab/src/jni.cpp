@@ -45,3 +45,8 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_algosculptor_emulator_gpulab_MainActivity_runNvChecks(JNIEnv* env, jobject) {
     return copy_engine_report(env, emulator_run_nv_checks_v2());
 }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_MainActivity_runShaderChecks(JNIEnv* env, jobject) {
+    return copy_engine_report(env, emulator_run_shader_checks_v2());
+}

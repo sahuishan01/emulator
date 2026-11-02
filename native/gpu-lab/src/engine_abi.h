@@ -29,3 +29,16 @@ static_assert(offsetof(ClearReplay, operations) == 16);
 static_assert(offsetof(ClearReplay, pixels) == 496);
 static_assert(offsetof(ClearReplay, error) == 1008);
 extern "C" ClearReplay emulator_guest_clear_replay_v1(std::uint32_t index);
+
+extern "C" EngineReport emulator_run_shader_checks_v2();
+struct ShaderDraw {
+    std::uint32_t abi_version, status, vertex_words, fragment_words;
+    std::uint32_t vertex[2048], fragment[2048], vertices[24];
+    std::uint8_t pixels[512];
+    char error[256];
+};
+static_assert(sizeof(ShaderDraw)==17264 && alignof(ShaderDraw)==4);
+static_assert(offsetof(ShaderDraw,vertex)==16 && offsetof(ShaderDraw,fragment)==8208);
+static_assert(offsetof(ShaderDraw,vertices)==16400 && offsetof(ShaderDraw,pixels)==16496);
+static_assert(offsetof(ShaderDraw,error)==17008);
+extern "C" ShaderDraw emulator_shader_draw_v1(std::uint32_t index);

@@ -13,11 +13,11 @@ GT 7 Dream Edition / Immortalis-G720 as the first physical graphics target.
 The eventual title target is the original Switch version of Pokémon Legends:
 Z-A. Success claims must name the build, device, driver, title version and scene.
 
-Current foundation: eleven original Rust crates implement bounded guest memory,
+Current foundation: twelve original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
 virtual timeouts/cancellation and CLI/Android execution. Fourteen owned NROs exercise
-the implemented behavior. All 170 Rust tests and 25 independent
+the implemented behavior. All 176 Rust tests and 25 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
@@ -37,7 +37,9 @@ completion, rollback and lifetime checks in one APK.
 [The color-clear batch](color-clear-batch.md) adds original B197 state/operations,
 an interpreted clear NRO, sixteen kernel/NV cases and three pixel-exact Vulkan
 command replays. M4 stays open: replay lowers clears using fixed host shaders;
-guest shaders, draws and presentation are still required. Fresh allocation,
+a small original SM53 shader/typed SSA/SPIR-V subset now runs in three Vulkan
+checks; guest draw integration and presentation are still required. See
+[the shader batch](shader-translation-batch.md). Fresh allocation,
 broader methods and shaders remain open.
 
 The Android engine/GPU Lab APK builds and passes lint, signature and native

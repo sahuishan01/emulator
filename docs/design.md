@@ -164,7 +164,9 @@ budgeted. Preserve submission ordering and resource references for the period
 the guest semantics require, rather than eagerly copying every pointer or
 retaining arbitrary mutable host slices across threads.
 
-The original shader IR carries types, control flow, stage inputs/outputs,
+The initial [implemented shader IR](shader-translation-batch.md) carries Bits32/F32
+SSA, a single vertex input/position interface and fragment color output. Broader IR
+will carry control flow, stage inputs/outputs,
 memory effects, texture operations and required numerical semantics. Lower
 guest operations to native host features or a tested emulation path. Geometry,
 tessellation, subgroup and other unsupported operations require individual

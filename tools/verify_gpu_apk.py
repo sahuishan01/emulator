@@ -44,8 +44,33 @@ def verify(apk, signer):
                 assert file_offset % 16384 == address % 16384, "ELF LOAD alignment congruence failed"
                 assert file_offset + file_size <= len(data) and memory_size >= file_size, "Invalid ELF LOAD bounds"
             assert loads, "No ELF load segments"
+            section_table = struct.unpack_from("<Q", data, 40)[0]
+            section_stride, section_count = struct.unpack_from("<HH", data, 58)
+            assert section_stride >= 64 and section_table + section_stride * section_count <= len(data)
+            symbols = set()
+            for section_index in range(section_count):
+                section = struct.unpack_from("<IIQQQQIIQQ", data, section_table + section_stride * section_index)
+                if section[1] != 11:  # SHT_DYNSYM
+                    continue
+                _, _, _, _, symbol_offset, symbol_size, string_index, _, _, symbol_stride = section
+                assert string_index < section_count and symbol_stride >= 24 and symbol_size % symbol_stride == 0
+                string_section = struct.unpack_from("<IIQQQQIIQQ", data, section_table + section_stride * string_index)
+                string_offset, string_size = string_section[4:6]
+                assert symbol_offset + symbol_size <= len(data) and string_offset + string_size <= len(data)
+                for entry_offset in range(symbol_offset, symbol_offset + symbol_size, symbol_stride):
+                    name_offset, info, other, defined, _, _ = struct.unpack_from("<IBBHQQ", data, entry_offset)
+                    if info >> 4 not in (1, 2) or other & 3 or defined == 0:
+                        continue
+                    assert name_offset < string_size
+                    start = string_offset + name_offset
+                    end = data.index(b"\0", start, string_offset + string_size)
+                    symbols.add(data[start:end].decode("ascii"))
+            required = {"emulator_run_reference_guests_v2", "emulator_run_gpu_core_checks_v2",
+                        "emulator_run_nv_checks_v2", "emulator_guest_clear_replay_v1",
+                        "emulator_run_shader_checks_v2", "emulator_shader_draw_v1"}
+            assert required <= symbols, f"Missing engine exports: {required - symbols}"
             libraries.append({"name": name, "machine": machine, "zipPayloadOffset": payload_offset,
-                              "loadSegments": loads, "minimumAlignment": 16384})
+                              "loadSegments": loads, "minimumAlignment": 16384, "verifiedEngineExports": sorted(required)})
     return {"apk": apk.name, "sha256": hashlib.sha256(raw).hexdigest(), "signatureVerified": True,
             "libraries": libraries}
 

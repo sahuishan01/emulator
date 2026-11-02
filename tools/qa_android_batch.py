@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--engine-reference', type=Path, required=True)
     parser.add_argument('--nv-reference', type=Path, required=True)
     parser.add_argument('--core-reference', type=Path, required=True)
+    parser.add_argument('--shader-reference', type=Path)
     parser.add_argument('--serial', default='emulator-5580')
     parser.add_argument('--resume', action='store_true', help='Resume export/restore after a recorded successful batch')
     parser.add_argument('--shutdown', action='store_true', help='Stop this explicitly owned AVD after QA')
@@ -136,6 +137,8 @@ def main():
             raise RuntimeError('Full batch did not finish')
         assert (report['schemaVersion'], report['appVersion'], report['allPassed']) == (args.schema, args.version, True), report
         groups = {'engine': args.engine_reference, 'nv': args.nv_reference, 'gpuCore': args.core_reference}
+        if args.shader_reference:
+            groups['shader'] = args.shader_reference
         counts = {}
         for group, reference in groups.items():
             expected = json.loads(reference.read_text())

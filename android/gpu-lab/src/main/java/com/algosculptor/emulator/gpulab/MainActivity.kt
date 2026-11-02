@@ -19,10 +19,11 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 16
+        private const val WORKLOAD_VERSION = 17
     }
 
     private external fun runNvChecks(): ByteArray
+    private external fun runShaderChecks(): ByteArray
     private external fun runGpuChecks(): ByteArray
     private external fun runEngineChecks(): ByteArray
     private external fun runGpuCoreChecks(): ByteArray
@@ -50,7 +51,7 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
         })
         layout.addView(TextView(this).apply {
-            text = "Run the full CPU, guest color clear, NV, memory and Vulkan replay test batch."
+            text = "Run the full CPU, NV, memory, shader translation and Vulkan test batch."
             textSize = 15f
             setPadding(0, padding / 2, 0, padding / 2)
         })
@@ -103,7 +104,7 @@ class MainActivity : Activity() {
         var total = 0
         var passed = 0
         var complete = true
-        val groups = listOf("engine" to "Guest", "nv" to "NV batch", "gpuCore" to "GPU core", "gpu" to "Vulkan")
+        val groups = listOf("engine" to "Guest", "nv" to "NV batch", "gpuCore" to "GPU core", "shader" to "Shaders", "gpu" to "Vulkan")
         val details = groups.map { (key, label) ->
             val tests = root.optJSONObject(key)?.optJSONArray("tests")
             val count = tests?.length() ?: 0
@@ -141,6 +142,12 @@ class MainActivity : Activity() {
                     JSONObject().put("scope", "original-nv-protocol-reference").put("allPassed", false)
                         .put("error", error.message ?: error.javaClass.simpleName)
                 }
+                val shader = try {
+                    JSONObject(String(runShaderChecks(), Charsets.UTF_8))
+                } catch (error: Exception) {
+                    JSONObject().put("scope", "original-sm53-shader-reference").put("allPassed", false)
+                        .put("error", error.message ?: error.javaClass.simpleName)
+                }
                 val gpu = try {
                     JSONObject(String(runGpuChecks(), Charsets.UTF_8))
                 } catch (error: Exception) {
@@ -155,7 +162,8 @@ class MainActivity : Activity() {
                     put("gpuCore", gpuCore)
                     put("nv", nv)
                     put("gpu", gpu)
-                    put("allPassed", engine.optBoolean("allPassed", false) && gpuCore.optBoolean("allPassed", false) && nv.optBoolean("allPassed", false) && gpu.optBoolean("allPassed", false))
+                    put("shader", shader)
+                    put("allPassed", engine.optBoolean("allPassed", false) && gpuCore.optBoolean("allPassed", false) && nv.optBoolean("allPassed", false) && shader.optBoolean("allPassed", false) && gpu.optBoolean("allPassed", false))
                     put("phoneModel", Build.MODEL)
                     put("manufacturer", Build.MANUFACTURER)
                     put("socModel", Build.SOC_MODEL)

@@ -16,16 +16,16 @@ blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
 The Android lab embeds this engine, thirty-four NV API scenarios, three GPU
-core reference cases and nine Vulkan checks. The six existing native checks cover image transfers, depth testing, compute-to-draw visibility,
+core reference cases and fifteen shader translator cases and twelve Vulkan checks. The six existing native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
 [device evidence and its limits](docs/validation/g720-sampling.md).
 
 The engine does not run commercial Switch games. Broader GPU method execution, shader
-translation, broader synchronization/services, most CPU instructions and the gameplay application
-are still to be implemented. The GPU Lab uses native host shaders and now replays decoded guest color-clear
-commands. Guest shaders, draws and presentation remain unfinished; it does not run Z-A.
+interfaces, broader synchronization/services, most CPU instructions and the gameplay application
+are still to be implemented. The GPU Lab replays decoded color clears and translates a small original SM53 shader subset to SPIR-V.
+Guest draw integration and presentation remain unfinished; it does not run Z-A.
 An original [GPU framing parser](docs/gpu-command-framing.md) now decodes bounded
 GPFIFO entries and method packets. Shared CPU/GPU backing, GPU virtual mappings
 and immutable decoded command batches now preserve ownership across unmaps and
@@ -45,7 +45,10 @@ with ownership across NVMap Free/device Close and CPU unmap/address reuse.
 original DMA, preserve channel state and retain backing after bound fds close.
 [Guest color-clear and Vulkan replay](docs/color-clear-batch.md) now add B197
 render targets, rectangles/masks, atomic row writes and pixel-exact replay.
-Fresh backing allocation, guest shaders, draws and presentation remain open.
+The [shader translation batch](docs/shader-translation-batch.md) adds original typed IR,
+SPIR-V emission, fifteen reference scenarios and three translated-shader Vulkan draws.
+The supplied [0.16 G720 report](docs/validation/g720-color-clear-batch.md) passes all60
+prior checks. Fresh backing allocation, broader shaders, guest draws and presentation remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
 Eden/Lemon checkouts under `upstream/` are historical references, ignored by
@@ -123,8 +126,9 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/session` | Process entry state, guarded stack, guest TLS and resumable execution budgets |
 | `crates/texture` | Original bounded BC1 RGBA UNORM reference decoder |
 | `crates/gpu` | GPU virtual mappings, pinned resources, bounded GPFIFO/Maxwell framing and owned decoded batches and linear DMA and color-clear method execution |
+| `crates/shader` | Bounded raw SM53 decoder, typed SSA reference and direct SPIR-V emitter |
 | `crates/cli` | NRO/raw-program execution and demo |
-| `crates/android-ffi` | Bounded C reports for fourteen guests, thirty-four NV cases and three GPU-core cases |
+| `crates/android-ffi` | Bounded C reports for fourteen guests, thirty-four NV cases, three GPU-core and fifteen shader cases |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
 | `examples/homebrew` | Fourteen original homebrew sources and assembled NRO fixtures |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
@@ -142,16 +146,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android engine and GPU lab
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.16.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.17.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.16.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.16.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.17.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.17.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.16.0-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.17.0-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.

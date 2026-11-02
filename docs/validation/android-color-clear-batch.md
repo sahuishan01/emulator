@@ -41,7 +41,8 @@ successfully, explicitly stopped only emulator-5580, and its process was awaited
 No Android target remains connected. Logs/captures/raw reports remain ignored.
 
 The supplied [0.15 G720 report](g720-nv-channel-batch.md) confirms all 40 previous
-phone cases. This new 60-case batch awaits one combined physical report. It is
+phone cases. The later [supplied 0.16 phone report](g720-color-clear-batch.md) passes all60
+checks on the physical G720. It is
 offscreen command replay and CPU reference execution, not a live asynchronous
 renderer, guest shader/draw support, display presentation, game compatibility
 or console performance. Debug-signed development diagnostic.

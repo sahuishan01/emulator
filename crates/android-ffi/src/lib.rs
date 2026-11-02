@@ -4,7 +4,9 @@ use emulator_session::{RunOutcome, Session, LOAD_BASE};
 use std::fmt::Write;
 mod gpu_core;
 mod graphics;
+mod shaders;
 pub use graphics::ClearReplay;
+pub use shaders::ShaderDraw;
 
 pub const REPORT_CAPACITY: usize = 8192;
 #[repr(C)]
@@ -373,6 +375,17 @@ fn nv_reference_checks() -> String {
 #[no_mangle]
 pub extern "C" fn emulator_guest_clear_replay_v1(index: u32) -> ClearReplay {
     graphics::replay(index)
+}
+
+/// Portable owned shader regression report; same bounded EngineReport ABI.
+#[no_mangle]
+pub extern "C" fn emulator_run_shader_checks_v2() -> EngineReport {
+    encode_report(shaders::report, "original-sm53-shader-reference")
+}
+/// Owned SM53 -> typed IR -> SPIR-V diagnostic draw assets, never borrowed data.
+#[no_mangle]
+pub extern "C" fn emulator_shader_draw_v1(index: u32) -> ShaderDraw {
+    shaders::draw(index)
 }
 
 #[cfg(test)]

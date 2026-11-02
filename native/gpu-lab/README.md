@@ -32,7 +32,10 @@ Nine bounded offscreen workloads (workload version 4):
 9. Replay masked clears; preserve prior red/blue/alpha in overlapping regions.
 
 See [the full clear/replay contract](../../docs/color-clear-batch.md). Fixed host
-shaders lower color clears; there is no guest shader translation or live renderer.
+shaders lower color clears. Three additional workloads consume our original
+SM53 translator output: full RGBA draw, transformed red BGRA draw and ordered
+green/red pipeline changes. Guest draw command/display integration remains open.
+See [the supported shader subset](../../docs/shader-translation-batch.md).
 
 The report includes device/driver/API identity, software-renderer status,
 physical feature advertisements, limits, memory heaps, queue families and
@@ -99,10 +102,13 @@ separate package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
 storage permissions. Run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version 0.16.0-dev uses schema 4/workload 16: engine fourteen interpreted NROs,
-nv thirty-four kernel API cases, gpuCore three ownership/DMA cases and gpu nine
-Vulkan cases. All four groups must pass. The new EngineReport ABI remains 2;
-a separate fixed-size clear replay value is checked by both C++ and Rust.
+Version 0.17.0-dev uses schema4/workload17: engine14, nv34, gpuCore3, shader15
+and gpu12 Vulkan cases. All five groups must pass (78 total). New native cases
+consume SPIR-V emitted by our original SM53 translator: full RGBA output,
+transformed BGRA geometry and ordered draws with two different fragment shaders.
+Host code supplies the draw setup; guest draw commands/presentation remain open.
+See [the exact subset](../../docs/shader-translation-batch.md). EngineReport ABI2
+is retained; fixed clear and shader value ABIs have checked Rust/C++ offsets.
 The last completed report is retained across activity recreation.
 Reports from an older workload version are not displayed as current results;
 after upgrading from an earlier workload version, run the updated checks again.

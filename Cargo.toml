@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/memory", "crates/a64", "crates/loader", "crates/ipc", "crates/kernel", "crates/services", "crates/session", "crates/texture", "crates/gpu", "crates/cli", "crates/android-ffi"]
+members = ["crates/memory", "crates/a64", "crates/loader", "crates/ipc", "crates/kernel", "crates/services", "crates/session", "crates/texture", "crates/gpu", "crates/shader", "crates/cli", "crates/android-ffi"]
 resolver = "2"
 
 [workspace.package]

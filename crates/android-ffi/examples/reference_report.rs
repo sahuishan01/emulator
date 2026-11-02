@@ -1,6 +1,8 @@
 fn main() {
     let report = if std::env::args().nth(1).as_deref() == Some("nv") {
         emulator_android_ffi::emulator_run_nv_checks_v2()
+    } else if std::env::args().nth(1).as_deref() == Some("shader") {
+        emulator_android_ffi::emulator_run_shader_checks_v2()
     } else if std::env::args().nth(1).as_deref() == Some("gpu-core") {
         emulator_android_ffi::emulator_run_gpu_core_checks_v2()
     } else {

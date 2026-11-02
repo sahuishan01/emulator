@@ -1,13 +1,13 @@
 # Android original-engine checks
 
-Version 0.16.0-dev embeds the original Rust engine into the existing Android
+Version 0.17.0-dev embeds the original Rust engine into the existing Android
 diagnostic app. The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
 The app's worker calls Rust once to execute fourteen original NRO fixtures
 described in [kernel-ipc.md](kernel-ipc.md), runs thirty-four integrated NV protocol scenarios, separately runs three actual GPU-core
-memory/command cases, including original DMA execution, then calls the nine-test
-C++ Vulkan suite (six prior native cases plus three owned clear replays). The Rust checks validate actual debug output, instruction/IPC
+memory/command cases, including original DMA execution, runs fifteen portable shader scenarios, then calls the twelve-test
+C++ Vulkan suite (six native cases, three clear replays and three translated-shader draws). The Rust checks validate actual debug output, instruction/IPC
 counts, guest memory results and zero remaining handles after process exit.
 The result is not hardcoded successful output. Each native group reports its
 own failure; one failed group does not discard the other's diagnostic report.
@@ -16,7 +16,7 @@ own failure; one failed group does not discard the other's diagnostic report.
 
 `crates/android-ffi` builds as a static library, linked into the existing
 `libemulator_gpu_lab.so`. C exports are `emulator_run_reference_guests_v2()` and
-`emulator_run_gpu_core_checks_v2()` plus `emulator_run_nv_checks_v2()`, each returning EngineReport. The C/Rust layout is a
+`emulator_run_gpu_core_checks_v2()` plus `emulator_run_nv_checks_v2()` and `emulator_run_shader_checks_v2()`, each returning EngineReport. The C/Rust layout is a
 8200-byte, 4-byte-aligned value: u32 ABI version, u32 byte length, and 8192
 initialized payload bytes. Rust returns owned bytes by value, so callers never
 receive a Rust pointer or allocation and need no free callback. JNI validates
@@ -64,10 +64,10 @@ validate the Android C ABI or either Android runtime architecture.
 
 ## Report and device checkpoint
 
-Schema 4/workload 16 keeps engine/nv/gpuCore/gpu and requires all four for
-combined allPassed. One Run all checks tap runs 60 cases: fourteen interpreted
-NROs (engine suite 11), thirty-four kernel/NV API scenarios (NV suite 2), three
-GPU-core cases (suite 2), and nine Vulkan checks (workload 4). Summary/export
+Schema4/workload17 keeps engine/nv/gpuCore/gpu, adds shader and requires all five
+for combined allPassed. One Run all checks tap runs78 cases: fourteen interpreted
+NROs (suite11), thirty-four kernel/NV scenarios (suite2), three GPU-core cases
+(suite2), fifteen shader cases (suite1) and twelve Vulkan checks (workload5). Summary/export
 stay together and older workload caches are invalidated.
 
 The new color-clear NRO executes 5571 instructions/25 IPC/2 copies/18 A/11 B/
@@ -77,26 +77,28 @@ exercise B197 state, masks/rectangles, rights, padding, rejection, reply rollbac
 aliases, context selection and lifetime. They call actual kernel APIs without
 interpreting guest CPU bytes. See [the graphics batch](color-clear-batch.md).
 
-A fourth value-only export, emulator_guest_clear_replay_v1(index), returns a
+The separate value-only export, emulator_guest_clear_replay_v1(index), returns a
 1264-byte/four-byte-aligned clear-plan/image value, with checked offsets and no
 pointers. It is consumed by C++ inside the Vulkan group. Case 0 runs the NRO
 and replays its actual command bytes through the original decoder. Other cases
 replay owned BGRA/masked fixtures. Fixed host shaders lower clear operations;
-there is no guest shader translation, draw support or live display handoff.
-The existing three EngineReport exports retain ABI 2.
+the separate raw SM53 subset now translates owned shaders to SPIR-V for three
+new Vulkan draws. Guest draw integration/display remain open. The new shader
+value ABI and exact semantics are in [shader translation](shader-translation-batch.md).
+All four EngineReport exports retain ABI2.
 
-The [supplied 0.15 phone report](validation/g720-nv-channel-batch.md) confirms
-all forty prior ARM64/G720 cases. This expanded batch awaits phone evidence.
+The [supplied 0.16 phone report](validation/g720-color-clear-batch.md) confirms
+all sixty prior ARM64/G720 cases. This expanded batch awaits phone evidence.
 Broader rendering, async synchronization, commercial startup and Z-A remain open.
 Historical software/physical records remain under docs/validation/.
 
 After the owned AVD boots, verify the entire flow with:
 
 ```sh
-python3 tools/qa_android_batch.py --apk android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk --output reports/android-qa/v0.16.0-dev --version 0.16.0-dev --workload 16 --previous-workload 15 --gpu-tests 9 --gpu-workload 4 --engine-reference reports/v0.16-host-engine.json --nv-reference reports/v0.16-host-nv.json --core-reference reports/v0.16-host-gpu-core.json --shutdown
+python3 tools/qa_android_batch.py --apk android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk --output reports/android-qa/v0.17.0-dev --version 0.17.0-dev --workload 17 --previous-workload 16 --gpu-tests 12 --gpu-workload 5 --engine-reference reports/v0.17-host-engine.json --nv-reference reports/v0.17-host-nv.json --core-reference reports/v0.17-host-gpu-core.json --shader-reference reports/v0.17-host-shader.json --shutdown
 ```
 
-Generate references with the reference_report example (default, nv, gpu-core).
+Generate references with the reference_report example (default, nv, gpu-core, shader).
 The tool compares all Rust fields except architecture, checks every Vulkan
 outcome and summary, then verifies byte-exact export/cold restore and logs.
 Upgrade requires a cached successful prior-workload report. --resume preserves

@@ -17,6 +17,7 @@ dependencies = [
  "emulator-memory",
  "emulator-services",
  "emulator-session",
+ "emulator-shader",
 ]
 
 [[package]]
@@ -81,6 +82,10 @@ dependencies = [
  "emulator-memory",
  "emulator-services",
 ]
+
+[[package]]
+name = "emulator-shader"
+version = "0.1.0"
 
 [[package]]
 name = "emulator-texture"

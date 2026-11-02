@@ -13,8 +13,8 @@ android {
         applicationId = "com.algosculptor.emulator.gpulab"
         minSdk = 31
         targetSdk = 35
-        versionCode = 16
-        versionName = "0.16.0-dev"
+        versionCode = 17
+        versionName = "0.17.0-dev"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
             cmake {
@@ -41,6 +41,7 @@ val buildOriginalEngine by tasks.registering(Exec::class) {
     workingDir(engineRoot)
     commandLine("python3", "tools/build_android_engine.py")
     inputs.files(fileTree(engineRoot.resolve("crates")) { include("**/*.rs", "**/Cargo.toml") })
+    inputs.files(fileTree(engineRoot.resolve("examples/shaders")) { include("*.bin") })
     inputs.files(fileTree(engineRoot.resolve("examples/gpu")) { include("*.bin") })
     inputs.files(fileTree(engineRoot.resolve("examples/homebrew")) { include("*.nro", "*.S") })
     inputs.files(engineRoot.resolve("Cargo.toml"), engineRoot.resolve("Cargo.lock"), engineRoot.resolve("tools/build_android_engine.py"))
