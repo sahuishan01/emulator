@@ -2,6 +2,8 @@
 //! C callers receive initialized bytes, never Rust pointers or allocations.
 use emulator_session::{RunOutcome, Session, LOAD_BASE};
 use std::fmt::Write;
+mod demo;
+pub use demo::{DemoStatus, LiveDraw};
 mod draws;
 mod gpu_core;
 mod graphics;

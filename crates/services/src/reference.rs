@@ -78,6 +78,9 @@ struct Rig {
 }
 impl Rig {
     fn new() -> Self {
+        Self::with_graphics(None)
+    }
+    fn with_graphics(graphics: Option<std::rc::Rc<dyn emulator_gpu::GraphicsBackend>>) -> Self {
         let (mut k, mut c, mut m) = (Kernel::default(), Cpu::new(0, 0), AddressSpace::default());
         for (address, bytes, perm) in [
             (0x1000, b"nv:\0".to_vec(), Permissions::READ),
@@ -95,8 +98,11 @@ impl Rig {
         k.dispatch(SVC_CREATE_TRANSFER_MEMORY, &mut c, &mut m)
             .unwrap();
         let tmem = c.x[1] as u32;
-        k.register_named_port("nv:", Box::new(ReviewDriver::default()))
-            .unwrap();
+        k.register_named_port(
+            "nv:",
+            Box::new(ReviewDriver(NvDriver::with_graphics(graphics))),
+        )
+        .unwrap();
         c.tpidrro_el0 = 0x2000;
         c.x[1] = 0x1000;
         k.dispatch(SVC_CONNECT_TO_NAMED_PORT, &mut c, &mut m)
@@ -1098,6 +1104,47 @@ fn panic_text(error: Box<dyn std::any::Any + Send>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[derive(Debug)]
+    struct Host {
+        calls: std::cell::Cell<u32>,
+        fail: std::cell::Cell<bool>,
+    }
+    impl emulator_gpu::GraphicsBackend for Host {
+        fn render(&self, f: &emulator_gpu::GraphicsFrame) -> Result<(), String> {
+            self.calls.set(self.calls.get() + 1);
+            assert_eq!(f.pixels.len(), 512);
+            if self.fail.get() {
+                Err("injected host completion failure".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    #[test]
+    fn live_completion_runs_after_reply_preflight_and_failed_completion_can_retry() {
+        use super::*;
+        let host = std::rc::Rc::new(Host {
+            calls: std::cell::Cell::new(0),
+            fail: std::cell::Cell::new(true),
+        });
+        let mut r = Rig::with_graphics(Some(host.clone()));
+        r.prepare_draw(true, 0);
+        let input = [0, 0, 1, 2, 0, 0, 0, (126 << 10) | 1];
+        assert!(r.io_at(r.channel, SUBMIT, &input, 101, 0x6000).is_err());
+        assert_eq!(host.calls.get(), 0);
+        assert_eq!(r.submit(2, 0, 0, 0, 128), 4);
+        assert_eq!(host.calls.get(), 0);
+        assert!(r.io_at(r.channel, SUBMIT, &input, 1, 0x6000).is_err());
+        assert_eq!(host.calls.get(), 1);
+        r.verify_image(|_, _| [0; 4]);
+        assert_eq!(r.read(r.point), 0);
+        host.fail.set(false);
+        assert_eq!(r.submit(2, 0, 0, 0, 126), 0);
+        assert_eq!(host.calls.get(), 2);
+        assert_eq!(r.read(r.point), 1);
+        r.verify_draw(0);
+        r.finish();
+    }
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();

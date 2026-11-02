@@ -25,6 +25,15 @@ fn payload(request: &Request, length: usize) -> Result<(), ServiceError> {
 #[derive(Clone, Debug, Default)]
 pub struct ServiceManager {
     initialized: bool,
+    graphics: Option<std::rc::Rc<dyn emulator_gpu::GraphicsBackend>>,
+}
+impl ServiceManager {
+    pub fn with_graphics(graphics: std::rc::Rc<dyn emulator_gpu::GraphicsBackend>) -> Self {
+        Self {
+            initialized: false,
+            graphics: Some(graphics),
+        }
+    }
 }
 impl Service for ServiceManager {
     fn clone_for_request(&self) -> Box<dyn Service> {
@@ -56,7 +65,7 @@ impl Service for ServiceManager {
                 let object: Box<dyn Service> = match &name {
                     b"emu:test" => Box::new(DiagnosticCounter::default()),
                     b"emu:gpu\0" => Box::new(DiagnosticGpu::default()),
-                    b"nvdrv\0\0\0" => Box::new(NvDriver::default()),
+                    b"nvdrv\0\0\0" => Box::new(NvDriver::with_graphics(self.graphics.clone())),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {

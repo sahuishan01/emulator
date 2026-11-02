@@ -126,3 +126,12 @@ The native workload currently executes within the app process. Its fence wait
 has a timeout, but teardown may still depend on a responsive driver. Isolation
 against a driver that hangs during teardown is future work; this lab is a
 development build, not a production graphics backend.
+
+## Live homebrew (0.19)
+
+The app now presents our own Catch NRO through live NV submissions, original shader
+translation and a synchronous Vulkan completion callback. TextureView/window,
+per-image present synchronization and touch controls are implemented. The normal
+batch has16 Vulkan cases/103 total; the new111-frame test runs without a window.
+Visible display/control/lifecycle QA is separate. See [the exact contract](../../docs/live-homebrew.md).
+The previous replay tests remain unchanged; general display queues and games are open.

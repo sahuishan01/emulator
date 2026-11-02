@@ -13,7 +13,7 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.18.0-dev
+## Current implementation: 0.19.0-dev
 
 Twelve original Rust crates, no external Cargo dependencies. Eleven core crates
 forbid unsafe; android-ffi permits export attributes only, with no unsafe blocks
@@ -152,6 +152,38 @@ oracles/guest image. These are command replays after CPU completion, not live
 renderer or display integration. Current replay fixture ABI supports6 vertices/
 3 records separately from broader CPU limits. See docs/guest-draw-batch.md.
 
+## Visible live homebrew (0.19)
+
+Catch is an original interpreted NRO,64x64 ball/paddle with collision, score,
+misses, reset and actual B197 submissions. Live GraphicsBackend is injected via
+SM/NV factory. Kernel effects have a fallible complete() after reply/handle/alias
+preflight, before CPU guest publication. Vulkan executes emitted SPIR-V and waits
+real fences, compares full reference pixels; failure cancels guest bytes/state/
+fences. Publication still uses GPU-verified CPU reference row effects, not general
+GPU-authoritative memory. One full clear then1..3 draws/noDMA/same<=64surface/full
+mask/<=6vertices is explicit live profile. ABI demo narrows to64x64/two rectangles.
+
+Android Play homebrew demo opens TextureView with Vulkan FIFO swapchain/present
+queue/per-image semaphores/nearest blit. One render worker owns native and TLS
+Rust session. UI drag/buttons/D-pad input and frame pacing use an explicitly owned
+mailbox at image a000, not Horizon HID/VI/BufferQueue. Background closes; resume
+recreates; old textures retained until worker teardown. Pause, reset and visible
+errors, atomic last-demo-report file included in normal exported report. Each
+frame reclaims resources and command buffers; pipelines/readbacks per frame are
+slow reference behavior. Full display services/coherence/async and games open.
+
+Original shifted-register integer ADD/ADDS/SUB/SUBS supports W32/X64 LSL/LSR/ASR,
+with independent LLVM vectors/flags/ZR/reserved forms. Session retains no mailbox
+pin across initial transfer-memory loan (same data backing would conflict).
+Clear IPC trace each frame to avoid the4096 diagnostic trace limit. Four-thousand
+frames, failed backend/retry/reentry/input/order/reply-preflight tests included.
+Three new value exports start(callback)/step/stop_v1, thread-affine, no Rust unsafe
+blocks/pointers. LiveDraw66068bytes/pixels49684, DemoStatus296/error40;10exports.
+
+Full suite now103 (engine15/NV50/core3/shader19/gpu16workload7), schema4/workload19.
+Prior102records remain unchanged. New GPU check runs111 live frames/catch/miss/
+reset, no window. See docs/live-homebrew.md and Android validation for windowQA.
+
 ## Batched Android report
 
 Schema4/workload18: engine15(suite12), NV50(suite3, executesGuestCpu:false),
@@ -177,6 +209,15 @@ DMA/clear queues. GPU effects preserve order and pins through CPU address reuse.
 
 ## Evidence and verification
 
+- 0.19 passes190 Rust tests/28 LLVM fixtures/demo generator/fmt/Clippy. Desktop
+ 16/16 Vulkan (111 live guest frames) validation enabled/errors0; prior15 GPU
+ records and all four Rust groups unchanged. Pinned two-ABI APK builds/lints,
+ signature/all10exports/16KiB packaging pass. See docs/validation/android-live-homebrew.md
+ for final APK hash, visible QA and its limits. Visible controls/lifecycle pass,
+ full103-case Android batch/export/cold restore pass; all screenshots inspected,
+ no app crash/ANR; owned AVD stopped/awaited. Requested2048MiB was raised by this
+ emulator to2560MiB. New0.19 physical run pending.
+
 - 183 Rust tests (including the thirty-four-scenario runner), fmt and Clippy with
   warnings denied; 26 LLVM fixtures (11 raw/15 NROs); pinned ARM64/x86_64 build,
   Gradle lint, signature and 16 KiB ELF/ZIP packaging checks pass. Packaging is
@@ -192,7 +233,8 @@ DMA/clear queues. GPU effects preserve order and pins through CPU address reuse.
   docs/validation/g720-color-clear-batch.md. All three Rust groups match the host
   references except architecture. Supplied0.17 now passes all78 checks, including three translated shader cases;
   all four Rust groups match references except architecture. See
-  docs/validation/g720-shader-translation-batch.md. New0.18 awaits physical evidence.
+  docs/validation/g720-shader-translation-batch.md. Supplied0.18 passes all102; four Rust groups exactly match fresh references
+  apart from architecture. See docs/validation/g720-guest-draw-batch.md.
 - Android 0.15 passes all 40 cases with derived summary, upgrade invalidation,
   exact export and cold restore. A save-navigation timing issue in the QA harness
   was fixed with bounded expected-screen polling; resumed verification after AVD
@@ -245,14 +287,15 @@ startup ANR Wait may be handled using its exact current XML; app ANRs fail QA.
 
 ## Next combined work
 
-Continue the M4 graphics/shader/renderer slice with a known owned workload.
-Color-clear replay and raw SM53 translation are partial progress. Connect the now-decoded guest graphics
-operations to a live renderer and display/presentation. The offscreen replay
-bridge executes after CPU reference completion; integrate real host completion
-and resource lifetime before expanding asynchronous fences. Batch needed command/state/shader and negative/lifetime tests together;
-do not require a phone report per small opcode/ioctl. Broader asynchronous GPU
-scheduling, error/event/fence contracts, CPU ISA/runtime/content, audio/input and
-performance remain explicit work. No gameplay compatibility is claimed yet.
+Keep the visible Catch path functional while broadening guest graphics:
+textured geometry, vertex/fragment interfaces, depth/indexed draws and the
+required guest services. Implement normal display-buffer handoff/VI/BufferQueue
+and HID to replace the diagnostic mailbox for broader programs. Grow CPU/runtime
+and executable loading against real independent homebrew needs. Preserve the
+reference backend, explicit unsupported-state errors and batched phone checks.
+Optimize cached pipelines/resources and avoid unconditional readbacks only with
+correctness evidence. General asynchronous GPU coherence/fences remain open.
+Commercial startup/content/audio and Pokémon Z-A are not implemented.
 
 ## Repository and delivery
 

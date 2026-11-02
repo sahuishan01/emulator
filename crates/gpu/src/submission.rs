@@ -126,7 +126,7 @@ impl ChannelProcessor {
 #[derive(Debug)]
 pub struct PreparedSubmission {
     queue: SubmissionQueue,
-    batch: crate::methods::PreparedBatch,
+    pub(crate) batch: crate::methods::PreparedBatch,
 }
 impl PreparedSubmission {
     pub fn draws(&self) -> &[crate::Draw] {

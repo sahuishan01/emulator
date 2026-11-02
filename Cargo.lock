@@ -78,6 +78,7 @@ name = "emulator-session"
 version = "0.1.0"
 dependencies = [
  "emulator-a64",
+ "emulator-gpu",
  "emulator-kernel",
  "emulator-loader",
  "emulator-memory",

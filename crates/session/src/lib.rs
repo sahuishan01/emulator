@@ -63,6 +63,21 @@ pub struct Session {
 
 impl Session {
     pub fn from_nro(bytes: &[u8]) -> Result<Self, SessionError> {
+        Self::load(bytes, emulator_services::ServiceManager::default())
+    }
+    pub fn from_nro_with_graphics(
+        bytes: &[u8],
+        graphics: std::rc::Rc<dyn emulator_gpu::GraphicsBackend>,
+    ) -> Result<Self, SessionError> {
+        Self::load(
+            bytes,
+            emulator_services::ServiceManager::with_graphics(graphics),
+        )
+    }
+    fn load(
+        bytes: &[u8],
+        service_manager: emulator_services::ServiceManager,
+    ) -> Result<Self, SessionError> {
         let nro = NroImage::parse(bytes).map_err(SessionError::Load)?;
         let mut memory = AddressSpace::default();
         let image = nro
@@ -94,10 +109,7 @@ impl Session {
         cpu.x[1] = u64::MAX;
         let mut kernel = Kernel::default();
         kernel
-            .register_named_port(
-                "sm:",
-                Box::new(emulator_services::ServiceManager::default()),
-            )
+            .register_named_port("sm:", Box::new(service_manager))
             .map_err(SessionError::Kernel)?;
         Ok(Self {
             cpu,
@@ -109,6 +121,9 @@ impl Session {
         })
     }
 
+    pub fn clear_ipc_trace(&mut self) {
+        self.kernel.clear_ipc_trace();
+    }
     pub fn state(&self) -> SessionState {
         self.state
     }

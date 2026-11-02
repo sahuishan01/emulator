@@ -7,3 +7,7 @@ struct GpuReport {
 };
 
 GpuReport run_gpu_checks();
+
+std::string start_homebrew(void* window);
+std::string step_homebrew(unsigned x,unsigned reset);
+std::string stop_homebrew();

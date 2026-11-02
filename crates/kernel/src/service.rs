@@ -170,6 +170,10 @@ impl<'a> ServiceContext<'a> {
 /// Dropping an effect must cancel it without changing guest bytes or live state.
 pub trait PreparedServiceEffect: fmt::Debug {
     fn write_ranges(&self) -> &[BackingRange];
+    /// Fallible external completion after every kernel preflight, before publication.
+    fn complete(&mut self) -> Result<(), ServiceError> {
+        Ok(())
+    }
     fn commit(self: Box<Self>);
 }
 

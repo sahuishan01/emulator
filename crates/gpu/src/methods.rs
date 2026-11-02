@@ -96,6 +96,7 @@ pub(crate) struct PreparedBatch {
     state: MethodState,
     copies: Vec<Copy>,
     clears: Vec<crate::ColorClear>,
+    pub(crate) graphics_order: Vec<bool>, // false=clear, true=draw
     draws: Vec<crate::Draw>,
     draw_inputs: Vec<GpuMemoryRange>,
     snapshot_bytes: usize,
@@ -171,6 +172,7 @@ impl MethodState {
             state: self.clone(),
             copies: Vec::new(),
             clears: Vec::new(),
+            graphics_order: Vec::new(),
             draws: Vec::new(),
             draw_inputs: Vec::new(),
             snapshot_bytes: 0,
@@ -403,6 +405,7 @@ impl PreparedBatch {
                 });
             }
         }
+        self.graphics_order.push(false);
         self.clears.push(clear);
         self.stats.clear_launches += 1;
         self.stats.cleared_bytes += bytes;
@@ -481,6 +484,7 @@ impl PreparedBatch {
         }
         self.draw_inputs.extend(pins);
         self.snapshot_bytes += snapshots;
+        self.graphics_order.push(true);
         self.draws.push(draw);
         self.stats.draw_launches += 1;
         self.stats.drawn_bytes += bytes;

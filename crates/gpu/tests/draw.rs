@@ -141,3 +141,26 @@ fn dma_after_draw_observes_rendered_bytes_in_submission_order() {
     cpu.read(0x18a0, &mut pixel).unwrap();
     assert_eq!(pixel, [0, 255, 0, 255]);
 }
+
+#[test]
+fn live_frame_preserves_operation_order_and_serial_pixels_without_committing() {
+    for index in 0..3 {
+        let (cpu, gpu, entry) = rig(index);
+        let (_, work) = ChannelProcessor::default().prepare(&gpu, &entry).unwrap();
+        let frame = work.graphics_frame().unwrap();
+        let mut untouched = [0; 512];
+        cpu.read(0x1800, &mut untouched).unwrap();
+        assert_eq!(untouched, [0; 512]);
+        work.commit();
+        let mut actual = [0; 512];
+        cpu.read(0x1800, &mut actual).unwrap();
+        assert_eq!(frame.pixels, actual);
+    }
+    let (mut cpu, gpu, mut entry) = rig(0);
+    cpu.write_u32(0x1000 + 504, 0x20010000 | (0x19d0 / 4))
+        .unwrap();
+    cpu.write_u32(0x1000 + 508, 0x3c).unwrap();
+    entry[4..8].copy_from_slice(&(1u32 | (128 << 10)).to_le_bytes());
+    let (_, work) = ChannelProcessor::default().prepare(&gpu, &entry).unwrap();
+    assert!(work.graphics_frame().is_err());
+}

@@ -9,7 +9,7 @@ The project plan is split into [architecture](docs/architecture.md),
 [implementation milestones](docs/implementation-plan.md). These distinguish
 the implemented components from the remaining Switch/Android work.
 
-The original Rust engine loads fifteen of our own static NRO programs and executes
+The original Rust engine loads our own static NRO programs and executes
 them through an A64 interpreter subset. They exercise debug output, service
 discovery/IPC, shared cloned-session lifetimes, events, thread scheduling,
 blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
@@ -26,7 +26,8 @@ The engine does not run commercial Switch games. Broader GPU method execution, s
 interfaces, broader synchronization/services, most CPU instructions and the gameplay application
 are still to be implemented. The GPU Lab replays decoded color clears and translates a small original SM53 shader subset to SPIR-V.
 Guest header/vertex/draw commands now feed a CPU reference renderer and Vulkan replay.
-Live rendering and presentation remain unfinished; it does not run Z-A.
+The [live homebrew demo](docs/live-homebrew.md) now runs our own Catch NRO with
+Vulkan completion, Android presentation and touch input. It does not run Z-A.
 An original [GPU framing parser](docs/gpu-command-framing.md) now decodes bounded
 GPFIFO entries and method packets. Shared CPU/GPU backing, GPU virtual mappings
 and immutable decoded command batches now preserve ownership across unmaps and
@@ -50,12 +51,22 @@ The [shader translation batch](docs/shader-translation-batch.md) adds original t
 and SPIR-V. The [guest draw batch](docs/guest-draw-batch.md) connects SPH headers, vertex
 fetch, B197 draw state, transactional rasterization and guest-command Vulkan replay.
 The supplied [0.17 G720 report](docs/validation/g720-shader-translation-batch.md) passes
-all78 previous checks. Live rendering, broader shaders and presentation remain open.
+all78 previous checks. The [0.18 G720 report](docs/validation/g720-guest-draw-batch.md)
+passes all102. Broader shaders, general display services and commercial games remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
 Eden/Lemon checkouts under `upstream/` are historical references, ignored by
 Git and excluded from the Cargo workspace. Their recorded revisions are in
 `docs/research/references.lock.json`. They are not runtime dependencies.
+
+## Play our original homebrew
+
+Install the development APK and tap **Play homebrew demo**. Drag to catch the
+falling green square with the red paddle; Left/Right, Pause/Resume and Reset are
+available. The emulated NRO performs the game logic and GPU submissions. This
+is a64x64 homebrew reference demo, with an emulator-owned input/display mailbox.
+Commercial games, full Horizon display/HID and practical console performance
+remain unsupported. See [the execution path and limits](docs/live-homebrew.md).
 
 ## Run our homebrew executable
 
@@ -134,14 +145,14 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/cli` | NRO/raw-program execution and demo |
 | `crates/android-ffi` | Bounded C reports for fifteen guests, fifty NV cases, three GPU-core and nineteen shader cases |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
-| `examples/homebrew` | Fifteen original homebrew sources and assembled NRO fixtures |
+| `examples/homebrew` | Sixteen original homebrew sources and assembled NRO fixtures (fifteen reference cases plus Catch) |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
 | `android/gpu-lab` | Original engine and native GPU diagnostics with retained JSON/export |
 | `tools/collect_android_gpu.py` | Optional read-only Android capability/exit-history capture |
 | `docs/architecture.md` | Original emulator design and staged milestones |
 
-Implemented instruction forms: NOP; ADR/ADRP; MOVN/MOVZ/MOVK W/X; immediate ADD/SUB with optional
-flags; B/BL; B.cond; CBZ/CBNZ W/X; RET; unsigned-immediate LDR/STR W/X; MRS TPIDRRO_EL0; SVC.
+Implemented instruction forms: NOP; ADR/ADRP; MOVN/MOVZ/MOVK W/X; immediate and shifted-register ADD/SUB with optional
+flags (LSL/LSR/ASR); B/BL; B.cond; CBZ/CBNZ W/X; RET; unsigned-immediate LDR/STR W/X; MRS TPIDRRO_EL0; SVC.
 Other forms fail explicitly. One host executor schedules guest threads; it does not
 implement the full A64 ISA, floating point/SIMD, atomics, privileged exceptions,
 or a page-table/MMU model. Memory accesses may cross adjacent mappings when
@@ -150,16 +161,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android engine and GPU lab
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.18.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.19.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
-run Switch games.
+run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.18.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.18.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.19.0-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.19.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.18.0-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.19.0-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.
@@ -187,9 +198,9 @@ Output: `android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`.
 The APK includes arm64-v8a and x86_64 libraries. Install it, select **Run all checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. Schema4/workload18 separates fifteen guest checks (`engine`), three GPU-core
+devices. Schema4/workload19 separates fifteen guest checks (`engine`), three GPU-core
 cases (`gpuCore`), fifty NV scenarios (`nv`), nineteen shader cases (`shader`) and
-fifteen Vulkan cases (`gpu`). All102 run together, with one summary and export. See [the Android boundary](docs/android-engine.md)
+sixteen Vulkan cases (`gpu`). All103 run together, with one summary and export. See [the Android boundary](docs/android-engine.md)
 for its build, report schema and verification limits.
 
 ## Validation
@@ -209,7 +220,7 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has183 Rust tests and26 independently assembled fixtures
+The current suite has190 Rust tests and28 independently assembled fixtures
 (11 raw A64 programs and fifteen NROs). Verify guest draw pages with
 `python3 tools/generate_draw_fixtures.py --check` and emitted shader modules with
 `python3 tools/generate_shader_fixtures.py --check --validate-spirv`.

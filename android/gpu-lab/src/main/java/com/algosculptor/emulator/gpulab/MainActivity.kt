@@ -19,7 +19,7 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 18
+        private const val WORKLOAD_VERSION = 19
     }
 
     private external fun runNvChecks(): ByteArray
@@ -70,6 +70,10 @@ class MainActivity : Activity() {
                 }, EXPORT_REQUEST)
             }
         }
+        layout.addView(Button(this).apply {
+            text = "Play homebrew demo"
+            setOnClickListener { startActivity(Intent(this@MainActivity, DemoActivity::class.java)) }
+        })
         layout.addView(runButton)
         layout.addView(exportButton)
         output = TextView(this).apply {
@@ -94,6 +98,21 @@ class MainActivity : Activity() {
                     exportButton.isEnabled = true
                 } else {
                     output.text = "Ready. Run checks again for this version's updated tests."
+                }
+            }
+        } catch (_: Exception) { }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        try {
+            val file = filesDir.resolve("last-demo-report.json")
+            if (file.exists() && report != null) {
+                val demo = JSONObject(file.readText())
+                if (demo.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) {
+                    report = JSONObject(report!!).put("demo", demo).toString(2)
+                    filesDir.resolve("last-report.json").writeText(report!!)
+                    output.text = summarize(report!!)
                 }
             }
         } catch (_: Exception) { }
@@ -155,6 +174,11 @@ class MainActivity : Activity() {
                         .put("error", error.message ?: error.javaClass.simpleName)
                 }
                 JSONObject().apply {
+                    val demoFile = filesDir.resolve("last-demo-report.json")
+                    try { if (demoFile.exists()) {
+                        val demo = JSONObject(demoFile.readText())
+                        if (demo.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) put("demo", demo)
+                    } } catch (_: Exception) { }
                     put("schemaVersion", 4)
                     put("workloadVersion", WORKLOAD_VERSION)
                     put("scope", "original-engine-gpu-core-and-host-vulkan")

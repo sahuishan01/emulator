@@ -211,3 +211,62 @@ fn pc_relative_addresses_and_move_wide_preserve_width_semantics() {
     assert_eq!(cpu.x[1], CODE + 4096);
     assert_eq!(cpu.x[2], 0xabcdffff);
 }
+
+#[test]
+fn llvm_shifted_register_vectors_cover_widths_shifts_flags_and_zero_register() {
+    let bytes = include_bytes!("../../../examples/a64/shifted-add.bin");
+    let vectors = [
+        (10, 3, 22, None),
+        (u64::MAX, 0x80000000, 0, Some((false, true, true, false))),
+        (0, u64::MAX, 1, Some((false, false, false, false))),
+        (12, 19, 999, None),
+        (u64::MAX, 3, 0x80000000, None),
+        (0x100000000, 1, 0xffffffff, None),
+        (
+            0x7fffffffffffffff,
+            1,
+            0x8000000000000000,
+            Some((true, false, false, true)),
+        ),
+        (0x80000000, 1, 0x7fffffff, Some((false, false, true, true))),
+        (10, 0x8000000000000000, 11, None),
+        (0, 0x80000000, 1, None),
+    ];
+    for (i, (lhs, rhs, want, flags)) in vectors.into_iter().enumerate() {
+        let (mut cpu, mut memory) = machine(&bytes[i * 4..i * 4 + 4]);
+        cpu.x[0] = 999;
+        cpu.x[1] = lhs;
+        cpu.x[2] = rhs;
+        cpu.sp = 0x81234567;
+        let saved = cpu.nzcv;
+        cpu.step(&mut memory).unwrap();
+        assert_eq!(cpu.x[0], want, "vector {i}");
+        assert_eq!(cpu.sp, 0x81234567);
+        if let Some((negative, zero, carry, overflow)) = flags {
+            assert_eq!(
+                cpu.nzcv,
+                Nzcv {
+                    negative,
+                    zero,
+                    carry,
+                    overflow
+                }
+            );
+        } else {
+            assert_eq!(cpu.nzcv, saved);
+        }
+    }
+}
+#[test]
+fn reserved_shifted_register_forms_preserve_cpu_and_pc() {
+    for word in [0x8bc20020u32, 0x0b028020] {
+        // ROR encoding, W32 shift32
+        let (mut cpu, mut memory) = machine(&word.to_le_bytes());
+        let saved = cpu.clone();
+        assert!(matches!(
+            cpu.step(&mut memory),
+            Err(ExecutionError::ReservedEncoding { .. })
+        ));
+        assert_eq!(cpu, saved);
+    }
+}

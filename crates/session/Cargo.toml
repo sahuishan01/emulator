@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+emulator-gpu = { path = "../gpu" }
 emulator-a64 = { path = "../a64" }
 emulator-memory = { path = "../memory" }
 emulator-loader = { path = "../loader" }

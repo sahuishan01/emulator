@@ -13,7 +13,8 @@ supplied a physical G720 0.3.0-dev report passing all six current workloads,
 including BC1 conversion, sampling and updates. The supplied 0.16 report now passes all60
 checks on G720. A bounded original SM53/SPH decoder/typed SSA/SPIR-V path now feeds
 guest vertex/draw commands, a transactional CPU rasterizer and Vulkan command replay.
-Live renderer/display integration remains open; see [the exact draw subset](guest-draw-batch.md).
+A bounded synchronous live homebrew backend and Android window now work; general
+display/HID and asynchronous GPU integration remain open; see [the exact draw subset](guest-draw-batch.md).
 See [the supported shader subset](shader-translation-batch.md).
 The color-clear batch adds original B197 operations and offscreen Vulkan replay
 of decoded guest commands; see [the exact scope](color-clear-batch.md).
@@ -123,7 +124,7 @@ crates/
   android-ffi/        implemented reference-program C ABI; gameplay API planned
 android/
   app/                planned user application
-  gpu-lab/            fifteen guest, fifty NV cases, three GPU-core, nineteen shader and fifteen Vulkan checks; presentation planned
+  gpu-lab/            fifteen guest, fifty NV cases, three GPU-core, nineteen shader and sixteen Vulkan checks; visible homebrew presentation
 native/
   gpu-lab/            implemented C++ Vulkan workload and owned-clear replay runner
 examples/
@@ -141,8 +142,8 @@ tests/
 | Loader | Validate executable bounds/segments and construct guest process | Static uncompressed NRO0 v0 subset; no linking or modules |
 | Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Handles/IPC, cloned sessions, single-core guest scheduling, event/thread blocking waits and virtual timeouts |
 | Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | CMIF v0 SM Initialize/GetService for `emu:test`; system device services planned |
-| Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shaders | GPU mappings, captured decode batches, framing, linear DMA and a guest diagnostic bridge implemented; NV Initialize/device descriptors/NVMap backing imports/NV GPU mapping implemented; fresh allocation, async submission, color clears implemented; raw SM53/SPH and bounded draw reference implemented; live rendering planned |
-| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Fifteen offscreen workloads, including BC1, translated shaders and guest-command draw replay; live backend/presentation planned |
+| Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shaders | GPU mappings, captured decode batches, framing, linear DMA and a guest diagnostic bridge implemented; NV Initialize/device descriptors/NVMap backing imports/NV GPU mapping implemented; fresh allocation, async submission, color clears implemented; raw SM53/SPH and bounded draw reference implemented; bounded live homebrew rendering implemented |
+| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Sixteen workloads, including111 live guest frames; bounded synchronous backend and Android homebrew presentation implemented; general display queues remain open |
 | Android host | Lifecycle, surface, input, audio and diagnostics | Engine reference checks, GPU Lab and JSON export implemented; gameplay integration planned |
 | CLI | Bounded interpreter execution with explicit unsupported-operation errors | Implemented |
 

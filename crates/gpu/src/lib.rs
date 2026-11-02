@@ -7,6 +7,8 @@ mod address_space;
 mod clear;
 mod draw;
 pub use draw::Draw;
+mod graphics;
+pub use graphics::{GraphicsBackend, GraphicsFrame};
 mod methods;
 pub use clear::{ColorClear, BGRA8_UNORM, MAXWELL_B, RGBA8_UNORM};
 mod submission;

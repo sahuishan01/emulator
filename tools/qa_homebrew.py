@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Exercise the visible homebrew via fresh UI bounds and retain screen/report evidence."""
+import argparse,json,re,struct,subprocess,time,xml.etree.ElementTree as ET
+from pathlib import Path
+
+def main():
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--serial',default='emulator-5580');a=p.parse_args()
+ assert a.serial=='emulator-5580','Only the owned AVD is authorized by this runner'
+ out=a.output;out.mkdir(parents=True,exist_ok=True)
+ adb=[str(Path.home()/'Android/Sdk/platform-tools/adb'),'-s',a.serial];pkg='com.algosculptor.emulator.gpulab';notes=[]
+ def call(*args,timeout=30):return subprocess.run(adb+list(args),check=True,capture_output=True,timeout=timeout).stdout
+ def ui(phase):
+  for retry in range(3):
+   try:
+    remote=f'/sdcard/homebrew-{phase}-{retry}.xml'
+    result=call('shell','uiautomator','dump',remote)
+    if b'dumped to:' not in result:raise ET.ParseError('UI dump did not complete; refusing a stale tree')
+    raw=call('exec-out','cat',remote);root=ET.fromstring(raw);(out/f'{phase}-{retry}.xml').write_bytes(raw)
+    if any(n.get('text','')=="System UI isn't responding" for n in root.iter('node')):
+     n=next(n for n in root.iter('node') if n.get('text','').lower()=='wait');tap_node(n);notes.append('System UI startup ANR Wait');continue
+    assert not any("isn't responding" in n.get('text','') for n in root.iter('node')),'App/system ANR'
+    return root
+   except (subprocess.SubprocessError,ET.ParseError) as e:notes.append(f'{phase} XML retry:{e}')
+  raise RuntimeError('No fresh UI:'+phase)
+ def bounds(n):return list(map(int,re.findall(r'\d+',n.get('bounds'))))
+ def tap_node(n):
+  x,y,x2,y2=bounds(n);call('shell','input','tap',str((x+x2)//2),str((y+y2)//2))
+ def tap(label,phase):
+  r=ui(phase);n=next(n for n in r.iter('node') if n.get('text','').lower()==label.lower());tap_node(n);return r
+ def report():return json.loads(call('exec-out','run-as',pkg,'cat','files/last-demo-report.json'))
+ def wait(predicate,phase,seconds=35):
+  end=time.monotonic()+seconds
+  while time.monotonic()<end:
+   try:
+    x=report()
+    if x.get('error'):raise RuntimeError(x['error'])
+    if predicate(x):
+     (out/f'{phase}.json').write_text(json.dumps(x,indent=2));print('Verified',phase,{k:x.get(k) for k in ['frame','paddleX','score','presentedFrames']},flush=True);return x
+   except (subprocess.SubprocessError,json.JSONDecodeError):pass
+   time.sleep(.3)
+  raise RuntimeError('Timed out:'+phase)
+ def screen(name): (out/f'{name}.png').write_bytes(call('exec-out','screencap','-p'))
+ try:
+  call('install','-r',str(a.apk),timeout=60);call('shell','am','force-stop',pkg);call('shell','run-as',pkg,'rm','-f','files/last-demo-report.json');call('logcat','-c');call('shell','am','start','-W','-n',pkg+'/.MainActivity')
+  tap('Play homebrew demo','open-demo')
+  first=wait(lambda x:x.get('running') and x.get('presentedFrames',0)>10,'first-frames')
+  assert first['renderWidth']==64 and first['renderHeight']==64 and first['frameAllocationCount']==4
+  tap('Pause','pause')
+  paused=wait(lambda x:x.get('paused') is True,'paused')
+  time.sleep(1);assert report()['frame']==paused['frame'],'Guest advanced while paused'
+  screen('visible-paused')
+  # Verify actual displayed foreground colors, in addition to internal Vulkan readback.
+  r=ui('surface-paused')
+  n=next(n for n in r.iter('node') if n.get('content-desc')=='Homebrew game screen');x,y,x2,y2=bounds(n)
+  raw=call('exec-out','screencap');width,height,format=struct.unpack_from('<3I',raw);header=len(raw)-width*height*4
+  assert format in (1,2) and header in (12,16),'Unexpected Android raw screenshot format'
+  colors=set()
+  for row in range(y,y2):
+   data=raw[header+(row*width+x)*4:header+(row*width+x2)*4]
+   colors.update(tuple(data[i:i+3]) for i in range(0,len(data),4))
+  assert (0,255,0) in colors and (255,0,0) in colors and (0,0,0) in colors,colors
+  (out/'visible-color-evidence.json').write_text(json.dumps({'bounds':[x,y,x2,y2],'rawFormat':format,'headerBytes':header,'green':(0,255,0) in colors,'red':(255,0,0) in colors,'black':(0,0,0) in colors},indent=2))
+  tap('Right','move-right-paused');tap('Resume','resume-after-right')
+  moved=wait(lambda x:x.get('paddleX')==28 and x.get('frame',0)>paused['frame'],'right-input')
+  # Drag from fresh surface bounds to the far left; left edge means paddle x0.
+  r=ui('drag-input');n=next(n for n in r.iter('node') if n.get('content-desc')=='Homebrew game screen');x,y,x2,y2=bounds(n)
+  call('shell','input','swipe',str((x+x2)//2),str((y+y2)//2),str(x+max(2,(x2-x)//64)),str((y+y2)//2),'400')
+  drag=wait(lambda q:q.get('paddleX')==0 and q.get('frame',0)>moved['frame'],'drag-left')
+  tap('Reset','reset');reset=wait(lambda q:q.get('frame',99999)<drag['frame'] and q.get('score')==0 and q.get('misses')==0,'reset-state')
+  # Reset starts ball x20; choose paddle20 deterministically using key events.
+  call('shell','input','keyevent','22')
+  wait(lambda q:q.get('paddleX')==4,'first-dpad-press')
+  for _ in range(4):call('shell','input','keyevent','22')
+  score=wait(lambda q:q.get('paddleX')==20 and q.get('score',0)>=1,'guest-catch',seconds=50)
+  screen('visible-catch');assert score['completedFrames']==score['presentedFrames'] and score['validationErrors']==0
+  # HOME must stop the worker/session; resume starts a fresh guest and swapchain.
+  call('shell','input','keyevent','3');stopped=wait(lambda q:q.get('running') is False,'background-stopped')
+  time.sleep(1);assert report()['completedFrames']==stopped['completedFrames'],'Background rendering continued'
+  call('shell','am','start','-W','-n',pkg+'/.MainActivity')
+  # Existing task may resume DemoActivity, or MainActivity may come to front.
+  r=ui('return-to-app')
+  if any(n.get('text','')=='Play homebrew demo' for n in r.iter('node')):tap('Play homebrew demo','reopen-demo')
+  resumed=wait(lambda q:q.get('running') and q.get('frame',0)>5 and q.get('capturedAtEpochMs',0)>stopped['capturedAtEpochMs'],'foreground-recreated')
+  for i in range(2):
+   tap('Back to checks',f'back-{i}');wait(lambda q:q.get('running') is False,f'closed-{i}')
+   tap('Play homebrew demo',f'reopen-{i}');wait(lambda q:q.get('running') and q.get('frame',0)>5,f'reopened-{i}')
+  tap('Pause','final-pause');final=wait(lambda q:q.get('paused') is True,'final-demo');screen('visible-final')
+  tap('Back to checks','finish-demo');closed=wait(lambda q:q.get('running') is False,'final-closed')
+  assert closed['error']=='' and closed['frameAllocationCount']==4
+  evidence={'passed':True,'checks':['visible Vulkan ball/paddle pixels','guest animation','pause','button input','drag input','reset','guest collision/score','GPU completion equals presentation','background stop','foreground recreation','repeated surface/session teardown','bounded per-frame allocations'],'notes':notes,'first':first,'last':closed}
+  (out/'verification.json').write_text(json.dumps(evidence,indent=2));print(json.dumps({'passed':True,'checks':evidence['checks'],'notes':notes}),flush=True)
+ finally:
+  for name,args in [('logcat.txt',['logcat','-d']),('crash-buffer.txt',['logcat','-b','crash','-d']),('exit-info.txt',['shell','dumpsys','activity','exit-info',pkg])]:
+   try:(out/name).write_bytes(call(*args))
+   except subprocess.SubprocessError:pass
+if __name__=='__main__':main()

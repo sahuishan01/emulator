@@ -59,3 +59,19 @@ static_assert(offsetof(GuestDrawOp,vertex)==56 && offsetof(GuestDrawOp,fragment)
 static_assert(sizeof(GuestDrawReplay)==50452 && alignof(GuestDrawReplay)==4);
 static_assert(offsetof(GuestDrawReplay,draws)==76 && offsetof(GuestDrawReplay,pixels)==49684 && offsetof(GuestDrawReplay,error)==50196);
 extern "C" GuestDrawReplay emulator_guest_draw_replay_v1(std::uint32_t index);
+
+struct LiveDraw {
+    std::uint32_t abi_version,status,draw_count,image_bytes;
+    ClearOp background;
+    GuestDrawOp draws[3];
+    std::uint8_t pixels[16384];
+};
+struct DemoStatus {
+    std::uint32_t abi_version,status,frame,score,misses,ball_x,ball_y,paddle_x,instructions_low,instructions_high;
+    char error[256];
+};
+static_assert(sizeof(LiveDraw)==66068 && alignof(LiveDraw)==4 && offsetof(LiveDraw,pixels)==49684);
+static_assert(sizeof(DemoStatus)==296 && alignof(DemoStatus)==4 && offsetof(DemoStatus,error)==40);
+extern "C" DemoStatus emulator_demo_start_v1(std::uint32_t (*callback)(LiveDraw));
+extern "C" DemoStatus emulator_demo_step_v1(std::uint32_t x,std::uint32_t reset);
+extern "C" DemoStatus emulator_demo_stop_v1();

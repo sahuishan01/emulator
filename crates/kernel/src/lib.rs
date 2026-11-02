@@ -270,6 +270,10 @@ impl Kernel {
     pub fn live_handle_count(&self) -> usize {
         self.handles.len()
     }
+    /// Explicit diagnostic trace draining for long-running sessions.
+    pub fn clear_ipc_trace(&mut self) {
+        self.ipc_records.clear();
+    }
     pub fn ipc_records(&self) -> &[IpcRecord] {
         &self.ipc_records
     }
@@ -438,7 +442,8 @@ impl Kernel {
         // All validation, encoding and handle staging precede effects. Pins are
         // stable and cannot alias reply writes; the single executor has no
         // callbacks or mapping changes during this infallible publication phase.
-        if let Some(effect) = reply.effect {
+        if let Some(mut effect) = reply.effect {
+            effect.complete().map_err(KernelError::Service)?;
             effect.commit();
         }
         reply_view

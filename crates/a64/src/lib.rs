@@ -90,6 +90,16 @@ enum Instruction {
         subtract: bool,
         flags: bool,
     },
+    AddSubRegister {
+        width: Width,
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        shift: u8,
+        amount: u8,
+        subtract: bool,
+        flags: bool,
+    },
     Branch {
         displacement: i64,
         link: bool,
@@ -268,6 +278,50 @@ impl Cpu {
                     self.write_sp(rd, result);
                 }
             }
+            Instruction::AddSubRegister {
+                width,
+                rd,
+                rn,
+                rm,
+                shift,
+                amount,
+                subtract,
+                flags,
+            } => {
+                let lhs = self.read_zero(rn) & width.mask();
+                let operand = self.read_zero(rm) & width.mask();
+                let rhs = match shift {
+                    0 => operand << amount,
+                    1 => operand >> amount,
+                    2 if width == Width::W32 => ((operand as u32 as i32) >> amount) as u32 as u64,
+                    2 => ((operand as i64) >> amount) as u64,
+                    _ => unreachable!("validated shift"),
+                } & width.mask();
+                let result = if subtract {
+                    lhs.wrapping_sub(rhs)
+                } else {
+                    lhs.wrapping_add(rhs)
+                } & width.mask();
+                if flags {
+                    self.nzcv = Nzcv {
+                        negative: result & width.sign() != 0,
+                        zero: result == 0,
+                        carry: if subtract {
+                            lhs >= rhs
+                        } else {
+                            (lhs as u128 + rhs as u128) > width.mask() as u128
+                        },
+                        overflow: if subtract {
+                            ((lhs ^ rhs) & (lhs ^ result) & width.sign()) != 0
+                        } else {
+                            (!(lhs ^ rhs) & (lhs ^ result) & width.sign()) != 0
+                        },
+                    };
+                    self.write_zero(rd, result);
+                } else {
+                    self.write_zero(rd, result);
+                }
+            }
             Instruction::Branch { displacement, link } => {
                 if link {
                     self.x[30] = next_pc;
@@ -369,6 +423,23 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             width,
             rd,
             value: u64::from((word >> 5) & 0xffff) << shift,
+        });
+    }
+    if word & 0x1f20_0000 == 0x0b00_0000 {
+        let shift = ((word >> 22) & 3) as u8;
+        let amount = ((word >> 10) & 63) as u8;
+        if shift == 3 || (width == Width::W32 && amount >= 32) {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        return Ok(Instruction::AddSubRegister {
+            width,
+            rd,
+            rn,
+            rm: ((word >> 16) & 31) as u8,
+            shift,
+            amount,
+            subtract: word & (1 << 30) != 0,
+            flags: word & (1 << 29) != 0,
         });
     }
     if word & 0x1f80_0000 == 0x1100_0000 {

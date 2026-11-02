@@ -16,8 +16,8 @@ Z-A. Success claims must name the build, device, driver, title version and scene
 Current foundation: twelve original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
-virtual timeouts/cancellation and CLI/Android execution. Fifteen owned NROs exercise
-the implemented behavior. All 183 Rust tests and 26 independent
+virtual timeouts/cancellation and CLI/Android execution. Sixteen owned NROs exercise
+the implemented behavior. All190 Rust tests and28 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
@@ -38,8 +38,8 @@ completion, rollback and lifetime checks in one APK.
 an interpreted clear NRO, sixteen kernel/NV cases and three pixel-exact Vulkan
 command replays. M4 stays open: replay lowers clears using fixed host shaders;
 a small original SM53/SPH/typed SSA/SPIR-V subset now feeds B197 draw commands,
-a transactional CPU rasterizer and three guest-command Vulkan replays. Live
-renderer/display integration is still required. See [the draw batch](guest-draw-batch.md). See
+a transactional CPU rasterizer and three guest-command Vulkan replays. A bounded synchronous live backend and visible original Catch homebrew now
+work. General guest display-buffer queues remain required. See [the live slice](live-homebrew.md). See [the draw batch](guest-draw-batch.md). See
 [the shader batch](shader-translation-batch.md). Fresh allocation,
 broader methods and shaders remain open.
 
@@ -85,8 +85,8 @@ the deterministic scheduling fixture. M3's first single-core fixture checkpoint
 is verified; the supplied 0.6.0-dev report also passes cancellation. Broader
 synchronization remains open. Required
 guest GPU-facing services follow these foundations. Broader host format/tiling/
-presentation work remains open. M4 has framing, mappings and decoded batch ownership; its full guest
-submission/shader/image acceptance gate remains unimplemented.
+presentation work remains open. M4 has framing, mappings and decoded batch ownership; its owned visible guest submission/shader/image slice now works through a
+diagnostic display mailbox. General VI/BufferQueue/HID remain unimplemented.
 
 M1B is deliberately early. The project must learn what the real Mali driver can
 do before assuming a shader or texture strategy. A native Android triangle

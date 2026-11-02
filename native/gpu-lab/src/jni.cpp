@@ -50,3 +50,24 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_algosculptor_emulator_gpulab_MainActivity_runShaderChecks(JNIEnv* env, jobject) {
     return copy_engine_report(env, emulator_run_shader_checks_v2());
 }
+
+#include <android/native_window_jni.h>
+static jbyteArray demo_bytes(JNIEnv* env,const std::string& text) {
+    const auto bytes=env->NewByteArray(static_cast<jsize>(text.size()));
+    if(bytes)env->SetByteArrayRegion(bytes,0,static_cast<jsize>(text.size()),reinterpret_cast<const jbyte*>(text.data()));
+    return bytes;
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_DemoActivity_startDemo(JNIEnv* env,jobject,jobject surface) {
+    auto* window=ANativeWindow_fromSurface(env,surface);
+    if(!window)return demo_bytes(env,"{\"running\":false,\"error\":\"Android surface unavailable\"}");
+    const auto result=start_homebrew(window);ANativeWindow_release(window);return demo_bytes(env,result);
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_DemoActivity_stepDemo(JNIEnv* env,jobject,jint x,jboolean reset) {
+    return demo_bytes(env,step_homebrew(static_cast<uint32_t>(x),reset ? 1 : 0));
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_algosculptor_emulator_gpulab_DemoActivity_stopDemo(JNIEnv* env,jobject) {
+    return demo_bytes(env,stop_homebrew());
+}

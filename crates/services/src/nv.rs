@@ -15,6 +15,7 @@ use std::rc::Rc;
 #[derive(Clone, Debug)]
 pub struct NvDriver {
     arena: Option<Rc<TransferMemory>>,
+    graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>,
     devices: Vec<Device>,
     next_fd: u32,
     nvmap: NvMap,
@@ -25,6 +26,7 @@ impl Default for NvDriver {
     fn default() -> Self {
         Self {
             arena: None,
+            graphics: None,
             devices: Vec::new(),
             next_fd: 1,
             nvmap: NvMap::default(),
@@ -71,8 +73,18 @@ struct SubmitEffect {
     work: PreparedSubmission,
     output: BufferWrite,
     writes: Vec<BackingRange>,
+    host: Option<(
+        Rc<dyn emulator_gpu::GraphicsBackend>,
+        emulator_gpu::GraphicsFrame,
+    )>,
 }
 impl PreparedServiceEffect for SubmitEffect {
+    fn complete(&mut self) -> Result<(), ServiceError> {
+        if let Some((backend, frame)) = &self.host {
+            backend.render(frame).map_err(ServiceError::DeviceFault)?;
+        }
+        Ok(())
+    }
     fn write_ranges(&self) -> &[BackingRange] {
         &self.writes
     }
@@ -94,6 +106,12 @@ fn input_word(request: &Request, offset: usize) -> u32 {
     nvchannel::word(&request.data, offset)
 }
 impl NvDriver {
+    pub fn with_graphics(graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>) -> Self {
+        Self {
+            graphics,
+            ..Self::default()
+        }
+    }
     fn space(&self, id: u32) -> &NvAddressSpace {
         &self
             .spaces
@@ -283,7 +301,16 @@ impl NvDriver {
         }
         let mut writes = gpu_writes;
         writes.extend(out_ranges.iter().copied());
+        let host = if let Some(backend) = &self.graphics {
+            Some((
+                Rc::clone(backend),
+                work.graphics_frame().map_err(|_| NOT_SUPPORTED)?,
+            ))
+        } else {
+            None
+        };
         let effect = SubmitEffect {
+            host,
             work,
             output: BufferWrite {
                 view: output,

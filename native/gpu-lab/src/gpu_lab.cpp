@@ -1,9 +1,14 @@
-// Original host Vulkan diagnostics. This does not decode or emulate Switch GPU work.
+// Original Vulkan diagnostics and synchronous live guest graphics backend.
 #include "gpu_lab.h"
 #include "engine_abi.h"
 #include "shaders.h"
 #include "bc1_fixture.h"
+#ifdef __ANDROID__
+#define VK_USE_PLATFORM_ANDROID_KHR
+#include <android/native_window.h>
+#endif
 #include <vulkan/vulkan.h>
+#include <memory>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -50,6 +55,7 @@ public:
     std::atomic<uint32_t> validation_errors{0};
     VkDebugUtilsMessengerEXT debug_messenger{};
     VkInstance instance{};
+    VkSurfaceKHR surface{};
     VkPhysicalDevice physical{};
     VkPhysicalDeviceProperties properties{};
     VkPhysicalDeviceFeatures features{};
@@ -78,24 +84,13 @@ public:
     void shutdown() {
         if (device) {
             vkDeviceWaitIdle(device);
-            for (auto handle : fences) vkDestroyFence(device, handle, nullptr);
-            for (auto handle : pipelines) vkDestroyPipeline(device, handle, nullptr);
-            for (auto handle : framebuffers) vkDestroyFramebuffer(device, handle, nullptr);
-            for (auto handle : render_passes) vkDestroyRenderPass(device, handle, nullptr);
-            for (auto handle : pipeline_layouts) vkDestroyPipelineLayout(device, handle, nullptr);
-            for (auto handle : descriptor_pools) vkDestroyDescriptorPool(device, handle, nullptr);
-            for (auto handle : descriptor_layouts) vkDestroyDescriptorSetLayout(device, handle, nullptr);
-            for (auto handle : shaders) vkDestroyShaderModule(device, handle, nullptr);
-            for (auto handle : samplers) vkDestroySampler(device, handle, nullptr);
-            for (auto handle : views) vkDestroyImageView(device, handle, nullptr);
-            for (auto handle : images) vkDestroyImage(device, handle, nullptr);
-            for (auto handle : buffers) vkDestroyBuffer(device, handle, nullptr);
-            for (auto handle : allocations) vkFreeMemory(device, handle, nullptr);
+            clear_workloads();
             if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
             vkDestroyDevice(device, nullptr);
             device = VK_NULL_HANDLE;
         }
         if (instance) {
+            if (surface) { vkDestroySurfaceKHR(instance, surface, nullptr); surface = VK_NULL_HANDLE; }
             if (debug_messenger) {
                 const auto destroy = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
                 if (destroy) destroy(instance, debug_messenger, nullptr);
@@ -106,6 +101,38 @@ public:
         }
     }
 
+    void clear_workloads() {
+        for (auto handle : fences) vkDestroyFence(device, handle, nullptr);
+        for (auto handle : pipelines) vkDestroyPipeline(device, handle, nullptr);
+        for (auto handle : framebuffers) vkDestroyFramebuffer(device, handle, nullptr);
+        for (auto handle : render_passes) vkDestroyRenderPass(device, handle, nullptr);
+        for (auto handle : pipeline_layouts) vkDestroyPipelineLayout(device, handle, nullptr);
+        for (auto handle : descriptor_pools) vkDestroyDescriptorPool(device, handle, nullptr);
+        for (auto handle : descriptor_layouts) vkDestroyDescriptorSetLayout(device, handle, nullptr);
+        for (auto handle : shaders) vkDestroyShaderModule(device, handle, nullptr);
+        for (auto handle : samplers) vkDestroySampler(device, handle, nullptr);
+        for (auto handle : views) vkDestroyImageView(device, handle, nullptr);
+        for (auto handle : images) vkDestroyImage(device, handle, nullptr);
+        for (auto handle : buffers) vkDestroyBuffer(device, handle, nullptr);
+        for (auto handle : allocations) vkFreeMemory(device, handle, nullptr);
+
+        fences.clear();
+        pipelines.clear();
+        framebuffers.clear();
+        render_passes.clear();
+        pipeline_layouts.clear();
+        descriptor_pools.clear();
+        descriptor_layouts.clear();
+        shaders.clear();
+        samplers.clear();
+        views.clear();
+        images.clear();
+        buffers.clear();
+        allocations.clear();
+        allocation_bytes = 0;
+
+    }
+
     static VKAPI_ATTR VkBool32 VKAPI_CALL validation_message(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
             VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* message, void* user) {
         auto* context = static_cast<Context*>(user);
@@ -114,14 +141,19 @@ public:
         return VK_FALSE;
     }
 
-    void initialize() {
+    void initialize(void* native_window = nullptr) {
         auto app = structure<VkApplicationInfo>(VK_STRUCTURE_TYPE_APPLICATION_INFO);
         app.pApplicationName = "Original Emulator GPU Lab";
         app.apiVersion = VK_API_VERSION_1_1;
         auto instance_info = structure<VkInstanceCreateInfo>(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
         instance_info.pApplicationInfo = &app;
         const char* layer = "VK_LAYER_KHRONOS_validation";
-        const char* debug_extension = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+        std::vector<const char*> instance_extensions;
+#ifdef __ANDROID__
+        if (native_window) instance_extensions = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
+#else
+        if (native_window) throw std::runtime_error("Native window is Android-only");
+#endif
         auto debug = structure<VkDebugUtilsMessengerCreateInfoEXT>(VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT);
         if (const char* requested = std::getenv("EMULATOR_GPU_VALIDATION"); requested && std::string(requested) == "1") {
             uint32_t layer_count = 0;
@@ -132,13 +164,22 @@ public:
                 throw std::runtime_error("Requested Khronos validation layer is unavailable");
             validation_enabled = true;
             instance_info.enabledLayerCount = 1; instance_info.ppEnabledLayerNames = &layer;
-            instance_info.enabledExtensionCount = 1; instance_info.ppEnabledExtensionNames = &debug_extension;
+            instance_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             debug.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
             debug.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
             debug.pfnUserCallback = validation_message; debug.pUserData = this;
             instance_info.pNext = &debug;
         }
+        instance_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
+        instance_info.ppEnabledExtensionNames = instance_extensions.data();
         check(vkCreateInstance(&instance_info, nullptr, &instance), "create instance");
+#ifdef __ANDROID__
+        if (native_window) {
+            auto info = structure<VkAndroidSurfaceCreateInfoKHR>(VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR);
+            info.window = static_cast<ANativeWindow*>(native_window);
+            check(vkCreateAndroidSurfaceKHR(instance, &info, nullptr, &surface), "create Android surface");
+        }
+#endif
         if (validation_enabled) {
             const auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT"));
             if (!create) throw std::runtime_error("Validation debug messenger unavailable");
@@ -166,7 +207,9 @@ public:
         bool found = false;
         for (uint32_t index = 0; index < queue_count; ++index) {
             constexpr VkQueueFlags required = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
-            if (queues[index].queueCount && (queues[index].queueFlags & required) == required) { family = index; found = true; break; }
+            VkBool32 present = VK_TRUE;
+            if (surface) check(vkGetPhysicalDeviceSurfaceSupportKHR(physical, index, surface, &present), "query present queue");
+            if (present && queues[index].queueCount && (queues[index].queueFlags & required) == required) { family = index; found = true; break; }
         }
         if (!found) throw std::runtime_error("No combined graphics/compute queue for this test backend");
         const float priority = 1.0f;
@@ -174,6 +217,8 @@ public:
         queue_info.queueFamilyIndex = family; queue_info.queueCount = 1; queue_info.pQueuePriorities = &priority;
         auto device_info = structure<VkDeviceCreateInfo>(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
         device_info.queueCreateInfoCount = 1; device_info.pQueueCreateInfos = &queue_info;
+        const char* swapchain_extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+        if (surface) { device_info.enabledExtensionCount = 1; device_info.ppEnabledExtensionNames = &swapchain_extension; }
         check(vkCreateDevice(physical, &device_info, nullptr, &device), "create logical device");
         vkGetDeviceQueue(device, family, 0, &queue);
         auto pool = structure<VkCommandPoolCreateInfo>(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
@@ -977,17 +1022,18 @@ bool translated_shader_draw(Context& context,uint32_t index) {
     return true;
 }
 
-bool guest_draw_command_replay(Context& context,uint32_t index) {
-    const auto replay=emulator_guest_draw_replay_v1(index);
-    if(replay.abi_version!=1 || replay.status || replay.draw_count!=2 || replay.image_bytes!=512)
-        throw std::runtime_error(std::string("Guest draw replay failed: ")+std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
+template<class Replay> bool render_guest_commands(Context& context,const Replay& replay,Image* rendered = nullptr) {
+    const auto w=replay.background.width, h=replay.background.height;
+    const auto bytes=static_cast<size_t>(w)*h*4;
+    if(replay.abi_version!=1 || replay.status || replay.draw_count!=2 || replay.image_bytes!=bytes)
+        throw std::runtime_error("Guest draw ABI failure");
     const auto& background=replay.background;
-    if(background.width!=16 || background.height!=8 || background.pitch!=64 || (background.format!=0xd5 && background.format!=0xcf)
-        || background.rect[0]!=0 || background.rect[1]!=0 || background.rect[2]!=16 || background.rect[3]!=8 || background.mask!=15)
+    if(!w || !h || w>64 || h>64 || background.pitch!=w*4 || (background.format!=0xd5 && background.format!=0xcf)
+        || background.rect[0]!=0 || background.rect[1]!=0 || background.rect[2]!=w || background.rect[3]!=h || background.mask!=15)
         throw std::runtime_error("Guest draw background ABI mismatch");
     const VkFormat format=background.format==0xcf ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
-    const auto color=context.image(format,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_COLOR_BIT,16,8);
-    const auto readback=context.buffer(512,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto color=context.image(format,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_COLOR_BIT,w,h);
+    const auto readback=context.buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     VkAttachmentDescription attachment{};
     attachment.format=format;attachment.samples=VK_SAMPLE_COUNT_1_BIT;attachment.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachment.storeOp=VK_ATTACHMENT_STORE_OP_STORE;attachment.stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -1008,7 +1054,7 @@ bool guest_draw_command_replay(Context& context,uint32_t index) {
     VkRenderPass pass{};check(vkCreateRenderPass(context.device,&pass_info,nullptr,&pass),"create translated shader pass");context.render_passes.push_back(pass);
     auto framebuffer_info=structure<VkFramebufferCreateInfo>(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
     framebuffer_info.renderPass=pass;framebuffer_info.attachmentCount=1;framebuffer_info.pAttachments=&color.view;
-    framebuffer_info.width=16;framebuffer_info.height=8;framebuffer_info.layers=1;
+    framebuffer_info.width=w;framebuffer_info.height=h;framebuffer_info.layers=1;
     VkFramebuffer framebuffer{};check(vkCreateFramebuffer(context.device,&framebuffer_info,nullptr,&framebuffer),"create translated shader framebuffer");context.framebuffers.push_back(framebuffer);
     auto layout_info=structure<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
     VkPipelineLayout layout{};check(vkCreatePipelineLayout(context.device,&layout_info,nullptr,&layout),"create translated shader layout");context.pipeline_layouts.push_back(layout);
@@ -1024,7 +1070,7 @@ bool guest_draw_command_replay(Context& context,uint32_t index) {
         auto vertex=structure<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
         vertex.vertexBindingDescriptionCount=1;vertex.pVertexBindingDescriptions=&binding;vertex.vertexAttributeDescriptionCount=1;vertex.pVertexAttributeDescriptions=&attribute;
         auto assembly=structure<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        const VkViewport viewport{0,0,16,8,0,1};const VkRect2D scissor{{0,0},{16,8}};
+        const VkViewport viewport{0,0,static_cast<float>(w),static_cast<float>(h),0,1};const VkRect2D scissor{{0,0},{w,h}};
         auto viewport_info=structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
         viewport_info.viewportCount=1;viewport_info.pViewports=&viewport;viewport_info.scissorCount=1;viewport_info.pScissors=&scissor;
         auto raster=structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
@@ -1045,9 +1091,9 @@ bool guest_draw_command_replay(Context& context,uint32_t index) {
     std::array<VkPipeline,3> draw_pipelines{};
     for(uint32_t i=0;i<replay.draw_count;++i) {
         const auto& d=replay.draws[i];
-        if(d.address_upper!=background.address_upper || d.address_lower!=background.address_lower || d.width!=16 || d.height!=8
-            || d.pitch!=64 || d.format!=background.format || d.mask!=15 || d.vertex_count!=6
-            || d.rect[0]>d.rect[2] || d.rect[1]>d.rect[3] || d.rect[2]>16 || d.rect[3]>8)
+        if(d.address_upper!=background.address_upper || d.address_lower!=background.address_lower || d.width!=w || d.height!=h
+            || d.pitch!=w*4 || d.format!=background.format || d.mask!=15 || d.vertex_count!=6
+            || d.rect[0]>d.rect[2] || d.rect[1]>d.rect[3] || d.rect[2]>w || d.rect[3]>h)
             throw std::runtime_error("Guest draw operation ABI mismatch");
         vertex_buffers[i]=context.buffer(sizeof(d.vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         context.write(vertex_buffers[i],d.vertices,sizeof(d.vertices));
@@ -1058,7 +1104,7 @@ bool guest_draw_command_replay(Context& context,uint32_t index) {
         buffer_barrier(command,vertex_buffers[i],VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
     VkClearValue initial{};std::memcpy(initial.color.float32,background.color,sizeof(background.color));
     auto begin=structure<VkRenderPassBeginInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
-    begin.renderPass=pass;begin.framebuffer=framebuffer;begin.renderArea={{0,0},{16,8}};begin.clearValueCount=1;begin.pClearValues=&initial;
+    begin.renderPass=pass;begin.framebuffer=framebuffer;begin.renderArea={{0,0},{w,h}};begin.clearValueCount=1;begin.pClearValues=&initial;
     vkCmdBeginRenderPass(command,&begin,VK_SUBPASS_CONTENTS_INLINE);
     for(uint32_t i=0;i<replay.draw_count;++i) {
         const auto& d=replay.draws[i];
@@ -1069,11 +1115,162 @@ bool guest_draw_command_replay(Context& context,uint32_t index) {
         vkCmdDraw(command,d.vertex_count,1,0,0);
     }
     vkCmdEndRenderPass(command);
-    VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={16,8,1};
+    VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={w,h,1};
     vkCmdCopyImageToBuffer(command,color.handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback.handle,1,&copy);
     buffer_barrier(command,readback,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
     context.submit(command);const auto actual=context.read(readback);
-    return actual.size()==512 && std::equal(actual.begin(),actual.end(),replay.pixels);
+    if(rendered)*rendered=color;
+    return actual.size()==bytes && std::equal(actual.begin(),actual.end(),replay.pixels);
+}
+
+bool guest_draw_command_replay(Context& context,uint32_t index) {
+    return render_guest_commands(context,emulator_guest_draw_replay_v1(index));
+}
+
+// This backend stays on the single Java render worker. Every frame is bounded;
+// no guest or Rust pointers escape into Vulkan, and callbacks cannot reenter.
+class LiveRenderer {
+public:
+    Context context;
+    VkSwapchainKHR swapchain{};
+    VkExtent2D extent{};
+    VkFormat swap_format{};
+    std::vector<VkImage> swap_images;
+    VkSemaphore acquired{};
+    std::vector<VkSemaphore> ready_images;
+    uint64_t completed=0, presented=0;
+    void* native_window=nullptr;
+    std::string error;
+    ~LiveRenderer() {
+        if(context.device) {
+            vkDeviceWaitIdle(context.device);
+            if(acquired)vkDestroySemaphore(context.device,acquired,nullptr);
+            for(auto ready:ready_images)vkDestroySemaphore(context.device,ready,nullptr);
+            if(swapchain)vkDestroySwapchainKHR(context.device,swapchain,nullptr);
+        }
+        context.shutdown();
+#ifdef __ANDROID__
+        if(native_window)ANativeWindow_release(static_cast<ANativeWindow*>(native_window));
+#endif
+    }
+    void initialize(void* window) {
+        native_window=window;
+#ifdef __ANDROID__
+        if(window)ANativeWindow_acquire(static_cast<ANativeWindow*>(window));
+#endif
+        context.initialize(window);
+        if(context.surface) create_swapchain();
+    }
+    void create_swapchain() {
+        VkSurfaceCapabilitiesKHR caps{};
+        check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(context.physical,context.surface,&caps),"surface capabilities");
+        if(!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))throw std::runtime_error("Surface cannot receive transfer images");
+        uint32_t n=0;check(vkGetPhysicalDeviceSurfaceFormatsKHR(context.physical,context.surface,&n,nullptr),"surface format count");
+        std::vector<VkSurfaceFormatKHR> formats(n);
+        check(vkGetPhysicalDeviceSurfaceFormatsKHR(context.physical,context.surface,&n,formats.data()),"surface formats");
+        const auto chosen=std::find_if(formats.begin(),formats.end(),[](auto f){return (f.format==VK_FORMAT_R8G8B8A8_UNORM || f.format==VK_FORMAT_B8G8R8A8_UNORM) && f.colorSpace==VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;});
+        if(chosen==formats.end())throw std::runtime_error("No supported UNORM Android surface format");
+        swap_format=chosen->format;
+        VkFormatProperties src{},dst{};
+        vkGetPhysicalDeviceFormatProperties(context.physical,VK_FORMAT_R8G8B8A8_UNORM,&src);
+        vkGetPhysicalDeviceFormatProperties(context.physical,swap_format,&dst);
+        if(!(src.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) || !(dst.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT))
+            throw std::runtime_error("Surface blit unsupported");
+        extent=caps.currentExtent;
+        if(extent.width==UINT32_MAX || !extent.width || !extent.height)throw std::runtime_error("Surface extent unavailable");
+        auto info=structure<VkSwapchainCreateInfoKHR>(VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR);
+        info.surface=context.surface;info.minImageCount=std::max(2u,caps.minImageCount);
+        if(caps.maxImageCount)info.minImageCount=std::min(info.minImageCount,caps.maxImageCount);
+        info.imageFormat=chosen->format;info.imageColorSpace=chosen->colorSpace;info.imageExtent=extent;
+        info.imageArrayLayers=1;info.imageUsage=VK_IMAGE_USAGE_TRANSFER_DST_BIT;info.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE;
+        info.preTransform=caps.currentTransform;
+        for(auto flag:{VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR}) {
+            if(caps.supportedCompositeAlpha & flag){info.compositeAlpha=flag;break;}
+        }
+        info.presentMode=VK_PRESENT_MODE_FIFO_KHR;info.clipped=VK_TRUE;
+        check(vkCreateSwapchainKHR(context.device,&info,nullptr,&swapchain),"create Android swapchain");
+        check(vkGetSwapchainImagesKHR(context.device,swapchain,&n,nullptr),"swapchain image count");swap_images.resize(n);
+        check(vkGetSwapchainImagesKHR(context.device,swapchain,&n,swap_images.data()),"swapchain images");
+        auto sem=structure<VkSemaphoreCreateInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
+        check(vkCreateSemaphore(context.device,&sem,nullptr,&acquired),"acquire semaphore");
+        ready_images.resize(swap_images.size());
+        for(auto& ready:ready_images)check(vkCreateSemaphore(context.device,&sem,nullptr,&ready),"per-image present semaphore");
+    }
+    void present(const Image& source) {
+        uint32_t index=0;
+        auto result=vkAcquireNextImageKHR(context.device,swapchain,1'000'000'000ull,acquired,VK_NULL_HANDLE,&index);
+        if(result!=VK_SUBOPTIMAL_KHR)check(result,"acquire Android image");
+        const auto ready=ready_images.at(index);
+        const auto command=context.begin();
+        auto barrier=structure<VkImageMemoryBarrier>(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
+        barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.image=swap_images[index];
+        barrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+        VkClearColorValue black{};black.float32[3]=1;
+        vkCmdClearColorImage(command,swap_images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&black,1,&barrier.subresourceRange);
+        // Serialize the letterbox clear and the overlapping destination blit.
+        barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+        const auto side=std::min(extent.width,extent.height), x=(extent.width-side)/2,y=(extent.height-side)/2;
+        VkImageBlit blit{};blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};blit.srcOffsets[1]={64,64,1};
+        blit.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+        blit.dstOffsets[0]={static_cast<int32_t>(x),static_cast<int32_t>(y),0};
+        blit.dstOffsets[1]={static_cast<int32_t>(x+side),static_cast<int32_t>(y+side),1};
+        vkCmdBlitImage(command,source.handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,swap_images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_NEAREST);
+        barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=0;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+        check(vkEndCommandBuffer(command),"end present command");
+        auto fence_info=structure<VkFenceCreateInfo>(VK_STRUCTURE_TYPE_FENCE_CREATE_INFO);VkFence fence{};
+        check(vkCreateFence(context.device,&fence_info,nullptr,&fence),"present fence");context.fences.push_back(fence);
+        const VkPipelineStageFlags wait_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
+        auto submit=structure<VkSubmitInfo>(VK_STRUCTURE_TYPE_SUBMIT_INFO);
+        submit.waitSemaphoreCount=1;submit.pWaitSemaphores=&acquired;submit.pWaitDstStageMask=&wait_stage;
+        submit.commandBufferCount=1;submit.pCommandBuffers=&command;submit.signalSemaphoreCount=1;submit.pSignalSemaphores=&ready;
+        check(vkQueueSubmit(context.queue,1,&submit,fence),"submit present transfer");
+        auto present_info=structure<VkPresentInfoKHR>(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR);
+        present_info.waitSemaphoreCount=1;present_info.pWaitSemaphores=&ready;present_info.swapchainCount=1;
+        present_info.pSwapchains=&swapchain;present_info.pImageIndices=&index;
+        result=vkQueuePresentKHR(context.queue,&present_info);
+        if(result!=VK_SUBOPTIMAL_KHR)check(result,"present Android image");
+        check(vkWaitForFences(context.device,1,&fence,VK_TRUE,5'000'000'000ull),"present transfer completion");
+        // Deliberately single-frame reference backend. Drain the presentation wait
+        // before reusing binary semaphores, frame resources or the native window.
+        check(vkQueueWaitIdle(context.queue),"presentation queue idle");
+        ++presented;
+    }
+    uint32_t render(const LiveDraw& draw) noexcept {
+        try {
+            context.clear_workloads();
+            check(vkResetCommandPool(context.device,context.command_pool,0),"reset live frame commands");
+            Image image{};
+            if(!render_guest_commands(context,draw,&image))throw std::runtime_error("Live guest Vulkan pixels differ from serial raster oracle");
+            if(context.validation_errors)throw std::runtime_error("Vulkan validation error");
+            ++completed;
+            if(swapchain)present(image);
+            return 0;
+        } catch(const std::exception& e) {error=e.what();return 1;}
+    }
+};
+thread_local std::unique_ptr<LiveRenderer> live;
+extern "C" uint32_t complete_live_draw(LiveDraw draw) { return live ? live->render(draw) : 2; }
+void status_check(const DemoStatus& s) {
+    if(s.abi_version!=1 || s.status)throw std::runtime_error(live && !live->error.empty() ? live->error : std::string(s.error,strnlen(s.error,sizeof(s.error))));
+}
+bool live_homebrew_check() {
+    live=std::make_unique<LiveRenderer>();
+    try {
+        live->initialize(nullptr);status_check(emulator_demo_start_v1(complete_live_draw));
+        DemoStatus s{};
+        for(uint32_t i=0;i<110;++i) {s=emulator_demo_step_v1(i<54 ? 20 : 0,0);status_check(s);}
+        const bool ok=s.frame==110 && s.score==1 && s.misses==1 && live->completed==110;
+        s=emulator_demo_step_v1(48,1);status_check(s);
+        const bool reset=s.frame==1 && s.score==0 && s.misses==0 && s.paddle_x==48;
+        status_check(emulator_demo_stop_v1());
+        const bool valid=live->context.validation_errors==0;live.reset();return ok && reset && valid;
+    } catch(...) { (void)emulator_demo_stop_v1();live.reset();throw; }
 }
 
 } // namespace
@@ -1102,14 +1299,15 @@ GpuReport run_gpu_checks() {
         tests.push_back({"guest-nv-draw-command-replay",guest_draw_command_replay(context,0),"Interpreted NRO -> NV commands -> SPH/shader/vertex/draw decode -> Vulkan; all512 bytes match guest and independent oracle"});
         tests.push_back({"owned-nv-bgra-draw-command-replay",guest_draw_command_replay(context,1),"Decoded guest BGRA draw state, shader headers, transformed geometry and byte storage match"});
         tests.push_back({"owned-nv-scissor-draw-command-replay",guest_draw_command_replay(context,2),"Decoded guest scissor and vertex transforms preserve surrounding pixels across ordered draws"});
+        tests.push_back({"live-homebrew-frames-input-and-completion",live_homebrew_check(),"111 interpreted homebrew frames; live Vulkan completion before guest publication; catches, misses, reset and resource release"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 15 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 16 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":6,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":7,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1127,4 +1325,34 @@ GpuReport run_gpu_checks() {
     json << "],\"diagnosticAllocations\":{\"scope\":\"all-lab-workloads\",\"bytesRequested\":" << context.allocation_bytes
          << ",\"count\":" << context.allocations.size() << ",\"includesDriverOverhead\":false},\"allPassed\":" << (passed ? "true" : "false") << ",\"error\":" << quoted(error) << '}';
     return {passed, json.str()};
+}
+
+namespace {
+std::string demo_json(const DemoStatus& s,bool running,const std::string& error="") {
+    std::ostringstream j;
+    j << "{\"scope\":\"original-live-homebrew\",\"running\":" << (running ? "true" : "false")
+      << ",\"frame\":" << s.frame << ",\"score\":" << s.score << ",\"misses\":" << s.misses
+      << ",\"ballX\":" << s.ball_x << ",\"ballY\":" << s.ball_y << ",\"paddleX\":" << s.paddle_x
+      << ",\"completedFrames\":" << (live ? live->completed : 0) << ",\"presentedFrames\":" << (live ? live->presented : 0)
+      << ",\"renderWidth\":64,\"renderHeight\":64,\"deviceName\":" << quoted(live ? live->context.properties.deviceName : "")
+      << ",\"isSoftwareRenderer\":" << (live && live->context.properties.deviceType==VK_PHYSICAL_DEVICE_TYPE_CPU ? "true" : "false")
+      << ",\"validationErrors\":" << (live ? live->context.validation_errors.load() : 0)
+      << ",\"frameAllocationCount\":" << (live ? live->context.allocations.size() : 0)
+      << ",\"error\":" << quoted(error) << "}";
+    return j.str();
+}
+}
+std::string start_homebrew(void* window) {
+    try {
+        (void)emulator_demo_stop_v1();live.reset();live=std::make_unique<LiveRenderer>();
+        live->initialize(window);status_check(emulator_demo_start_v1(complete_live_draw));
+        return demo_json(DemoStatus{},true);
+    } catch(const std::exception& e) {const auto result=demo_json(DemoStatus{},false,e.what());(void)emulator_demo_stop_v1();live.reset();return result;}
+}
+std::string step_homebrew(uint32_t x,uint32_t reset) {
+    try {if(!live)throw std::runtime_error("No native homebrew session");const auto s=emulator_demo_step_v1(x,reset);status_check(s);return demo_json(s,true);}
+    catch(const std::exception& e) {return demo_json(DemoStatus{},false,e.what());}
+}
+std::string stop_homebrew() {
+    const auto s=emulator_demo_stop_v1();const auto result=demo_json(s,false,s.status ? std::string(s.error,strnlen(s.error,sizeof(s.error))) : "");live.reset();return result;
 }
