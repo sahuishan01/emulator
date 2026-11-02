@@ -1,6 +1,6 @@
 # Visible original homebrew
 
-Version0.19.0-dev adds **Play homebrew demo** to the Android app. Catch is our
+Version0.19 introduced **Play homebrew demo** to the Android app. Catch is our
 own static NRO, interpreted continuously: drag or use Left/Right to move the red
 paddle under a falling green square. The guest updates positions, checks catches
 and misses, tracks score, generates vertices and submits actual B197 commands.
@@ -96,3 +96,16 @@ References: [Arm instruction guide](https://documentation-service.arm.com/static
 [Khronos acquire](https://docs.vulkan.org/refpages/latest/refpages/source/vkAcquireNextImageKHR.html),
 [Khronos present](https://docs.vulkan.org/refpages/latest/refpages/source/vkQueuePresentKHR.html),
 [Android TextureView lifetime](https://developer.android.com/reference/android/view/TextureView.SurfaceTextureListener).
+
+## Held controls (0.19.1)
+
+Left/Right now move one4-unit step on touch down, then repeat after240ms every
+80ms while held. Normal taps and accessibility clicks still move exactly once.
+The repeat loop is owned by the UI thread, separate from rendering; guest input
+still uses the same bounded mailbox. Both held directions neutralize each other.
+Release, cancellation, the active pointer lifting or sliding off the button
+stops that hold. Dragging the game area, Pause, loss of window focus, background,
+surface recreation and destruction clear held state and pending callbacks; an
+old hold never rearms on resume. Keyboard/D-pad behavior stays unchanged.
+Schema4/workload20 invalidates prior cached diagnostics; native GPU workload7
+and the103 cases are unchanged.

@@ -44,8 +44,8 @@ raised its RAM to2560MiB; this was not a2GiB hard-limit run. Boot outlasted the 
 boot completion was explicitly rechecked before installing/launching.
 
 The supplied0.18 G720 report passes102/102; see
-[g720-guest-draw-batch.md](g720-guest-draw-batch.md). New0.19 window/input behavior
-awaits a physical report. Passing a small original homebrew does not establish
+[g720-guest-draw-batch.md](g720-guest-draw-batch.md). The supplied0.19 report now confirms578 presented
+frames on physical G720; see [the phone checkpoint](g720-live-homebrew.md). Passing a small original homebrew does not establish
 commercial game compatibility, full Horizon display/HID, async GPU coherence or
 playable console performance. See [the live implementation limits](../live-homebrew.md).
 

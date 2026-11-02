@@ -13,7 +13,7 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.19.0-dev
+## Current implementation: 0.19.1-dev
 
 Twelve original Rust crates, no external Cargo dependencies. Eleven core crates
 forbid unsafe; android-ffi permits export attributes only, with no unsafe blocks
@@ -180,9 +180,28 @@ frames, failed backend/retry/reentry/input/order/reply-preflight tests included.
 Three new value exports start(callback)/step/stop_v1, thread-affine, no Rust unsafe
 blocks/pointers. LiveDraw66068bytes/pixels49684, DemoStatus296/error40;10exports.
 
-Full suite now103 (engine15/NV50/core3/shader19/gpu16workload7), schema4/workload19.
+Full suite now103 (engine15/NV50/core3/shader19/gpu16workload7), schema4/workload20 (0.19.1; native workload7 unchanged).
 Prior102records remain unchanged. New GPU check runs111 live frames/catch/miss/
 reset, no window. See docs/live-homebrew.md and Android validation for windowQA.
+
+## Held buttons (0.19.1 patch)
+
+The user found Left/Right only moved once per press. They now move immediately,
+then repeat at80ms after240ms while held. Taps/accessibility click once; no extra
+step on release. UI-thread held direction state cancels on UP/CANCEL/active
+pointer up/leaving bounds and clears on Pause, drag, focus loss, background,
+surface recreation and destroy. Opposite buttons neutralize. No native/Rust/
+guest logic changed; both packaged native libraries are byte-identical to0.19.0.
+App version0.19.1-dev/code20/reportworkload20;103 cases/nativeworkload7 unchanged.
+The QA runner accepts --hold-controls for actual DOWN/UP holds, release/edge/
+cancel/focus checks followed by the existing visible/control/lifecycle flow.
+All17 pass on API35/x86_64. Native libraries byte-identical to0.19.0; pinned
+build/lint/signature/all10exports/16KiB packaging pass. See
+docs/validation/android-held-controls.md for final APK hash and evidence.
+Fresh103 checks/exact references/export/cold restore pass; all screenshots
+inspected, empty final crash buffers; owned AVD stopped/awaited. An earlier
+batch lost ADB; restart/reinstall and authentic prior-cache fixture restoration
+are recorded in validation notes.
 
 ## Batched Android report
 
@@ -216,7 +235,9 @@ DMA/clear queues. GPU effects preserve order and pins through CPU address reuse.
  for final APK hash, visible QA and its limits. Visible controls/lifecycle pass,
  full103-case Android batch/export/cold restore pass; all screenshots inspected,
  no app crash/ANR; owned AVD stopped/awaited. Requested2048MiB was raised by this
- emulator to2560MiB. New0.19 physical run pending.
+ emulator to2560MiB. Supplied0.19 physical report passes all103 and records578 completed/presented
+ hardware G720 frames/score9/misses1/empty error. All four Rust groups match
+ exactly except architecture. See docs/validation/g720-live-homebrew.md.
 
 - 183 Rust tests (including the thirty-four-scenario runner), fmt and Clippy with
   warnings denied; 26 LLVM fixtures (11 raw/15 NROs); pinned ARM64/x86_64 build,

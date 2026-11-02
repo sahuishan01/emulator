@@ -6,6 +6,7 @@ import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
@@ -35,6 +36,82 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
     @Volatile private var paused = false
     private val reset = AtomicBoolean(false)
     private var resumed = false
+    private val inputHandler = Handler(Looper.getMainLooper())
+    private val heldDirections = mutableMapOf<Button, Int>()
+    private val repeatDirection = object : Runnable {
+        override fun run() {
+            if (!resumed || paused || heldDirections.isEmpty()) return
+            moveDirection(heldDirections.values.sum().coerceIn(-1, 1))
+            inputHandler.postDelayed(this, 80)
+        }
+    }
+
+    private fun moveDirection(direction: Int) {
+        paddle = (paddle + direction * 4).coerceIn(0, 48)
+    }
+    private fun clearDirections() {
+        inputHandler.removeCallbacks(repeatDirection)
+        heldDirections.keys.forEach { it.isPressed = false }
+        heldDirections.clear()
+    }
+    private fun releaseDirection(button: Button) {
+        heldDirections.remove(button)
+        button.isPressed = false
+        if (heldDirections.isEmpty()) inputHandler.removeCallbacks(repeatDirection)
+    }
+    private fun directionButton(label: String, direction: Int): Button {
+        var pointer = -1
+        var touchClick = false
+        return Button(this).apply {
+            text = label
+            // Keyboard/accessibility clicks retain the same single-step action.
+            setOnClickListener { if (!touchClick) moveDirection(direction) }
+            setOnTouchListener { button, event ->
+                val control = button as Button
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        pointer = event.getPointerId(0)
+                        heldDirections[control] = direction
+                        control.isPressed = true
+                        control.parent.requestDisallowInterceptTouchEvent(true)
+                        moveDirection(heldDirections.values.sum().coerceIn(-1, 1))
+                        inputHandler.removeCallbacks(repeatDirection)
+                        if (resumed && !paused) inputHandler.postDelayed(repeatDirection, 240)
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val index = event.findPointerIndex(pointer)
+                        if (index < 0 || event.getX(index) < 0 || event.getX(index) >= control.width ||
+                            event.getY(index) < 0 || event.getY(index) >= control.height) {
+                            releaseDirection(control)
+                            pointer = -1
+                        }
+                    }
+                    MotionEvent.ACTION_POINTER_UP -> {
+                        if (event.getPointerId(event.actionIndex) == pointer) {
+                            releaseDirection(control)
+                            pointer = -1
+                        }
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val clicked = heldDirections.containsKey(control)
+                        releaseDirection(control)
+                        pointer = -1
+                        control.parent.requestDisallowInterceptTouchEvent(false)
+                        if (clicked) {
+                            touchClick = true
+                            try { control.performClick() } finally { touchClick = false }
+                        }
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        releaseDirection(control)
+                        pointer = -1
+                        control.parent.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+                true
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +146,7 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
             setOnTouchListener { v, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                        if (event.actionMasked == MotionEvent.ACTION_DOWN) clearDirections()
                         v.requestFocus()
                         paddle = (event.x / v.width * 64 - 8).roundToInt().coerceIn(0, 48)
                         true
@@ -86,11 +164,11 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
         fun control(label: String, action: () -> Unit) {
             controls.addView(Button(this).apply { text = label; setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f))
         }
-        control("Left") { paddle = (paddle - 4).coerceAtLeast(0) }
-        control("Right") { paddle = (paddle + 4).coerceAtMost(48) }
+        controls.addView(directionButton("Left", -1), LinearLayout.LayoutParams(0, -2, 1f))
+        controls.addView(directionButton("Right", 1), LinearLayout.LayoutParams(0, -2, 1f))
         val pause = Button(this).apply {
             text = "Pause"
-            setOnClickListener { paused = !paused; text = if (paused) "Resume" else "Pause" }
+            setOnClickListener { clearDirections(); paused = !paused; text = if (paused) "Resume" else "Pause" }
         }
         controls.addView(pause, LinearLayout.LayoutParams(0, -2, 1f))
         control("Reset") { reset.set(true) }
@@ -106,6 +184,7 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
     }
 
     private fun start(texture: SurfaceTexture) {
+        clearDirections()
         val current = ++generation
         val surface = Surface(texture)
         worker.post {
@@ -170,7 +249,7 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
         val result = JSONObject(String(stopDemo(), Charsets.UTF_8))
         if (result.optLong("completedFrames") > 0 || result.optString("error").isNotEmpty()) persist(result)
     }
-    private fun stop() { ++generation; worker.post { stopNative() } }
+    private fun stop() { clearDirections(); ++generation; worker.post { stopNative() } }
     override fun onResume() {
         super.onResume(); resumed = true
         if (view.isAvailable) view.surfaceTexture?.let { start(it) }
@@ -179,6 +258,7 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) { if (resumed) start(texture) }
     override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) { if (resumed) start(texture) }
     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+        clearDirections()
         ++generation
         // If Activity teardown already stopped and quit the worker, Vulkan is
         // finished and the late TextureView callback can release directly.
@@ -195,7 +275,12 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
         }
         return super.dispatchKeyEvent(event)
     }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) clearDirections()
+    }
     override fun onDestroy() {
+        clearDirections()
         ++generation
         worker.post { stopNative(); thread.quitSafely() }
         super.onDestroy()

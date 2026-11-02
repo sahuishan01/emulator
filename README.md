@@ -52,7 +52,9 @@ and SPIR-V. The [guest draw batch](docs/guest-draw-batch.md) connects SPH header
 fetch, B197 draw state, transactional rasterization and guest-command Vulkan replay.
 The supplied [0.17 G720 report](docs/validation/g720-shader-translation-batch.md) passes
 all78 previous checks. The [0.18 G720 report](docs/validation/g720-guest-draw-batch.md)
-passes all102. Broader shaders, general display services and commercial games remain open.
+passes all102. The [0.19 live G720 report](docs/validation/g720-live-homebrew.md)
+passes103 checks and records578 presented homebrew frames. Broader shaders, general
+display services and commercial games remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
 Eden/Lemon checkouts under `upstream/` are historical references, ignored by
@@ -62,8 +64,8 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 ## Play our original homebrew
 
 Install the development APK and tap **Play homebrew demo**. Drag to catch the
-falling green square with the red paddle; Left/Right, Pause/Resume and Reset are
-available. The emulated NRO performs the game logic and GPU submissions. This
+falling green square with the red paddle; hold Left/Right to keep moving, or
+use Pause/Resume and Reset. The emulated NRO performs the game logic and GPU submissions. This
 is a64x64 homebrew reference demo, with an emulator-owned input/display mailbox.
 Commercial games, full Horizon display/HID and practical console performance
 remain unsupported. See [the execution path and limits](docs/live-homebrew.md).
@@ -161,16 +163,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Android engine and GPU lab
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.19.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.19.1-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.19.0-dev/emulator-gpu-lab.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.19.0-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.19.1-dev/emulator-gpu-lab.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.19.1-dev/emulator-gpu-lab.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.19.0-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.19.1-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.
@@ -198,7 +200,7 @@ Output: `android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`.
 The APK includes arm64-v8a and x86_64 libraries. Install it, select **Run all checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. Schema4/workload19 separates fifteen guest checks (`engine`), three GPU-core
+devices. Schema4/workload20 separates fifteen guest checks (`engine`), three GPU-core
 cases (`gpuCore`), fifty NV scenarios (`nv`), nineteen shader cases (`shader`) and
 sixteen Vulkan cases (`gpu`). All103 run together, with one summary and export. See [the Android boundary](docs/android-engine.md)
 for its build, report schema and verification limits.
