@@ -1,4 +1,4 @@
-//! Original bounded B197 non-indexed triangle and shader input preparation.
+//! Original bounded B197 triangle and captured vertex/index input preparation.
 use crate::{
     clear::ColorRegisters, ColorClear, ExecutionError as E, GpuAddressSpace, GpuMemoryRange, GpuVa,
 };
@@ -12,11 +12,48 @@ pub struct Draw {
     pub surface: ColorClear,
     pub vertices: Vec<[u32; 4]>,
     pub varying_inputs: Vec<[u32; 4]>,
+    pub indices: Option<IndexBuffer>,
     pub texture: Option<crate::SampledTexture>,
     pub vertex: Program,
     pub fragment: Program,
     pub vertex_spirv: Vec<u32>,
     pub fragment_spirv: Vec<u32>,
+}
+/// Guest elements are decoded without the base vertex. Vulkan may widen byte
+/// elements to u16, but must retain their order and signed base vertex.
+#[derive(Clone, Debug)]
+pub struct IndexBuffer {
+    pub element_bytes: u32,
+    pub base_vertex: i32,
+    pub values: Vec<u32>,
+}
+impl IndexBuffer {
+    fn effective(&self) -> Result<Vec<usize>, E> {
+        let max = match self.element_bytes {
+            1 => 255,
+            2 => 65535,
+            4 => u32::MAX,
+            _ => return Err(invalid()),
+        };
+        if self.values.is_empty() || self.values.len() > 96 || self.values.len() % 3 != 0 {
+            return Err(invalid());
+        }
+        self.values
+            .iter()
+            .map(|v| {
+                let effective = i64::from(*v) + i64::from(self.base_vertex);
+                if *v > max || !(0..96).contains(&effective) {
+                    return Err(invalid());
+                }
+                Ok(effective as usize)
+            })
+            .collect()
+    }
+}
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Command {
+    word: u32,
+    element_bytes: u32,
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Registers {
@@ -35,6 +72,9 @@ pub(crate) struct Registers {
     scale: Option<u32>,
     mask: Option<u32>,
     targets: Option<u32>,
+    index_range: [Option<u32>; 4],
+    base_vertex: Option<u32>,
+    restart: Option<u32>,
 }
 fn required(v: Option<u32>) -> Result<u32, E> {
     v.ok_or(E::UninitializedRegister)
@@ -45,7 +85,7 @@ fn invalid() -> E {
 impl Registers {
     /// None means method belongs to the color engine. A returned draw command
     /// encodes topology/count/first in the public BEGIN_END_INSTANCE_FIRST word.
-    pub(crate) fn write(&mut self, offset: u32, data: u32) -> Result<Option<Option<u32>>, E> {
+    pub(crate) fn write(&mut self, offset: u32, data: u32) -> Result<Option<Option<Command>>, E> {
         match offset {
             0xa00..=0xa14 => self.viewport[((offset - 0xa00) / 4) as usize] = Some(data),
             0xc00..=0xc0c => self.clip[((offset - 0xc00) / 4) as usize] = Some(data),
@@ -75,7 +115,20 @@ impl Registers {
             0x192c => self.scale = Some(data),
             0x1a00 => self.mask = Some(data),
             0x121c => self.targets = Some(data),
-            0x1214 => return Ok(Some(Some(data))),
+            0x17c8..=0x17d4 => self.index_range[((offset - 0x17c8) / 4) as usize] = Some(data),
+            0x1434 => self.base_vertex = Some(data),
+            0xde8 => self.restart = Some(data),
+            0x1214 | 0x17e4 | 0x17e8 | 0x17ec => {
+                return Ok(Some(Some(Command {
+                    word: data,
+                    element_bytes: match offset {
+                        0x17e4 => 4,
+                        0x17e8 => 2,
+                        0x17ec => 1,
+                        _ => 0,
+                    },
+                })))
+            }
             _ => return Ok(None),
         }
         Ok(Some(None))
@@ -84,11 +137,11 @@ impl Registers {
         &self,
         space: &GpuAddressSpace,
         color: &ColorRegisters,
-        command: u32,
+        command: Command,
     ) -> Result<(Draw, Vec<GpuMemoryRange>), E> {
-        let count = ((command >> 16) & 0xfff) as usize;
-        let first = (command & 65535) as usize;
-        if command >> 28 != 4 || count == 0 || count > 96 || count % 3 != 0 {
+        let mut count = ((command.word >> 16) & 0xfff) as usize;
+        let mut first = (command.word & 65535) as usize;
+        if command.word >> 28 != 4 || count == 0 || count > 96 || count % 3 != 0 {
             return Err(invalid());
         }
         let mut surface = color.draw_target()?;
@@ -142,6 +195,51 @@ impl Registers {
             return Err(invalid());
         }
         let mut pins = vec![];
+        let indices = if command.element_bytes != 0 {
+            if required(self.restart)? != 0 {
+                return Err(invalid());
+            }
+            let base_vertex = required(self.base_vertex)? as i32;
+            let begin = address(
+                required(self.index_range[0])?,
+                required(self.index_range[1])?,
+            )?;
+            let limit = address(
+                required(self.index_range[2])?,
+                required(self.index_range[3])?,
+            )?;
+            let width = command.element_bytes as usize;
+            let start = begin
+                .checked_add((first * width) as u64)
+                .ok_or_else(invalid)?;
+            let end = start
+                .checked_add((count * width) as u64)
+                .ok_or_else(invalid)?;
+            if begin % width as u64 != 0 || end == 0 || end - 1 > limit {
+                return Err(invalid());
+            }
+            let raw = capture(space, GpuVa(start), count * width, &mut pins)?;
+            let indices = IndexBuffer {
+                element_bytes: command.element_bytes,
+                base_vertex,
+                values: raw
+                    .chunks_exact(width)
+                    .map(|v| {
+                        let mut word = [0; 4];
+                        word[..width].copy_from_slice(v);
+                        u32::from_le_bytes(word)
+                    })
+                    .collect(),
+            };
+            count = indices.effective()?.into_iter().max().ok_or_else(invalid)? + 1;
+            first = 0;
+            Some(indices)
+        } else {
+            if self.restart.is_some_and(|v| v != 0) {
+                return Err(invalid());
+            }
+            None
+        };
         let mut program = |slot: usize, stage: Stage| -> Result<Program, E> {
             let p = self.pipeline[slot];
             if required(p[0])? != (1 | ((slot as u32) << 4)) {
@@ -255,6 +353,7 @@ impl Registers {
             surface,
             vertices,
             varying_inputs,
+            indices,
             texture,
             vertex,
             fragment,
@@ -295,7 +394,24 @@ impl Draw {
         }
         let mut points = vec![];
         let mut attributes = vec![];
-        for (input, extra) in self.vertices.iter().zip(&self.varying_inputs) {
+        let order = if let Some(indices) = &self.indices {
+            indices.effective()?
+        } else {
+            if self.vertices.is_empty() || self.vertices.len() > 96 || self.vertices.len() % 3 != 0
+            {
+                return Err(invalid());
+            }
+            (0..self.vertices.len()).collect()
+        };
+        if order.iter().any(|i| *i >= self.vertices.len()) {
+            return Err(invalid());
+        }
+        for (i, (input, extra)) in self.vertices.iter().zip(&self.varying_inputs).enumerate() {
+            if !order.contains(&i) {
+                points.push([0; 2]);
+                attributes.push([0.; 4]);
+                continue;
+            }
             let invocation = self
                 .vertex
                 .invoke([*input, *extra], None)
@@ -341,9 +457,17 @@ impl Draw {
         } else {
             None
         };
-        for (triangle, varying) in points.chunks_exact(3).zip(attributes.chunks_exact(3)) {
-            let [a, mut b, mut c] = [triangle[0], triangle[1], triangle[2]];
-            let [av, mut bv, mut cv] = [varying[0], varying[1], varying[2]];
+        for triangle in order.chunks_exact(3) {
+            let [a, mut b, mut c] = [
+                points[triangle[0]],
+                points[triangle[1]],
+                points[triangle[2]],
+            ];
+            let [av, mut bv, mut cv] = [
+                attributes[triangle[0]],
+                attributes[triangle[1]],
+                attributes[triangle[2]],
+            ];
             let area = edge(a, b, c);
             if area == 0 {
                 continue;

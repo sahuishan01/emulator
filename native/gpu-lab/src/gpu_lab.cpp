@@ -1049,8 +1049,12 @@ TextureBinding texture_binding(Context& c,const TexturedDraw& d,VkDescriptorSetL
     auto write=structure<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);write.dstSet=set;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;write.pImageInfo=&image_info;
     vkUpdateDescriptorSets(c.device,1,&write,0,nullptr);return {image,upload,set};
 }
+const TexturedDraw& texture_source(const TexturedDraw& d){return d;}
+const TexturedDraw& texture_source(const IndexedDraw& d){return d.textured;}
+const GuestDrawOp& draw_source(const IndexedDraw& d){return d.textured.draw;}
 template<class Replay> bool render_guest_commands(Context& context,const Replay& replay,Image* rendered = nullptr) {
-    constexpr bool textured=std::is_same_v<Replay,TextureReplay>;
+    constexpr bool indexed=std::is_same_v<Replay,IndexedReplay>;
+    constexpr bool textured=std::is_same_v<Replay,TextureReplay> || indexed;
     const auto w=replay.background.width, h=replay.background.height;
     const auto bytes=static_cast<size_t>(w)*h*4;
     if(replay.abi_version!=1 || replay.status || replay.draw_count!=2 || replay.image_bytes!=bytes)
@@ -1117,31 +1121,48 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         VkPipeline handle{};const auto result=vkCreateGraphicsPipelines(context.device,VK_NULL_HANDLE,1,&info,nullptr,&handle);
         if(handle)context.pipelines.push_back(handle);check(result,"create translated shader pipeline");return handle;
     };
-    std::array<Buffer,3> vertex_buffers{};
+    std::array<Buffer,3> vertex_buffers{},index_buffers{};
     std::array<TextureBinding,3> textures{};
     std::array<VkPipeline,3> draw_pipelines{};
     for(uint32_t i=0;i<replay.draw_count;++i) {
         const auto& d=draw_source(replay.draws[i]);
         if(d.address_upper!=background.address_upper || d.address_lower!=background.address_lower || d.width!=w || d.height!=h
-            || d.pitch!=w*4 || d.format!=background.format || d.mask!=15 || d.vertex_count!=6
+            || d.pitch!=w*4 || d.format!=background.format || d.mask!=15 || (indexed ? (!d.vertex_count || d.vertex_count>6) : d.vertex_count!=6)
             || d.rect[0]>d.rect[2] || d.rect[1]>d.rect[3] || d.rect[2]>w || d.rect[3]>h)
             throw std::runtime_error("Guest draw operation ABI mismatch");
         if constexpr(textured) {
-            const auto& source=replay.draws[i];std::array<uint32_t,48> inputs{};
-            for(size_t v=0;v<6;++v) {std::copy_n(d.vertices+v*4,4,inputs.data()+v*8);std::copy_n(source.varyings+v*4,4,inputs.data()+v*8+4);}
+            const auto& source=texture_source(replay.draws[i]);std::array<uint32_t,48> inputs{};
+            for(size_t v=0;v<d.vertex_count;++v) {std::copy_n(d.vertices+v*4,4,inputs.data()+v*8);std::copy_n(source.varyings+v*4,4,inputs.data()+v*8+4);}
             vertex_buffers[i]=context.buffer(sizeof(inputs),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);context.write(vertex_buffers[i],inputs.data(),sizeof(inputs));
             textures[i]=texture_binding(context,source,sampler_layout);
         } else {
             vertex_buffers[i]=context.buffer(sizeof(d.vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
             context.write(vertex_buffers[i],d.vertices,sizeof(d.vertices));
         }
+        if constexpr(indexed) {
+            const auto& source=replay.draws[i];
+            if(!source.index_count || source.index_count>96 || source.index_count%3 || (source.element_bytes!=1 && source.element_bytes!=2 && source.element_bytes!=4))
+                throw std::runtime_error("Invalid captured index ABI");
+            std::array<uint16_t,96> narrow{};
+            for(size_t n=0;n<source.index_count;++n) {
+                const auto raw=source.indices[n];const auto effective=static_cast<int64_t>(raw)+source.base_vertex;
+                if(effective<0 || effective>=d.vertex_count || (source.element_bytes==1 && raw>255) || (source.element_bytes==2 && raw>65535))
+                    throw std::runtime_error("Index/base vertex exceeds captured input");
+                narrow[n]=static_cast<uint16_t>(raw);
+            }
+            const auto bytes=source.index_count*(source.element_bytes==4?4u:2u);
+            index_buffers[i]=context.buffer(bytes,VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            context.write(index_buffers[i],source.element_bytes==4?static_cast<const void*>(source.indices):static_cast<const void*>(narrow.data()),bytes);
+        }
         draw_pipelines[i]=pipeline(d);
     }
     const auto command=context.begin();
     for(uint32_t i=0;i<replay.draw_count;++i)
         buffer_barrier(command,vertex_buffers[i],VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+    if constexpr(indexed) for(uint32_t i=0;i<replay.draw_count;++i)
+        buffer_barrier(command,index_buffers[i],VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_INDEX_READ_BIT);
     if constexpr(textured) for(uint32_t i=0;i<replay.draw_count;++i){
-        const auto& t=textures[i];const auto& d=replay.draws[i];
+        const auto& t=textures[i];const auto& d=texture_source(replay.draws[i]);
         buffer_barrier(command,t.upload,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
         image_barrier(command,t.image.handle,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,0,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
         VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={d.texture_width,d.texture_height,1};
@@ -1159,7 +1180,11 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         const VkRect2D scissor{{static_cast<int32_t>(d.rect[0]),static_cast<int32_t>(d.rect[1])},{d.rect[2]-d.rect[0],d.rect[3]-d.rect[1]}};
         vkCmdSetScissor(command,0,1,&scissor);vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,draw_pipelines[i]);
         if constexpr(textured)vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&textures[i].set,0,nullptr);
-        vkCmdDraw(command,d.vertex_count,1,0,0);
+        if constexpr(indexed) {
+            const auto& source=replay.draws[i];
+            vkCmdBindIndexBuffer(command,index_buffers[i].handle,0,source.element_bytes==4?VK_INDEX_TYPE_UINT32:VK_INDEX_TYPE_UINT16);
+            vkCmdDrawIndexed(command,source.index_count,1,0,source.base_vertex,0);
+        } else vkCmdDraw(command,d.vertex_count,1,0,0);
     }
     vkCmdEndRenderPass(command);
     VkBufferImageCopy copy{};copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.imageExtent={w,h,1};
@@ -1352,14 +1377,15 @@ GpuReport run_gpu_checks() {
         tests.push_back({"owned-nv-scissor-draw-command-replay",guest_draw_command_replay(context,2),"Decoded guest scissor and vertex transforms preserve surrounding pixels across ordered draws"});
         tests.push_back({"live-homebrew-frames-input-and-completion",live_homebrew_check(),"111 interpreted homebrew frames; live Vulkan completion before guest publication; catches, misses, reset and resource release"});
         for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-sampled-texture-rgba","guest-sampled-texture-bgra","guest-sampled-texture-updated"}[i],render_guest_commands(context,emulator_texture_replay_v1(i)),"Guest SPH/IPA/TEX/TIC/TSC -> original SPIR-V and Vulkan; every byte matches independent sampling and raster oracles"});
+        for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-indexed-u8-portable-widening","guest-indexed-u16-negative-base","guest-indexed-u32-first-base-and-triangle"}[i],render_guest_commands(context,emulator_indexed_replay_v1(i)),"Captured guest index elements -> actual Vulkan indexed draws; first index, signed base, shared corners and every pixel match independent oracles"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 19 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 22 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":9,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":10,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1428,11 +1454,13 @@ std::string texture_scene_json(bool running,const std::string& error="") {
 std::string start_texture_scene(void* window,unsigned variant) {
     try {
         texture_scene.reset();texture_variant=variant;
-        if(variant>2)throw std::runtime_error("Unknown texture scene variant");
+        if(variant>5)throw std::runtime_error("Unknown texture scene variant");
         texture_scene=std::make_unique<LiveRenderer>();texture_scene->initialize(window);
-        const auto replay=emulator_texture_replay_v1(variant);
-        if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
-        if(texture_scene->render(replay))throw std::runtime_error(texture_scene->error);
+        const auto render=[&](const auto& replay) {
+            if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
+            if(texture_scene->render(replay))throw std::runtime_error(texture_scene->error);
+        };
+        if(variant<3)render(emulator_texture_replay_v1(variant));else render(emulator_indexed_replay_v1(variant-3));
         return texture_scene_json(true);
     }catch(const std::exception& e){const auto result=texture_scene_json(false,e.what());texture_scene.reset();return result;}
 }

@@ -431,6 +431,7 @@ impl PreparedBatch {
         let s = draw.surface;
         let bytes = pixels.iter().filter(|p| p.is_some()).count() * 4;
         let snapshots = pins.iter().map(GpuMemoryRange::len).sum::<usize>()
+            + draw.indices.as_ref().map_or(0, |i| i.values.len() * 4)
             + (draw.vertex_spirv.len() + draw.fragment_spirv.len()) * 4;
         if self.stats.copy_launches + self.stats.clear_launches + self.stats.draw_launches
             >= limits.launches

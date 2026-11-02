@@ -254,7 +254,10 @@ pub fn report() -> String {
         };
         tests.push(format!("{{\"name\":{},\"passed\":{},\"capturedSubmissions\":{},\"decodedWrites\":{},\"residentBytesAfterRelease\":{},\"copyLaunches\":{},\"copiedBytes\":{},\"error\":{}}}",super::quote(name),passed,captures,writes,resident,launches,copied,super::quote(&error)));
     }
-    for case in super::textures::cases() {
+    for case in super::textures::cases()
+        .into_iter()
+        .chain(super::indexed::cases())
+    {
         all &= case.passed;
         tests.push(format!(
             "{{\"name\":{},\"passed\":{},\"verifiedItems\":{},\"error\":{}}}",
@@ -264,5 +267,5 @@ pub fn report() -> String {
             super::quote(&case.error)
         ));
     }
-    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":3,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
+    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":4,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
 }

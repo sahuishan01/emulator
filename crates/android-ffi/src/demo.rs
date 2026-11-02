@@ -71,6 +71,7 @@ impl GraphicsBackend for Callback {
             let s = draw.surface;
             if draw.vertices.len() != 6
                 || draw.texture.is_some()
+                || draw.indices.is_some()
                 || draw.vertex.varying_outputs().is_some()
                 || draw.vertex_spirv.len() > 2048
                 || draw.fragment_spirv.len() > 2048

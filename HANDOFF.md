@@ -13,7 +13,39 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.21.1-dev
+## Current implementation: 0.22.0-dev indexed geometry
+
+Supplied _21_ physical report:0.21.1/schema4/workload23/native9, RMX5061/MT6989,
+Android16/API36/Mali-G720 Immortalis MC12;121/121 checks pass. Four Rust groups
+match host records exactly except architecture. Scene variant2 has one verified
+completed/presented frame, eight frame allocations and an empty error. Validation
+layer disabled. SHA25693aa554dd7879837d794219ffa3d6e2dd9e79b3cd3daac3260a4534aac7d6241.
+
+Next connected batch adds original B197 packed index8/16/32 draw methods,
+captured elements, first-index slicing, signed base vertex, bounds/restart checks,
+shared-vertex rasterization and actual Vulkan vkCmdDrawIndexed. u8 widens to u16
+for portability; no optional index extension. New owned nv-indexed.NRO shares
+our own NV harness; old NROs remain byte-identical. New separate value export
+emulator_indexed_replay_v1; old17 layouts/exports stable,18total. IndexedDraw33424,
+IndexedReplay101116/align4/draws76/pixels100348/error100860. Index pin/raw/decoded
+captures join feedback, ownership, effect/span budgets and rollback.
+
+Texture scene now offers six patterns, including a visibly half-quad indexed
+triangle. App0.22.0-dev/code24/schema4/workload24/native10,134 passing checks:
+engine17/NV50/core20/shader25/Vulkan22. New physical report pending. See
+[exact profile](docs/indexed-geometry-batch.md). All200 Rust tests/30 LLVM fixtures/fmt/Clippy pass. Fresh desktop Vulkan22 passes
+with validation enabled/zero errors; previous121 diagnostic records unchanged.
+Pinned two-ABI assembly/lint/signature/18exports/16KiB/main-app checks pass. APK
+SHA2561f87a4c3089cf4d09f6bcea29eaa3450243c01332a3062244b470d2a859c5eb6,
+10,547,704bytes. Actual0.21.1->0.22 upgrade preserves all4 catalog rows/oldreport.
+19app/17Catch/14scene UI checks pass, including1280 displayed sample points,
+six patterns and indexed-triangle lifecycle. Full134 diagnostics/four exact Rust
+host comparisons/real export/cold restore/all3 cache backup recoveries pass.
+Screenshots inspected, empty crash buffers/no app fatal/ANR or SystemUIexception.
+Owned AVD stopped/process awaited. Evidence:docs/validation/android-indexed-batch.md.
+New indexed physical checkpoint remains pending; commercial games unsupported.
+
+## Previous implementation: 0.21.1-dev
 
 Patch correction: SPH Type1 generic0 OMAP begins at bit432 (word13 upper half),
 Position at428; combined word13=000ff000, word14=0. Independent table-width bit
@@ -24,7 +56,8 @@ unchanged for provenance. Deliver onlyv0.21.1-dev, never the withdrawn0.21.0 APK
 Corrected same-APK47UI/121batch checks pass, including exact exports/cold restore/
 all3 AtomicFile recoveries. Screenshots inspected, empty crash buffers and no
 app fatal/ANR; owned AVD stopped and process awaited. Source/data/API layouts
-remain bounded; physical Mali checkpoint is still pending.
+remain bounded. The supplied _21_ report now confirms the physical Mali checkpoint;
+see docs/validation/g720-texture-batch.md.
 
 Guest texture/varying batch: original vertex generic0/1 ALD, generic0 AST,
 fragment IPA.PASS screen-linear input and constant-handle TEX.B.LZ 2D RGBA sampling.
@@ -69,7 +102,9 @@ patterns/rapid input/rotation/background/repeated surfaces. Full121 diagnostics,
 exact host comparisons/export/cold restore/all3 AtomicFile backup recoveries
 pass. Screenshots inspected; empty final crash buffers; owned AVD stopped/awaited.
 See docs/validation/android-texture-batch.md for evidence and cache provenance.
-New code/UI still needs target-phone use; no new physical report supplied.
+The supplied _21_ report confirms all121 checks and updated-pattern presentation
+on physical G720, with the validation layer disabled. Import/UI lifecycle coverage
+is still software-AVD evidence, not independently observed phone interaction.
 
 ## Main application foundation (0.20 historical checkpoint)
 

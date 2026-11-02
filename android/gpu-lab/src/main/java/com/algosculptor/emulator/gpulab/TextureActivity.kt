@@ -24,6 +24,7 @@ class TextureActivity : Activity(), TextureView.SurfaceTextureListener {
     @Volatile private var generation = 0
     private var resumed = false
     private var variant = 0
+    private val patterns = arrayOf("Texture", "BGRA texture", "Updated texture", "Indexed byte quad", "Indexed short quad", "Indexed triangle")
     private var recorded = false
     private val store get() = (application as EmulatorApplication).library
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,7 +37,7 @@ class TextureActivity : Activity(), TextureView.SurfaceTextureListener {
         view = TextureView(this).apply { surfaceTextureListener = this@TextureActivity; contentDescription = "Textured guest scene" }
         root.addView(view, LinearLayout.LayoutParams(-1, 0, 1f)); ui.space(root, 12)
         status = ui.text("Opening scene…", 15f, ui.muted); root.addView(status)
-        root.addView(ui.button("Next pattern") { variant = (variant + 1) % 3; if (resumed && view.isAvailable) view.surfaceTexture?.let { start(it) } })
+        root.addView(ui.button("Next pattern") { variant = (variant + 1) % patterns.size; if (resumed && view.isAvailable) view.surfaceTexture?.let { start(it) } })
         root.addView(ui.button("Back to library") { finish() }); ui.install(root)
     }
     private fun persist(value: JSONObject) {
@@ -59,7 +60,7 @@ class TextureActivity : Activity(), TextureView.SurfaceTextureListener {
             persist(result)
             runOnUiThread { if (current == generation && resumed && !isDestroyed) {
                 val error = result.optString("error")
-                status.text = if (error.isNotEmpty()) "Rendering stopped: $error" else "Pattern ${pattern + 1} of 3 · Ready" + if (AppSettings.showStats(this)) "\n${result.optString("deviceName")} · Presented ${result.optLong("presentedFrames")}" else ""
+                status.text = if (error.isNotEmpty()) "Rendering stopped: $error" else "${patterns[pattern]} · ${pattern + 1} of ${patterns.size} · Ready" + if (AppSettings.showStats(this)) "\n${result.optString("deviceName")} · Presented ${result.optLong("presentedFrames")}" else ""
                 if (error.isEmpty() && result.optLong("presentedFrames") > 0 && !recorded) { recorded = true; store.recordLaunch("builtin:textures"); store.recordResult("builtin:textures", "Texture scene verified") }
             } }
         }

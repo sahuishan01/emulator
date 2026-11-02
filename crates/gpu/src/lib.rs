@@ -6,7 +6,7 @@ use std::fmt;
 mod address_space;
 mod clear;
 mod draw;
-pub use draw::Draw;
+pub use draw::{Draw, IndexBuffer};
 mod sampled_texture;
 pub use sampled_texture::SampledTexture;
 mod graphics;

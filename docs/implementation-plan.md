@@ -17,7 +17,7 @@ Current foundation: twelve original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
 virtual timeouts/cancellation and CLI/Android execution. Seventeen owned NROs exercise
-the implemented behavior. All196 Rust tests and29 independent
+the implemented behavior. All200 Rust tests and30 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
@@ -64,6 +64,13 @@ vertex-to-fragment coordinates, checked texture/sampler descriptors, reference
 raster pixels and Vulkan replay/presentation. The library includes a texture scene.
 The combined corpus is121 checks; the previous103 records remain unchanged.
 This is a bounded nearest/RGBA8/pitch-linear/w1 profile, not general game graphics.
+
+The [0.22 indexed batch](indexed-geometry-batch.md) extends that path with real
+byte/u16/u32 index buffers, signed base vertices and first-index slicing. It adds
+one owned NRO, nine portable groups and three Vulkan replays, for 134 checks.
+The 0.21.1 physical report confirms the prior 121 texture tests/presentation;
+new indexed target-phone evidence is pending. Guest depth/clipping/perspective,
+general graphics services and commercial games remain separate open gates.
 
 ## Milestones and dependency gates
 

@@ -75,6 +75,22 @@ struct TextureReplay {
 static_assert(sizeof(TexturedDraw)==33028 && alignof(TexturedDraw)==4 && offsetof(TexturedDraw,varyings)==16536 && offsetof(TexturedDraw,texture)==16644);
 static_assert(sizeof(TextureReplay)==99928 && alignof(TextureReplay)==4 && offsetof(TextureReplay,draws)==76 && offsetof(TextureReplay,pixels)==99160 && offsetof(TextureReplay,error)==99672);
 extern "C" TextureReplay emulator_texture_replay_v1(std::uint32_t index);
+struct IndexedDraw {
+    TexturedDraw textured;
+    std::uint32_t index_count,element_bytes;
+    std::int32_t base_vertex;
+    std::uint32_t indices[96];
+};
+struct IndexedReplay {
+    std::uint32_t abi_version,status,draw_count,image_bytes;
+    ClearOp background;
+    IndexedDraw draws[3];
+    std::uint8_t pixels[512];
+    char error[256];
+};
+static_assert(sizeof(IndexedDraw)==33424 && alignof(IndexedDraw)==4 && offsetof(IndexedDraw,indices)==33040);
+static_assert(sizeof(IndexedReplay)==101116 && alignof(IndexedReplay)==4 && offsetof(IndexedReplay,draws)==76 && offsetof(IndexedReplay,pixels)==100348 && offsetof(IndexedReplay,error)==100860);
+extern "C" IndexedReplay emulator_indexed_replay_v1(std::uint32_t index);
 
 struct LiveDraw {
     std::uint32_t abi_version,status,draw_count,image_bytes;

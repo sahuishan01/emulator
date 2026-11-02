@@ -96,13 +96,13 @@ pub(crate) fn verify_guest(s: &Session) -> Result<(), String> {
     }
     Ok(())
 }
-fn wire(offset: u32, words: u32) -> Vec<u8> {
+pub(crate) fn wire(offset: u32, words: u32) -> Vec<u8> {
     [offset, 1 | (words << 10)]
         .into_iter()
         .flat_map(u32::to_le_bytes)
         .collect()
 }
-fn setup(page: Vec<u8>) -> Result<(AddressSpace, GpuAddressSpace), String> {
+pub(crate) fn setup(page: Vec<u8>) -> Result<(AddressSpace, GpuAddressSpace), String> {
     let mut mem = AddressSpace::default();
     mem.map(0x1000, page, Permissions::READ_WRITE)
         .map_err(|e| e.to_string())?;
@@ -165,40 +165,10 @@ fn fill(index: u32, out: &mut TextureReplay) -> Result<(), String> {
     }
     out.background = work.color_clears()[0].into();
     for (out, source) in out.draws.iter_mut().zip(work.draws()) {
-        let t = source.texture.as_ref().ok_or("Missing sampled texture")?;
-        if source.vertices.len() != 6
-            || source.varying_inputs.len() != 6
-            || t.pixels.len() > 16384
-            || source.vertex_spirv.len() > 2048
-            || source.fragment_spirv.len() > 2048
-        {
-            return Err("Texture ABI bounds".into());
+        if source.indices.is_some() {
+            return Err("Texture ABI cannot carry indices".into());
         }
-        let s = source.surface;
-        let d = &mut out.draw;
-        d.address_upper = (s.address.0 >> 32) as u32;
-        d.address_lower = s.address.0 as u32;
-        d.width = s.width;
-        d.height = s.height;
-        d.pitch = s.pitch;
-        d.format = s.format;
-        d.rect = s.rect;
-        d.mask = s.mask;
-        d.vertex_count = 6;
-        d.vertex_words = source.vertex_spirv.len() as u32;
-        d.fragment_words = source.fragment_spirv.len() as u32;
-        d.vertex[..source.vertex_spirv.len()].copy_from_slice(&source.vertex_spirv);
-        d.fragment[..source.fragment_spirv.len()].copy_from_slice(&source.fragment_spirv);
-        for (v, input) in d.vertices.chunks_exact_mut(4).zip(&source.vertices) {
-            v.copy_from_slice(input);
-        }
-        for (v, input) in out.varyings.chunks_exact_mut(4).zip(&source.varying_inputs) {
-            v.copy_from_slice(input);
-        }
-        out.texture_width = t.width;
-        out.texture_height = t.height;
-        out.texture_bytes = t.pixels.len() as u32;
-        out.texture[..t.pixels.len()].copy_from_slice(&t.pixels);
+        *out = attributes(source)?;
     }
     let stats = work.commit().1;
     if stats.draw_launches != 2 || stats.clear_launches != 1 || stats.drawn_bytes != 640 {
@@ -215,23 +185,64 @@ fn fill(index: u32, out: &mut TextureReplay) -> Result<(), String> {
     out.image_bytes = 512;
     Ok(())
 }
+/// Captured shader/vertex/texture fields shared by the separate indexed ABI.
+pub(crate) fn attributes(source: &emulator_gpu::Draw) -> Result<TexturedDraw, String> {
+    let mut value = TexturedDraw::default();
+    let out = &mut value;
+    let t = source.texture.as_ref().ok_or("Missing sampled texture")?;
+    if source.vertices.is_empty()
+        || source.vertices.len() > 6
+        || source.varying_inputs.len() != source.vertices.len()
+        || t.pixels.len() > 16384
+        || source.vertex_spirv.len() > 2048
+        || source.fragment_spirv.len() > 2048
+    {
+        return Err("Texture ABI bounds".into());
+    }
+    let s = source.surface;
+    let d = &mut out.draw;
+    d.address_upper = (s.address.0 >> 32) as u32;
+    d.address_lower = s.address.0 as u32;
+    d.width = s.width;
+    d.height = s.height;
+    d.pitch = s.pitch;
+    d.format = s.format;
+    d.rect = s.rect;
+    d.mask = s.mask;
+    d.vertex_count = source.vertices.len() as u32;
+    d.vertex_words = source.vertex_spirv.len() as u32;
+    d.fragment_words = source.fragment_spirv.len() as u32;
+    d.vertex[..source.vertex_spirv.len()].copy_from_slice(&source.vertex_spirv);
+    d.fragment[..source.fragment_spirv.len()].copy_from_slice(&source.fragment_spirv);
+    for (v, input) in d.vertices.chunks_exact_mut(4).zip(&source.vertices) {
+        v.copy_from_slice(input);
+    }
+    for (v, input) in out.varyings.chunks_exact_mut(4).zip(&source.varying_inputs) {
+        v.copy_from_slice(input);
+    }
+    out.texture_width = t.width;
+    out.texture_height = t.height;
+    out.texture_bytes = t.pixels.len() as u32;
+    out.texture[..t.pixels.len()].copy_from_slice(&t.pixels);
+    Ok(value)
+}
 pub(crate) struct TextureCase {
     pub name: &'static str,
     pub passed: bool,
     pub checks: usize,
     pub error: String,
 }
-fn check(ok: bool) -> Result<(), String> {
+pub(crate) fn check(ok: bool) -> Result<(), String> {
     if ok {
         Ok(())
     } else {
         Err("Texture core oracle mismatch".into())
     }
 }
-fn word(page: &mut [u8], at: usize, value: u32) {
+pub(crate) fn word(page: &mut [u8], at: usize, value: u32) {
     page[at..at + 4].copy_from_slice(&value.to_le_bytes());
 }
-fn pixels(memory: &AddressSpace) -> Result<[u8; 512], String> {
+pub(crate) fn pixels(memory: &AddressSpace) -> Result<[u8; 512], String> {
     let mut p = [0; 512];
     memory.read(0x1800, &mut p).map_err(|e| e.to_string())?;
     Ok(p)

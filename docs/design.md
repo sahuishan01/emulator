@@ -41,6 +41,15 @@ rows now carry actual interpolated fragment results. Captured descriptor/texture
 inputs participate in feedback/alias rejection and retained backing ownership.
 Fresh allocation and general guest graphics remain open.
 
+The [indexed geometry profile](indexed-geometry-batch.md) captures the selected
+element slice before fetching a bounded dense vertex window. Base addition uses
+checked i64 arithmetic and rejects effective indices outside 0..96. The scalar
+raster consumes element order, including repeated/degenerate triangles and both
+windings. Index pins and decoded elements join snapshot/span/effect budgets and
+whole-batch backing feedback validation. The separate value ABI preserves raw
+elements and signed base; the Vulkan adapter binds index buffers and widens u8
+to u16. Old value adapters reject indexed state rather than dropping it.
+
 ## 1. Process, addresses and memory
 
 Use distinct `GuestVa`, `GpuVa`, `BackingId`, `ProcessId`, `ThreadId` and

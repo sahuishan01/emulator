@@ -1,10 +1,15 @@
 // Original static NRO0 fixture. All labels are resolved by LLVM, not our decoder.
 .text
+.ifdef INDEXED_FIXTURE
+.include "examples/gpu/indexed-profile.inc"
+.equ MESSAGE_LENGTH, 62
+.else
 .ifdef TEXTURED_FIXTURE
 .include "examples/gpu/texture-profile.inc"
 .equ MESSAGE_LENGTH, 68
 .else
 .equ MESSAGE_LENGTH, 69
+.endif
 .endif
 .global _start
 _start:
@@ -296,10 +301,14 @@ gpu_path:
 ctrl_path:
     .ascii "/dev/nvhost-ctrl"
 message:
+.ifdef INDEXED_FIXTURE
+    .ascii "Guest indices passed: shared vertices, rollback and lifetime.\n"
+.else
 .ifdef TEXTURED_FIXTURE
     .ascii "Guest textures passed: coordinates, samples, rollback and lifetime.\n"
 .else
     .ascii "Guest draws passed: headers, shaders, pixels, rollback and lifetime.\n"
+.endif
 .endif
 message_end:
     .if (message_end-message) != MESSAGE_LENGTH
@@ -462,10 +471,14 @@ result_storage:
     .quad 0
     .balign 4096
 imported_source:
+.ifdef INDEXED_FIXTURE
+    .incbin "examples/gpu/indexed-u8-page.bin"
+.else
 .ifdef TEXTURED_FIXTURE
     .incbin "examples/gpu/texture-rgba-page.bin"
 .else
     .incbin "examples/gpu/draw-rgba-page.bin"
+.endif
 .endif
     .balign 4096
 image_end:

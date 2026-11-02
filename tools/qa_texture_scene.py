@@ -49,9 +49,9 @@ def main():
   palette=[(255,0,0,255),(255,255,0,255),(0,255,0,255),(0,255,255,255)]
   for py in range(8):
    for px in range(16):
-    center=4<=px<12 and 2<=py<6
+    center=4<=px<12 and 2<=py<6 and (variant!=5 or px+2*py<=14)
     sx,sy=((6*px-29)//8,(6*py-13)//4) if center else ((6*px-13)//16,(6*py-5)//8)
-    expected=palette[(min(3,max(0,sx))+min(3,max(0,sy))+(variant==2))%4]
+    expected=palette[(min(3,max(0,sx))+min(3,max(0,sy))+(variant in (2,5)))%4]
     xx=left+(2*px+1)*dw//32;yy=top+(2*py+1)*dh//16;at=header+(yy*width+xx)*4
     assert tuple(raw[at:at+4])==expected,(phase,px,py,tuple(raw[at:at+4]),expected)
   (out/f'{phase}.png').write_bytes(call('exec-out','screencap','-p'))
@@ -59,15 +59,17 @@ def main():
  try:
   call('install','-r',str(a.apk),timeout=60);call('shell','am','force-stop',pkg);call('logcat','-c')
   open_scene('initial');q=wait(0,True,0,'rgba-ready');pixels(0,'rgba-display')
-  for variant in [1,2,0]:
+  for variant in [1,2,3,4,5,0]:
    previous=q['capturedAtEpochMs'];tap('Next pattern','next-'+str(variant));q=wait(variant,True,previous,'variant-'+str(variant));pixels(variant,'display-'+str(variant))
   n=button('Next pattern','rapid-patterns');baseline=q['capturedAtEpochMs']
-  for _ in range(3):tapnode(n)
+  for _ in range(6):tapnode(n)
   q=wait(0,True,baseline,'rapid-pattern-final');pixels(0,'rapid-display')
+  for variant in [1,2,3,4,5]:
+   baseline=q['capturedAtEpochMs'];tap('Next pattern','indexed-lifecycle-'+str(variant));q=wait(variant,True,baseline,'indexed-lifecycle-ready-'+str(variant))
   baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','accelerometer_rotation','0');call('shell','settings','put','system','user_rotation','1')
-  q=wait(0,True,baseline,'landscape-recreated');pixels(0,'landscape-display')
-  baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','user_rotation','0');q=wait(0,True,baseline,'portrait-recreated')
-  baseline=q['capturedAtEpochMs'];call('shell','input','keyevent','3');stopped=wait(0,False,baseline,'background-closed')
+  q=wait(5,True,baseline,'landscape-recreated');pixels(5,'landscape-display')
+  baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','user_rotation','0');q=wait(5,True,baseline,'portrait-recreated')
+  baseline=q['capturedAtEpochMs'];call('shell','input','keyevent','3');stopped=wait(5,False,baseline,'background-closed')
   time.sleep(.8);assert report()['completedFrames']==stopped['completedFrames']
   open_scene('foreground');q=wait(0,True,stopped['capturedAtEpochMs'],'foreground-reopened');pixels(0,'foreground-display')
   for i in range(2):
@@ -75,7 +77,7 @@ def main():
   tap('Back to library','final-back');wait(0,False,q['capturedAtEpochMs'],'final-closed')
   assert not call('logcat','-b','crash','-d').strip()
   assert not re.search(rb'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab',call('logcat','-d'))
-  result={'passed':True,'checks':['library scene launch','real RGBA sampled pixels','BGRA rendering preserves displayed colors','changed source texture pixels','pattern wrap','rapid input coalescing','landscape surface recreation','portrait surface recreation','background teardown','foreground reopen','repeated native/surface teardown'],'displaySamplesPerCapture':128,'notes':notes}
+  result={'passed':True,'checks':['library scene launch','real RGBA sampled pixels','BGRA rendering preserves displayed colors','changed source texture pixels','byte indexed quad pixels','short indexed negative-base pixels','u32 indexed triangle coverage','pattern wrap','rapid input coalescing','landscape surface recreation','portrait surface recreation','background teardown','foreground reopen','repeated native/surface teardown'],'displaySamplesPerCapture':128,'notes':notes}
   (out/'verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
  finally:
   try:call('shell','settings','put','system','user_rotation','0');call('shell','settings','put','system','accelerometer_rotation','1')
