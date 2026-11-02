@@ -9,6 +9,7 @@ publish.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+emulator-loader = { path = "../loader" }
 emulator-shader = { path = "../shader" }
 emulator-session = { path = "../session" }
 emulator-memory = { path = "../memory" }

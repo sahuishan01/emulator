@@ -42,7 +42,7 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
         override fun run() {
             if (!resumed || paused || heldDirections.isEmpty()) return
             moveDirection(heldDirections.values.sum().coerceIn(-1, 1))
-            inputHandler.postDelayed(this, 80)
+            inputHandler.postDelayed(this, AppSettings.repeatMs(this@DemoActivity))
         }
     }
 
@@ -116,7 +116,8 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         thread.start(); worker = Handler(thread.looper)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (AppSettings.keepAwake(this)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val playerMode = intent.getBooleanExtra("playerMode", false)
         val pad = (16 * resources.displayMetrics.density).toInt()
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -127,7 +128,7 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
                 insets
             }
         }
-        layout.addView(TextView(this).apply { text = "Catch · Original homebrew"; textSize = 23f })
+        layout.addView(TextView(this).apply { text = if (playerMode) "Catch" else "Catch · Original homebrew"; textSize = 23f })
         layout.addView(TextView(this).apply {
             text = "Drag to move the red paddle. Catch the falling green square."
             textSize = 15f; setPadding(0, pad / 2, 0, pad / 2)
@@ -173,9 +174,24 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
         controls.addView(pause, LinearLayout.LayoutParams(0, -2, 1f))
         control("Reset") { reset.set(true) }
         layout.addView(controls)
-        layout.addView(TextView(this).apply { text = "Runs our own emulated program. Commercial games are not supported."; textSize = 12f; setTextColor(Color.DKGRAY) })
-        layout.addView(Button(this).apply { text = "Back to checks"; setOnClickListener { finish() } })
-        setContentView(layout)
+        if (!playerMode) layout.addView(TextView(this).apply { text = "Runs our own emulated program. Commercial games are not supported."; textSize = 12f; setTextColor(Color.DKGRAY) })
+        layout.addView(Button(this).apply { text = if (playerMode) "Back to library" else "Back to checks"; setOnClickListener { finish() } })
+        if (playerMode) {
+            val ui = AppUi(this)
+            fun style(parent: android.view.ViewGroup) {
+                for (i in 0 until parent.childCount) {
+                    val child = parent.getChildAt(i)
+                    if (child is TextView) child.setTextColor(ui.ink)
+                    if (child is Button) {
+                        child.isAllCaps = false
+                        child.setTextColor(ui.accent)
+                        child.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(228, 235, 227))
+                    }
+                    if (child is android.view.ViewGroup) style(child)
+                }
+            }
+            style(layout); ui.install(layout)
+        } else setContentView(layout)
         view.requestFocus()
         window.insetsController?.setSystemBarsAppearance(
             WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
@@ -192,7 +208,8 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
             val initial = try { JSONObject(String(startDemo(surface), Charsets.UTF_8)) }
                 catch (e: Exception) { JSONObject().put("running", false).put("error", e.message) }
             finally { surface.release() }
-            if (!initial.optBoolean("running")) { show(current, initial); return@post }
+            if (!initial.optBoolean("running")) { persist(initial); show(current, initial); return@post }
+            var recordedLaunch = false
             var lastSave = 0L
             var lastShow = 0L
             var lastResult = initial
@@ -210,6 +227,10 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
                         wasPaused = false
                         val result = try { JSONObject(String(stepDemo(paddle, reset.getAndSet(false)), Charsets.UTF_8)) }
                             catch (e: Exception) { JSONObject().put("running", false).put("error", e.message) }
+                        if (!recordedLaunch && result.optBoolean("running") && result.optLong("completedFrames") > 0) {
+                            recordedLaunch = true
+                            (application as EmulatorApplication).library.recordLaunch(intent.getStringExtra("entryId") ?: "builtin:catch")
+                        }
                         result.put("paused", false)
                         lastResult = result
                         if (System.currentTimeMillis() - lastSave > 500 || !result.optBoolean("running")) {
@@ -232,18 +253,19 @@ class DemoActivity : Activity(), TextureView.SurfaceTextureListener {
         runOnUiThread {
             if (current == generation && !isDestroyed) {
                 stats.text = if (result.optString("error").isNotEmpty()) "Rendering stopped: ${result.optString("error")}"
-                    else "Score ${result.optInt("score")}   Misses ${result.optInt("misses")}\nFrame ${result.optInt("frame")} · Presented ${result.optLong("presentedFrames")}\n${result.optString("deviceName")}"
+                    else {
+                        val score = "Score ${result.optInt("score")}   Misses ${result.optInt("misses")}"
+                        if (!intent.getBooleanExtra("playerMode", false) || AppSettings.showStats(this))
+                            "$score\nFrame ${result.optInt("frame")} · Presented ${result.optLong("presentedFrames")}\n${result.optString("deviceName")}"
+                        else score
+                    }
             }
         }
     }
     private fun persist(result: JSONObject) {
         result.put("appVersion", packageManager.getPackageInfo(packageName, 0).versionName)
         result.put("capturedAtEpochMs", System.currentTimeMillis())
-        try {
-            val temporary = filesDir.resolve("last-demo-report.tmp")
-            temporary.writeText(result.toString(2))
-            check(temporary.renameTo(filesDir.resolve("last-demo-report.json")))
-        } catch (_: Exception) { }
+        try { ReportStore.write(this, "last-demo-report.json", result.toString(2)) } catch (_: Exception) { }
     }
     private fun stopNative() {
         val result = JSONObject(String(stopDemo(), Charsets.UTF_8))

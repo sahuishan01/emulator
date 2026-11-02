@@ -1,12 +1,13 @@
 # Original Vulkan GPU laboratory
 
 This is original host-side diagnostic code shared between a desktop CLI and
-the Android GPU Lab application. The linked original Rust engine now decodes a narrow owned Tegra color-clear
-corpus for offscreen replay. Guest shaders and Switch games remain unsupported. The C++ implementation uses the NDK/system
+the Android app's support diagnostics. The linked original Rust engine decodes narrow
+owned Tegra clear/draw commands and shaders, with a synchronous live Catch path.
+General guest shaders and commercial Switch games remain unsupported. The C++ implementation uses the NDK/system
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-Nine bounded offscreen workloads (workload version 4):
+Sixteen bounded workloads (native workload version 7). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -34,7 +35,9 @@ Nine bounded offscreen workloads (workload version 4):
 See [the full clear/replay contract](../../docs/color-clear-batch.md). Fixed host
 shaders lower color clears. Three additional workloads consume our original
 SM53 translator output: full RGBA draw, transformed red BGRA draw and ordered
-green/red pipeline changes. Guest draw command/display integration remains open.
+green/red pipeline changes. Cases 13–15 replay decoded guest draws. Case 16 runs
+111 live Catch guest frames without a window, including score/miss/reset.
+General guest display integration remains open.
 See [the supported shader subset](../../docs/shader-translation-batch.md).
 
 The report includes device/driver/API identity, software-renderer status,
@@ -98,17 +101,17 @@ cd android
 ```
 
 The APK is `android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`. It has a
-separate package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
+retained package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
 x86_64 native libraries. It uses the system driver and requires no network or
-storage permissions. Run checks, then use Export report to select a JSON
+storage permissions. Open Settings → Diagnostics, run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
-Version0.18.0-dev uses schema4/workload18: engine15, nv50, gpuCore3, shader19
-and gpu15 Vulkan cases. All five groups must pass (102 total). New native cases
+Version0.20.0-dev uses schema4/workload21: engine15, nv50, gpuCore3, shader19
+and gpu16 Vulkan cases. All five groups must pass (103 total). Native cases
 consume SPIR-V emitted by our original SM53 translator: full RGBA output,
 transformed BGRA geometry and ordered draws with two different fragment shaders.
 The three new guest-command replays derive shaders, vertices, target and scissor
 from actual B197 commands and SPH headers, including an interpreted NRO.
-Live renderer/presentation remains open. See [the draw contract](../../docs/guest-draw-batch.md).
+See [the draw contract](../../docs/guest-draw-batch.md) and [the live profile](../../docs/live-homebrew.md).
 See [the exact subset](../../docs/shader-translation-batch.md). EngineReport ABI2
 is retained; fixed clear and shader value ABIs have checked Rust/C++ offsets.
 The last completed report is retained across activity recreation.
@@ -119,7 +122,7 @@ Verify signatures, native architectures, ELF load alignment and native ZIP
 payload alignment with:
 
 ```sh
-python3 tools/verify_gpu_apk.py android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk
+python3 tools/verify_gpu_apk.py android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk --main-app
 ```
 
 The native workload currently executes within the app process. Its fence wait
@@ -135,3 +138,6 @@ per-image present synchronization and touch controls are implemented. The normal
 batch has16 Vulkan cases/103 total; the new111-frame test runs without a window.
 Visible display/control/lifecycle QA is separate. See [the exact contract](../../docs/live-homebrew.md).
 The previous replay tests remain unchanged; general display queues and games are open.
+
+The 0.20 launcher is a library rather than the diagnostics screen. Its import,
+text execution, settings and lifecycle contracts are in [android-app.md](../../docs/android-app.md).

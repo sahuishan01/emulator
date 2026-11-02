@@ -75,3 +75,12 @@ static_assert(sizeof(DemoStatus)==296 && alignof(DemoStatus)==4 && offsetof(Demo
 extern "C" DemoStatus emulator_demo_start_v1(std::uint32_t (*callback)(LiveDraw));
 extern "C" DemoStatus emulator_demo_step_v1(std::uint32_t x,std::uint32_t reset);
 extern "C" DemoStatus emulator_demo_stop_v1();
+
+struct ProgramChunk { std::uint32_t length; std::uint8_t bytes[4096]; };
+static_assert(sizeof(ProgramChunk)==4100 && alignof(ProgramChunk)==4 && offsetof(ProgramChunk,bytes)==4);
+extern "C" std::uint32_t emulator_program_begin_v1(std::uint32_t bytes);
+extern "C" std::uint32_t emulator_program_append_v1(ProgramChunk chunk);
+extern "C" EngineReport emulator_program_inspect_v1();
+extern "C" EngineReport emulator_program_start_v1();
+extern "C" EngineReport emulator_program_step_v1(std::uint32_t budget);
+extern "C" std::uint32_t emulator_program_close_v1();

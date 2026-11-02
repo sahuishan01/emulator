@@ -13,7 +13,46 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.19.1-dev
+## Current implementation: 0.20.0-dev
+
+Main app foundation: HomeActivity launcher/Emulator label, SQLite library with
+included Catch, SHA-256 private-copy SAF imports, search/details/remove/recents,
+actual imported static-NRO text execution and settings. Diagnostics moved under
+Settings, all other activities nonexported; same app ID/debug signing identity.
+See docs/android-app.md for contracts/limits. Program/Settings scroll; Home uses
+full-page scrolling in landscape. No commercial game or general graphics support.
+
+LibraryStore is application-owned, one serial worker, cancellation signal/stream
+close,32MiB/file/256MiB/128imports, temp+orphan cleanup, no source-document deletion.
+Jobs survive rotation, not process death. One blocked provider can delay its worker.
+NativePrograms JNI uses new value-only ProgramChunk(4100/align4/off4) and six
+program begin/append/inspect/start/step/close_v1 exports. Sessions are thread-local,
+32MiB upload cap,1..4096-instruction slices/2M total,512-char output and explicit
+fault/exit/wait/limit; close releases resources.16 Rust exports total.194 Rust tests.
+App0.20.0-dev/code21/reportworkload21, schema4/nativeworkload7,103 checks unchanged.
+ReportStore uses synchronized AtomicFile and bounded1MiB reads/backup recovery.
+
+New QA: tools/qa_production_app.py drives real SAF through a separate test-only
+tools/qa-documents module/generated owned fixtures; that provider is never shipped
+with the main APK. tools/qa_homebrew.py uses Play Catch from library;
+tools/qa_android_batch.py navigates Settings/Diagnostics and tests atomic backup
+recovery. Packaging --main-app checks launcher/exported components/no permissions
+and exclusion of test documents, in addition to all16exports/signature/16KiB layout.
+
+The supplied _20_ physical report confirms0.19.1:103 passes/285presented frames,
+score4/miss1/error empty. See docs/validation/g720-held-controls.md. New0.20
+app/import flow still needs target-phone use; software AVD evidence is separate.
+
+Validation:194 Rust tests/28 LLVM fixtures/fmt/Clippy, pinned two-ABI assembly/lint,
+signature/all16exports/16KiB packaging/main-app manifest checks pass. Final APK
+SHA2562142421c4f14d5aa42d2ba6e60b726b8f22925bb4bad5509daffde400e4a21f9
+(10,023,009bytes). Fresh desktop16 Vulkan checks/zero validation errors; final
+API35 AVD19 app checks/17 player-control checks/103 diagnostic checks and exact
+host-group comparisons/export/cold restore/both atomic backup recoveries pass.
+Screenshots inspected; empty final crash buffers; owned AVD stopped/awaited.
+Evidence/initial harness failures/cache fixture provenance are recorded in
+docs/validation/android-app-foundation.md. Canonical0.20 assets are emulator.apk
+and emulator.zip (module/package IDs retain the older gpu-lab names).
 
 Twelve original Rust crates, no external Cargo dependencies. Eleven core crates
 forbid unsafe; android-ffi permits export attributes only, with no unsafe blocks

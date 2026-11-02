@@ -17,7 +17,7 @@ Current foundation: twelve original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
 virtual timeouts/cancellation and CLI/Android execution. Sixteen owned NROs exercise
-the implemented behavior. All190 Rust tests and28 independent
+the implemented behavior. All194 Rust tests and28 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
@@ -42,6 +42,12 @@ a transactional CPU rasterizer and three guest-command Vulkan replays. A bounded
 work. General guest display-buffer queues remain required. See [the live slice](live-homebrew.md). See [the draw batch](guest-draw-batch.md). See
 [the shader batch](shader-translation-batch.md). Fresh allocation,
 broader methods and shaders remain open.
+
+The [0.20 Android application foundation](android-app.md) adds a searchable
+persistent library, bounded SAF imports, actual uploaded-NRO execution/output,
+recents and saved player settings. Catch is the included playable program;
+support diagnostics remain available. This implements the application shell and
+content ownership, without closing the general graphics or commercial-game gates.
 
 The Android engine/GPU Lab APK builds and passes lint, signature and native
 packaging checks. Six host workloads pass on llvmpipe with zero Vulkan

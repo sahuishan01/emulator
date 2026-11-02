@@ -15,6 +15,9 @@ checks on G720. A bounded original SM53/SPH decoder/typed SSA/SPIR-V path now fe
 guest vertex/draw commands, a transactional CPU rasterizer and Vulkan command replay.
 A bounded synchronous live homebrew backend and Android window now work; general
 display/HID and asynchronous GPU integration remain open; see [the exact draw subset](guest-draw-batch.md).
+The [main Android application foundation](android-app.md) now owns a searchable
+SQLite library, bounded SAF imports, actual static-NRO text execution, settings
+and the existing Catch player. The laboratory remains available for support.
 See [the supported shader subset](shader-translation-batch.md).
 The color-clear batch adds original B197 operations and offscreen Vulkan replay
 of decoded guest commands; see [the exact scope](color-clear-batch.md).
@@ -73,12 +76,12 @@ separate events rather than a universal `runFrame()` loop.
 | Component | Initial choice | Reason |
 | --- | --- | --- |
 | Original emulation logic | Rust | Typed guest addresses, checked parsers, ownership and testability |
-| Android application | Kotlin; Compose planned for the gameplay application | The current GPU Lab uses basic native Android views |
+| Android application | Kotlin/native Android views | Library/import/player/settings implemented without an additional UI dependency |
 | Host rendering | Vulkan; evaluate Rust `ash` bindings | Explicit capabilities and synchronization; bindings are not an emulator core |
 | Guest shader translation | Our decoder, typed IR, lowerings and SPIR-V emission | Own guest semantics and feature fallbacks |
 | Shader verification | SPIR-V validation tools | Detect invalid generated modules before driver submission |
 | Android audio | Oboe through a small native adapter | Device-aware low-latency output without routing samples through the UI |
-| Library metadata | Room/SQLite, separate from guest saves | Search/import metadata must not own emulated filesystem semantics |
+| Library metadata | SQLiteOpenHelper, separate from guest saves | Private copied files and bounded local catalog; no save-state semantics |
 | Build/test | Cargo, Gradle/NDK, LLVM fixtures | Reproducible host tests and Android packages |
 
 Generic bindings, assemblers and audio libraries may be used; an existing

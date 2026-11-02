@@ -14,3 +14,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "OriginalEmulator"
 include(":gpu-lab")
+
+// Separate QA-only provider; never packaged in the emulator application.
+include(":qa-documents")
+project(":qa-documents").projectDir = file("../tools/qa-documents")

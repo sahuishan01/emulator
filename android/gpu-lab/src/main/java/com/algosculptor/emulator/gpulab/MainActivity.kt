@@ -19,7 +19,7 @@ class MainActivity : Activity() {
     companion object {
         init { System.loadLibrary("emulator_gpu_lab") }
         private const val EXPORT_REQUEST = 10
-        private const val WORKLOAD_VERSION = 20
+        private const val WORKLOAD_VERSION = 21
     }
 
     private external fun runNvChecks(): ByteArray
@@ -45,8 +45,9 @@ class MainActivity : Activity() {
                 insets
             }
         }
+        layout.addView(Button(this).apply { text = "Back to library"; setOnClickListener { finish() } })
         layout.addView(TextView(this).apply {
-            text = "Emulator GPU Lab"
+            text = "Diagnostics"
             textSize = 24f
             setTypeface(null, Typeface.BOLD)
         })
@@ -89,9 +90,8 @@ class MainActivity : Activity() {
             WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
         )
         try {
-            val previous = filesDir.resolve("last-report.json")
-            if (previous.exists()) {
-                val saved = previous.readText()
+            val saved = ReportStore.read(this, "last-report.json")
+            if (saved != null) {
                 if (JSONObject(saved).optInt("workloadVersion", 0) == WORKLOAD_VERSION) {
                     report = saved
                     output.text = summarize(saved)
@@ -106,12 +106,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         try {
-            val file = filesDir.resolve("last-demo-report.json")
-            if (file.exists() && report != null) {
-                val demo = JSONObject(file.readText())
+            val captured = ReportStore.read(this, "last-demo-report.json")
+            if (captured != null && report != null) {
+                val demo = JSONObject(captured)
                 if (demo.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) {
                     report = JSONObject(report!!).put("demo", demo).toString(2)
-                    filesDir.resolve("last-report.json").writeText(report!!)
+                    ReportStore.write(this, "last-report.json", report!!)
                     output.text = summarize(report!!)
                 }
             }
@@ -174,9 +174,9 @@ class MainActivity : Activity() {
                         .put("error", error.message ?: error.javaClass.simpleName)
                 }
                 JSONObject().apply {
-                    val demoFile = filesDir.resolve("last-demo-report.json")
-                    try { if (demoFile.exists()) {
-                        val demo = JSONObject(demoFile.readText())
+                    val capturedDemo = ReportStore.read(this@MainActivity, "last-demo-report.json")
+                    try { if (capturedDemo != null) {
+                        val demo = JSONObject(capturedDemo)
                         if (demo.optString("appVersion") == packageManager.getPackageInfo(packageName, 0).versionName) put("demo", demo)
                     } } catch (_: Exception) { }
                     put("schemaVersion", 4)
@@ -200,7 +200,7 @@ class MainActivity : Activity() {
                 JSONObject().put("scope", "original-engine-gpu-core-and-host-vulkan").put("allPassed", false)
                     .put("error", error.message ?: error.javaClass.simpleName).toString(2)
             }
-            try { filesDir.resolve("last-report.json").writeText(result) } catch (_: Exception) { }
+            try { ReportStore.write(this, "last-report.json", result) } catch (_: Exception) { }
             runOnUiThread {
                 if (!isFinishing && !isDestroyed) {
                     report = result

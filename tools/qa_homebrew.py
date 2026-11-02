@@ -41,8 +41,8 @@ def main():
   raise RuntimeError('Timed out:'+phase)
  def screen(name): (out/f'{name}.png').write_bytes(call('exec-out','screencap','-p'))
  try:
-  call('install','-r',str(a.apk),timeout=60);call('shell','am','force-stop',pkg);call('shell','run-as',pkg,'rm','-f','files/last-demo-report.json');call('logcat','-c');call('shell','am','start','-W','-n',pkg+'/.MainActivity')
-  tap('Play homebrew demo','open-demo')
+  call('install','-r',str(a.apk),timeout=60);call('shell','am','force-stop',pkg);call('shell','run-as',pkg,'rm','-f','files/last-demo-report.json');call('logcat','-c');call('shell','am','start','-W','-n',pkg+'/.HomeActivity')
+  tap('Play Catch','open-demo')
   first=wait(lambda x:x.get('running') and x.get('presentedFrames',0)>10,'first-frames')
   assert first['renderWidth']==64 and first['renderHeight']==64 and first['frameAllocationCount']==4
   if a.hold_controls:
@@ -80,8 +80,8 @@ def main():
    center_paddle('focus-start');x,y=control_center('Right','held-background')
    call('shell','input','touchscreen','motionevent','DOWN',str(x),str(y));call('shell','input','keyevent','3');call('shell','input','touchscreen','motionevent','UP',str(x),str(y))
    stopped=wait(lambda q:q.get('running') is False,'held-background-stopped')
-   call('shell','am','start','-W','-n',pkg+'/.MainActivity');r=ui('held-foreground')
-   if any(n.get('text','').lower()=='play homebrew demo' for n in r.iter('node')):tap('Play homebrew demo','held-reopen')
+   call('shell','am','start','-W','-n',pkg+'/.HomeActivity');r=ui('held-foreground')
+   if any(n.get('text','').lower()=='play catch' for n in r.iter('node')):tap('Play Catch','held-reopen')
    q=wait(lambda q:q.get('running') and q.get('capturedAtEpochMs',0)>stopped['capturedAtEpochMs'],'held-foreground-ready');released(q['paddleX'],'held-input-cleared-on-background')
    center_paddle('after-holds')
   tap('Pause','pause')
@@ -115,16 +115,16 @@ def main():
   # HOME must stop the worker/session; resume starts a fresh guest and swapchain.
   call('shell','input','keyevent','3');stopped=wait(lambda q:q.get('running') is False,'background-stopped')
   time.sleep(1);assert report()['completedFrames']==stopped['completedFrames'],'Background rendering continued'
-  call('shell','am','start','-W','-n',pkg+'/.MainActivity')
+  call('shell','am','start','-W','-n',pkg+'/.HomeActivity')
   # Existing task may resume DemoActivity, or MainActivity may come to front.
   r=ui('return-to-app')
-  if any(n.get('text','')=='Play homebrew demo' for n in r.iter('node')):tap('Play homebrew demo','reopen-demo')
+  if any(n.get('text','').lower()=='play catch' for n in r.iter('node')):tap('Play Catch','reopen-demo')
   resumed=wait(lambda q:q.get('running') and q.get('frame',0)>5 and q.get('capturedAtEpochMs',0)>stopped['capturedAtEpochMs'],'foreground-recreated')
   for i in range(2):
-   tap('Back to checks',f'back-{i}');wait(lambda q:q.get('running') is False,f'closed-{i}')
-   tap('Play homebrew demo',f'reopen-{i}');wait(lambda q:q.get('running') and q.get('frame',0)>5,f'reopened-{i}')
+   tap('Back to library',f'back-{i}');wait(lambda q:q.get('running') is False,f'closed-{i}')
+   tap('Play Catch',f'reopen-{i}');wait(lambda q:q.get('running') and q.get('frame',0)>5,f'reopened-{i}')
   tap('Pause','final-pause');final=wait(lambda q:q.get('paused') is True,'final-demo');screen('visible-final')
-  tap('Back to checks','finish-demo');closed=wait(lambda q:q.get('running') is False,'final-closed')
+  tap('Back to library','finish-demo');closed=wait(lambda q:q.get('running') is False,'final-closed')
   assert closed['error']=='' and closed['frameAllocationCount']==4
   evidence={'passed':True,'checks':['visible Vulkan ball/paddle pixels','guest animation','pause','button input','drag input','reset','guest collision/score','GPU completion equals presentation','background stop','foreground recreation','repeated surface/session teardown','bounded per-frame allocations'],'notes':notes,'first':first,'last':closed}
   if a.hold_controls:evidence['checks']+=['held left/right repeat','release stops before edge','both edge clamps','moving outside cancels','held input cleared on background']

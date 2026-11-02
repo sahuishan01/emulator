@@ -4,13 +4,33 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import subprocess
 import zipfile
 
 
-def verify(apk, signer):
+def verify_main_app(apk, aapt):
+    manifest = subprocess.run([str(aapt), "dump", "xmltree", str(apk), "AndroidManifest.xml"], check=True, capture_output=True, text=True).stdout
+    badging = subprocess.run([str(aapt), "dump", "badging", str(apk)], check=True, capture_output=True, text=True).stdout
+    assert "application-label:'Emulator'" in badging
+    assert "launchable-activity: name='com.algosculptor.emulator.gpulab.HomeActivity'" in badging
+    assert not re.search(r"E: (?:provider|service|receiver|uses-permission)\b", manifest), "Unexpected component or permission"
+    assert re.search(r'android:allowBackup[^\n]*0x0\s*$', manifest, re.M)
+    assert re.search(r'android:usesCleartextTraffic[^\n]*0x0\s*$', manifest, re.M)
+    activities = {}
+    for block in re.split(r'\s+E: activity \(line=\d+\)', manifest)[1:]:
+        name = re.search(r'android:name[^\n]*="([^"]+)"', block).group(1)
+        exported = re.search(r'android:exported[^\n]*\(type 0x12\)(0x[0-9a-f]+)', block).group(1)
+        activities[name.rsplit('.', 1)[-1]] = exported != '0x0'
+    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False}, activities
+    with zipfile.ZipFile(apk) as archive:
+        assert not any(n.startswith('assets/') and n.endswith('.nro') for n in archive.namelist()), "QA documents leaked into main APK"
+    return dict(label='Emulator', launcher='HomeActivity', exportedActivities=['HomeActivity'], permissions=[], qaDocumentsExcluded=True)
+
+
+def verify(apk, signer, main_app=False):
     subprocess.run([str(signer), "verify", str(apk)], check=True)
     raw = apk.read_bytes()
     expected = {"lib/arm64-v8a/libemulator_gpu_lab.so": 183,
@@ -67,12 +87,15 @@ def verify(apk, signer):
                     symbols.add(data[start:end].decode("ascii"))
             required = {"emulator_run_reference_guests_v2", "emulator_run_gpu_core_checks_v2",
                         "emulator_run_nv_checks_v2", "emulator_guest_clear_replay_v1",
-                        "emulator_run_shader_checks_v2", "emulator_shader_draw_v1", "emulator_guest_draw_replay_v1", "emulator_demo_start_v1", "emulator_demo_step_v1", "emulator_demo_stop_v1"}
+                        "emulator_run_shader_checks_v2", "emulator_shader_draw_v1", "emulator_guest_draw_replay_v1", "emulator_demo_start_v1", "emulator_demo_step_v1", "emulator_demo_stop_v1", "emulator_program_begin_v1", "emulator_program_append_v1", "emulator_program_inspect_v1", "emulator_program_start_v1", "emulator_program_step_v1", "emulator_program_close_v1"}
             assert required <= symbols, f"Missing engine exports: {required - symbols}"
             libraries.append({"name": name, "machine": machine, "zipPayloadOffset": payload_offset,
                               "loadSegments": loads, "minimumAlignment": 16384, "verifiedEngineExports": sorted(required)})
-    return {"apk": apk.name, "sha256": hashlib.sha256(raw).hexdigest(), "signatureVerified": True,
-            "libraries": libraries}
+    result = {"apk": apk.name, "sha256": hashlib.sha256(raw).hexdigest(), "signatureVerified": True,
+              "libraries": libraries}
+    if main_app:
+        result['mainApp'] = verify_main_app(apk, signer.with_name('aapt'))
+    return result
 
 
 def main():
@@ -81,8 +104,9 @@ def main():
     parser.add_argument("--apksigner", type=Path,
                         default=Path(os.environ.get("ANDROID_SDK_ROOT", str(Path.home() / "Android/Sdk"))) / "build-tools/34.0.0/apksigner")
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--main-app", action="store_true", help="Verify the main app launcher and exclude test components")
     args = parser.parse_args()
-    report = verify(args.apk, args.apksigner)
+    report = verify(args.apk, args.apksigner, args.main_app)
     text = json.dumps(report, indent=2) + "\n"
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

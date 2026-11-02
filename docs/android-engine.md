@@ -1,13 +1,15 @@
 # Android original-engine checks
 
-Version 0.18.0-dev embeds the original Rust engine into the existing Android
-diagnostic app. The CPU backend interprets guest A64 instructions on both host
+Version 0.20.0-dev embeds the original Rust engine into the Android app, with
+diagnostics under Settings and a [library/import/player foundation](android-app.md).
+The CPU backend interprets guest A64 instructions on both host
 architectures. It does not execute guest bytes as host machine code.
 
 The app's worker calls Rust once to execute fifteen original NRO fixtures
 described in [kernel-ipc.md](kernel-ipc.md), runs fifty integrated NV protocol scenarios, separately runs three actual GPU-core
-memory/command cases, including original DMA execution, runs nineteen portable shader scenarios, then calls the fifteen-test
-C++ Vulkan suite (six native cases, three clear replays and three translated-shader draws and three guest-command draw replays). The Rust checks validate actual debug output, instruction/IPC
+memory/command cases, including original DMA execution, runs nineteen portable shader scenarios, then calls the sixteen-test
+C++ Vulkan suite (six native cases, three clear replays, three translated-shader draws,
+three guest-command draw replays and a live guest check). The Rust checks validate actual debug output, instruction/IPC
 counts, guest memory results and zero remaining handles after process exit.
 The result is not hardcoded successful output. Each native group reports its
 own failure; one failed group does not discard the other's diagnostic report.
@@ -29,8 +31,8 @@ Core crates still forbid unsafe Rust. This boundary permits the no-mangle
 export attribute only and contains no unsafe blocks or raw-pointer arguments.
 Rust panics are caught at the exported function and produce a bounded failed
 report. Allocation failure or a process/driver crash is not isolated by this
-mechanism. A future gameplay API needs lifecycle/session/surface ownership;
-the reference-report ABI is deliberately smaller.
+mechanism. Dedicated live and imported-program APIs now provide bounded
+lifecycle/session/surface ownership; they are distinct from the reference-report ABI.
 
 ## Build
 

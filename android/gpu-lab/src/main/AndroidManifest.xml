@@ -3,11 +3,17 @@
     <uses-feature android:name="android.hardware.vulkan.version" android:version="4198400" android:required="false" />
     <application
         android:allowBackup="false"
-        android:label="Emulator GPU Lab"
+        android:name=".EmulatorApplication"
+        android:label="Emulator"
+        android:icon="@drawable/ic_emulator"
+        android:usesCleartextTraffic="false"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".DemoActivity" android:exported="false" />
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".ProgramActivity" android:exported="false" />
+        <activity android:name=".MainActivity" android:exported="false" />
+        <activity android:name=".HomeActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

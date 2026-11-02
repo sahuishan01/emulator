@@ -87,6 +87,21 @@ def main():
                 attempt += 1
                 time.sleep(0.25)
 
+    def launch_diagnostics(phase):
+        call('shell', 'am', 'start', '-W', '-n', package + '/.HomeActivity')
+        root = wait_button(phase + '-library', 'settings')
+        tap(button(root, 'settings'))
+        for attempt in range(3):
+            root = settled(f'{phase}-settings-{attempt}')
+            try:
+                tap(button(root, 'diagnostics'))
+                return
+            except StopIteration:
+                scroll = next(n for n in root.iter('node') if n.get('scrollable') == 'true')
+                x1,y1,x2,y2 = map(int,re.findall(r'\d+',scroll.attrib['bounds']))
+                call('shell','input','swipe',str((x1+x2)//2),str(y2-100),str((x1+x2)//2),str(y1+100),'300')
+        raise RuntimeError('Diagnostics navigation unavailable')
+
     def saved():
         return call('exec-out', 'run-as', package, 'cat', 'files/last-report.json')
 
@@ -111,7 +126,7 @@ def main():
             assert old_report['workloadVersion'] == args.previous_workload and old_report['allPassed']
             call('logcat', '-c')
             call('shell', 'am', 'force-stop', package)
-            call('shell', 'am', 'start', '-W', '-n', package + '/.MainActivity')
+            launch_diagnostics('open-diagnostics')
             wait_button('resumed', 'export report')
             notes.append('Export/restore resumed after the initial save UI transition outlasted its first XML dump')
             print('Resuming the recorded successful batch', flush=True)
@@ -122,7 +137,7 @@ def main():
             (out / 'before-upgrade-report.json').write_bytes(old)
             call('install', '-r', str(args.apk), timeout=45)
             call('logcat', '-c')
-            call('shell', 'am', 'start', '-W', '-n', package + '/.MainActivity')
+            launch_diagnostics('open-diagnostics')
             root = wait_button('upgraded', 'export report', enabled=False)
             tap(button(root, 'run all checks'))
             print('Upgrade invalidated the prior report; full batch started', flush=True)
@@ -169,18 +184,35 @@ def main():
         call('pull', '/sdcard/Download/' + new[0], str(out / 'exported-report.json'))
         assert (out / 'exported-report.json').read_bytes() == raw
         call('shell', 'am', 'force-stop', package)
-        call('shell', 'am', 'start', '-W', '-n', package + '/.MainActivity')
+        launch_diagnostics('open-diagnostics')
         root = wait_button('restored', 'export report')
         button(root, 'export report')
         assert any(f'All {total} checks passed' in n.get('text', '') for n in root.iter('node'))
         assert saved() == raw
         (out / 'restored.png').write_bytes(call('exec-out', 'screencap', '-p'))
+        # Exercise AtomicFile recovery from an interrupted older-style backup,
+        # using the just-executed report bytes, not a fabricated passing result.
+        call('shell', 'am', 'force-stop', package)
+        backups = ['last-report.json']
+        if 'demo' in report:
+            backups.append('last-demo-report.json')
+        backup_bytes = {name: call('exec-out', 'run-as', package, 'cat', 'files/' + name) for name in backups}
+        for name in backups:
+            call('shell', 'run-as', package, 'mv', 'files/' + name, 'files/' + name + '.bak')
+        launch_diagnostics('backup-recovery')
+        root = wait_button('backup-recovered', 'export report')
+        assert any(f'All {total} checks passed' in n.get('text', '') for n in root.iter('node'))
+        assert saved() == raw
+        for name in backups:
+            assert call('exec-out', 'run-as', package, 'cat', 'files/' + name) == backup_bytes[name]
+            assert call('shell', 'run-as', package, 'test', '!', '-e', 'files/' + name + '.bak') == b''
+        (out / 'backup-recovered.png').write_bytes(call('exec-out', 'screencap', '-p'))
         logs()
         assert not (out / 'crash-buffer.txt').read_bytes().strip()
         assert not re.search(r'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab', (out / 'logcat.txt').read_text())
         verification = dict(version=args.version, checks=total, groups=counts, allPassed=report['allPassed'],
                             upgradeInvalidatedWorkload=args.previous_workload, exportByteExact=True,
-                            exportedFilename=new[0], coldRestoreByteExact=True, summaryVisible=True, notes=notes)
+                            exportedFilename=new[0], coldRestoreByteExact=True, atomicBackupRecoveryByteExact=backups, summaryVisible=True, notes=notes)
         (out / 'verification.json').write_text(json.dumps(verification, indent=2) + '\n')
         print(json.dumps(verification), flush=True)
     except Exception as error:
