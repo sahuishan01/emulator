@@ -51,8 +51,10 @@ name/tag, retain the signing identity and publish a verified emulator.apk asset.
 GitHub supplies its SHA-256 digest. Existing release publication remains private;
 no update backend, public APK feed or website deployment is introduced.
 
-The emulator/native diagnostic workload is unchanged: 240 checks and 55 patterns.
+The 0.27.1 updater release left the emulator/native diagnostic workload unchanged:
+240 checks and 55 patterns. The 0.27.2 investigation build retains the updater and
+adds 12 native controls, for 252 checks and 55 patterns.
 The supplied [0.27 Mali report](validation/g720-projection.md) records one
-projected inset-texture mismatch (239/240 and54/55). This update does not fix or
+projected inset-texture mismatch (239/240 and 54/55). This update does not fix or
 hide that rendering issue. See [updater validation](validation/android-app-updates.md)
 for separate JVM, device, installer and regression evidence.

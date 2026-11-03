@@ -1,4 +1,4 @@
-# Android application (0.20 foundation, 0.27.1 updater)
+# Android application (0.20 foundation, 0.27.1 updater, 0.27.2 diagnostics)
 
 The launcher is a library, with the original Catch player, the 0.21 guest texture scene, supported static
 NRO imports, text-mode execution, recents and settings. The home screen also offers
@@ -25,7 +25,8 @@ Missing private files disable launch and explain how to recover.
 ## Import contract
 
 The system Storage Access Framework picker grants the selected document only.
-The main APK requests no network or broad storage permission. Imports copy into
+Imports require no broad storage permission. Network and install permissions
+serve the [private updater](app-updates.md). Imports copy into
 the app's private directory in 32 KiB chunks, hash the exact bytes, sync the file,
 and ask the original Rust NRO parser to validate it before publication. A successful
 rename is followed by a catalog insert. Failed inserts delete the copied file;

@@ -48,6 +48,17 @@ def main():
   r=json.loads(raw);assert r['appVersion']==a.version and r['workloadVersion']==a.workload and r['schemaVersion']==4 and r['allPassed']
   assert {k:len(r[k]['tests']) for k in ['engine','nv','gpuCore','shader','gpu']}=={'engine':18,'nv':50,'gpuCore':76,'shader':25,'gpu':a.gpu_tests}
   assert r['gpu']['workloadVersion']==a.native_workload and r['gpu']['validationErrors']==0
+  if a.native_workload>=16:
+   for index,test in enumerate(r['gpu']['tests']):
+    if index in (12,13,14) or index>=16:
+     evidence=test['comparison']
+     if 'interpolation' in evidence:
+      uv=evidence['interpolation'];assert uv['unexpectedPixels']==0 and uv['maxAbsoluteError']<=uv['absoluteTolerance']
+      assert len(uv['actualUvBits'])==len(uv['referenceUvBits'])==128
+      assert all(len(pair)==2 for pair in uv['actualUvBits']+uv['referenceUvBits'])
+     else:
+      for attachment in evidence.values():
+       assert attachment['sizeMatches'] and attachment['mismatchedPixels']==0 and not attachment['samples']
   for key,name in [('engine','engine'),('nv','nv'),('gpuCore','gpu-core'),('shader','shader')]:
    reference=json.load(open(a.reference_prefix+name+'.json'));actual=r[key].copy();reference.pop('hostArchitecture',None);actual.pop('hostArchitecture',None);assert actual==reference,key
   b=r['patternBatch'];assert b['status']=='complete' and b['totalPatterns']==b['passedPatterns']==len(b['patterns'])==a.pattern_count and b['allPassed']
@@ -55,6 +66,8 @@ def main():
   for pattern in b['patterns']:
    assert pattern['batchRunId']==b['runId'] and pattern['passed'] and pattern['surfaceUpdated'] and pattern['pixelsVerified']
    assert pattern['completedFrames']==pattern['presentedFrames']==1 and pattern['validationErrors']==0 and pattern['error']==''
+   if a.native_workload>=16:
+    for attachment in pattern['comparison'].values():assert attachment['sizeMatches'] and attachment['mismatchedPixels']==0 and not attachment['samples']
   return r
  def verify_export(phase,excluded=(),capture_bounds=None):
   end=time.monotonic()+420;seen=set();active_id=None;capture_runs=0;excluded=set(excluded)
@@ -163,7 +176,8 @@ def main():
   root=ui('cold-restored');assert any(f'All {sum(len(second[k]["tests"]) for k in ("engine","nv","gpuCore","shader","gpu"))} checks passed' in n.get('text','') and f'Patterns: {a.pattern_count}/{a.pattern_count}' in n.get('text','') for n in root.iter('node'))
   assert call('exec-out','run-as',pkg,'cat','files/last-report.json')==expected;shot('cold-restored')
   assert not call('logcat','-b','crash','-d').strip();assert not re.search(rb'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab',call('logcat','-d'))
-  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON','all 55 automatically displayed patterns','7040 displayed pixel centers match formulas','all 240 diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run','cold Diagnostics restores complete 55-pattern report'],'notes':notes,'completedRuns':len(completed_reports),'displaySamples':a.pattern_count*128}
+  total=sum(len(second[k]['tests']) for k in ('engine','nv','gpuCore','shader','gpu'))
+  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON',f'all {a.pattern_count} automatically displayed patterns',f'{a.pattern_count*128} displayed pixel centers match formulas',f'all {total} diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run',f'cold Diagnostics restores complete {a.pattern_count}-pattern report'],'notes':notes,'completedRuns':len(completed_reports),'displaySamples':a.pattern_count*128}
   if a.single_run:result['checks']=[c for c in result['checks'] if c not in ('completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts')]
   (out/'verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
  finally:

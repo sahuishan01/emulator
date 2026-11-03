@@ -7,7 +7,7 @@ General guest shaders and commercial Switch games remain unsupported. The C++ im
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-71 bounded workloads (native workload version 15). The first nine are:
+83 bounded workloads (native workload version 16). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -110,8 +110,8 @@ cd android
 
 The APK is `android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`. It has a
 retained package ID, `com.algosculptor.emulator.gpulab`, with arm64-v8a and
-x86_64 native libraries. It uses the system driver and requires no network or
-storage permissions. Open Settings → Diagnostics, run checks, then use Export report to select a JSON
+x86_64 native libraries. It uses the system driver. Private in-app updates require network access and
+Android installer permission; see [updater setup](../../docs/app-updates.md). Open Settings → Diagnostics, run checks, then use Export report to select a JSON
 destination. The report adds the phone, SoC, Android and application versions.
 Version0.21.1-dev uses schema4/workload23: engine16, nv50, gpuCore11, shader25
 and gpu19 Vulkan cases. All five groups must pass (121 total). Native cases
@@ -151,3 +151,7 @@ The 0.20 launcher is a library rather than the diagnostics screen. Its import,
 text execution, settings and lifecycle contracts are in [android-app.md](../../docs/android-app.md).
 
 The0.27 projection batch appends16 cases (56..71) for actual fixed-function W division across textures/indexed geometry/depth. Native workload15,71 checks. All21 value exports/layouts remain stable; see [projection profile](../../docs/projection-batch.md).
+
+The0.27.2 investigation adds twelve inset controls (ten exact color replays and
+two float UV captures) and complete bounded failure evidence. Existing71 cases
+and all55 patterns remain; see [the investigation contract](../../docs/inset-evidence.md).

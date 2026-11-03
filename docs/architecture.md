@@ -8,9 +8,9 @@ functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
 event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
 Rust engine for eighteen original guest checks, fifty NV scenarios, seventy-six GPU
-core groups, twenty-five shader cases and seventy-one Vulkan workloads. The user
+core groups, twenty-five shader cases and eighty-three Vulkan workloads. The user
 supplied a physical G720 0.3.0-dev report passing all six workloads at that checkpoint,
-including BC1 conversion, sampling and updates. The supplied 0.16 report now passes all60
+including BC1 conversion, sampling and updates. The supplied 0.16 report now passes all 60
 checks on G720. A bounded original SM53/SPH decoder/typed SSA/SPIR-V path now feeds
 guest vertex/draw commands, a transactional CPU rasterizer and Vulkan command replay.
 A bounded synchronous live homebrew backend and Android window now work; general
@@ -31,8 +31,9 @@ adds ordered depth-only clears, sixteen rendered scenarios and twenty portable
 correctness groups. General depth and live display integration remain open.
 The [0.27 positive-W projection batch](projection-batch.md) brings the corpus to
 240 diagnostics and 55 patterns; screen-linear IPA.PASS remains explicit. The
-[physical 0.26 report](validation/g720-depth-clear.md) confirms 208/39. Physical
-projection confirmation remains pending.
+[physical 0.26 report](validation/g720-depth-clear.md) confirms 208/39. The physical projection reports pass239/240 and 54/55; the inset failure remains
+open. The 0.27.2 investigation adds 12 native controls and exact failure evidence
+for 252 total diagnostics, retaining55 patterns; see [inset evidence](inset-evidence.md).
 The [one-tap test workflow](one-tap-testing.md) now owns visible pattern sequencing,
 shared diagnostics and automatic app-owned Downloads publication. Completed reports
 retain all 55 pattern proofs and remain immutable when reopened for manual export.

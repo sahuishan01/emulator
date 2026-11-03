@@ -13,7 +13,58 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.27.1-dev private in-app updates
+## Current implementation: 0.27.2-dev inset failure evidence
+
+The physical 0.27.1 report reproduces 239/240 checks and54/55 patterns: only
+native guest-projection-texture-3 and visible42 fail. All71 native records match
+previous physical0.27; all fourRustgroups match host except architecture. Raw
+ignored reports/physical-g720/v0.27.1-dev-report.json,95837bytes/SHA256
+106c50f41cf627689ba84438ccf9437277745936f4e5cca82b0a1cc6c463fcfc.
+No confirmed Mali repair; preserve strict original failure. Next report needs
+actual pixel/UV evidence before changing interpolation/sampling semantics.
+
+All captured guest replays now include exact bounded color/depth comparison
+metadata. Failed attachments retain full expected/actual hex images and first8
+mismatched coordinates; both attachments compared, including depth failures.
+Scene JSON captures evidence before teardown; automatic export retains it.
+Ten additional host controls: unitW,uniformW2,reversed winding, U/V/UV offsets
++/-1/64 and unchanged repeat. Two diagnostic float32 attachment probes record
+all128 actual/reference U/V bit pairs before sampling, max error, exact coverage,
+explicit0.0001 UV bound; never relax any original color/depth check. Native
+precision-limit fields added. Rust/guest commands/shaders/21 value ABIs unchanged.
+App0.27.2/code32/schema4/workload31/native16:252 checks/55 patterns/Vulkan83.
+Private updater retained. See docs/inset-evidence.md and
+ docs/validation/android-inset-evidence.md.
+
+Two native CTest targets pass: nine comparison cases plus controlled color/depth/
+live failed-reference injection verifies exact evidence, failed-frame counters
+and strict rejection. Host-only injection entry point excluded from APK. All83
+host Vulkan checks pass with validation enabled/0errors. Prior71 names/outcomes/
+details unchanged; additive evidence fields only. Both UV captures exact host.
+All24 updater JVM tests, pinned twoABI assembly/lint/signature/21exports/16KiB/
+strict manifest pass; signing certificate matches0.27.1. No new permissions/deps.
+
+Final complete single-run Android QA passes11 flows,252 checks/55 patterns and
+7040 displayed points; all83 native records exact host, fourRust groups exact
+except architecture,70 native evidence records and55 visible comparisons retained.
+206878byte JSON exact cache/Downloads MIME+publication/share/cold restoration,
+catalog/cache preservation and cancellation/no publication. Original JSON
+immutable. One initial runner returnedHome aftervariant1 near late boot/display
+reconfiguration, no targetcrash; cause unconfirmed, evidence retained. Same tests
+passed aftersettling. A pre-bound full run passed too; then eight coordinate
+previews replaced16 because all185 failed attachments could exceed1MiB export/
+cache cap. With8/fullimages, synthesized850382bytes fits. Native/device tests
+repeated aftercorrection. Final crash buffers empty/no targetfatal/ANR. No new
+rotation/interruption repeat coverage claimed (--single-run).
+
+Fresh packaging removes incremental ZIP gaps. All non-native payloads match
+pre-bound tested package; final APK separately re-tested. FinalAPK12108984bytes,
+SHA256aee6dd1a5e50d25d9fd4643c099c6e9643fd206795bfff2a1c71a7c1bf558fae.
+AVD started97.99%idle/nice10/twocores/2048requested->2560MiB, displayresetnative,
+explicitlystopped/processawaited0/ADBempty. Reports ignored underreports/v0.27.2-*
+and reports/android-qa/v0.27.2-dev. Commercial games remainunsupported.
+
+## Previous implementation: 0.27.1-dev private in-app updates
 
 User requested auto updates. The new attached0.27 report is NOT a full pass:
 239/240 diagnostics/54of55 patterns, physicalMali projected inset texture(case3,

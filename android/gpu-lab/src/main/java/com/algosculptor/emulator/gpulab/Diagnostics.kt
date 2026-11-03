@@ -15,7 +15,7 @@ object NativeScenes {
 
 /** Shared native checks and report shape for manual and automatic workflows. */
 object Diagnostics {
-    const val WORKLOAD_VERSION = 30
+    const val WORKLOAD_VERSION = 31
     init { System.loadLibrary("emulator_gpu_lab") }
     private external fun runEngineChecks(): ByteArray
     private external fun runGpuCoreChecks(): ByteArray

@@ -1,5 +1,12 @@
 # One-tap testing and JSON export (0.22.1)
 
+The [0.27.2 inset investigation](inset-evidence.md) retains all 55 visible patterns
+and adds twelve native controls, for 252 diagnostics. App/code is 0.27.2-dev/32,
+schema/workload/native is 4/31/16. Failed replays retain full attachment bytes
+and bounded coordinate samples in the same exported JSON. The existing 1 MiB
+export/cache limit remains; the synthesized current corpus with every attachment
+failing fits below it. Sections below describe earlier checkpoints.
+
 The [0.27 projection batch](projection-batch.md) uses this workflow for
 55 patterns and 240 diagnostics: app/code 0.27.0-dev/30, schema/workload/native
 4/30/15. The new cases cover sixteen rendered scenarios and sixteen portable

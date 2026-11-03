@@ -7,6 +7,9 @@ struct GpuReport {
 };
 
 GpuReport run_gpu_checks();
+#ifndef __ANDROID__
+GpuReport run_replay_evidence_self_test();
+#endif
 
 std::string start_homebrew(void* window);
 std::string step_homebrew(unsigned x,unsigned reset);

@@ -3,6 +3,7 @@
 #include "engine_abi.h"
 #include "shaders.h"
 #include "bc1_fixture.h"
+#include "replay_comparison.h"
 #ifdef __ANDROID__
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include <android/native_window.h>
@@ -20,6 +21,7 @@
 #include <stdexcept>
 #include <vector>
 #include <type_traits>
+#include <iomanip>
 
 namespace {
 constexpr uint32_t SIDE = 64;
@@ -49,7 +51,7 @@ std::string quoted(const std::string& text) {
 
 struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize size{}; bool coherent{}; };
 struct Image { VkImage handle{}; VkImageView view{}; };
-struct Test { std::string name; bool passed; std::string detail; };
+struct Test { std::string name; bool passed; std::string detail; std::string comparison{}; };
 
 class Context {
 public:
@@ -62,6 +64,7 @@ public:
     VkPhysicalDeviceProperties properties{};
     VkPhysicalDeviceFeatures features{};
     VkPhysicalDeviceMemoryProperties memory_properties{};
+    std::string last_comparison;
     VkDevice device{};
     VkQueue queue{};
     VkCommandPool command_pool{};
@@ -1054,20 +1057,28 @@ TextureBinding texture_binding(Context& c,const TexturedDraw& d,VkDescriptorSetL
 const TexturedDraw& texture_source(const TexturedDraw& d){return d;}
 const TexturedDraw& texture_source(const IndexedDraw& d){return d.textured;}
 const GuestDrawOp& draw_source(const IndexedDraw& d){return d.textured.draw;}
-template<class Replay> bool render_guest_commands(Context& context,const Replay& replay,Image* rendered = nullptr,const DepthReplay* depth_data=nullptr,const DepthClearReplay* clears=nullptr) {
+template<class Replay> bool render_guest_commands(Context& context,const Replay& replay,Image* rendered = nullptr,const DepthReplay* depth_data=nullptr,const DepthClearReplay* clears=nullptr,std::vector<uint8_t>* uv_readback=nullptr) {
+    context.last_comparison.clear();
     constexpr bool indexed=std::is_same_v<Replay,IndexedReplay>;
     constexpr bool textured=std::is_same_v<Replay,TextureReplay> || indexed;
     const auto w=replay.background.width, h=replay.background.height;
     const auto bytes=static_cast<size_t>(w)*h*4;
-    if(replay.abi_version!=1 || replay.status || replay.draw_count!=2 || replay.image_bytes!=bytes)
+    if(uv_readback && (!textured || depth_data || clears))throw std::runtime_error("UV capture requires a textured color replay");
+    if(replay.abi_version!=1 || replay.status || replay.draw_count!=2 || replay.image_bytes!=bytes || bytes>sizeof(replay.pixels)
+        || (depth_data && bytes>sizeof(depth_data->expected)))
         throw std::runtime_error("Guest draw ABI failure");
     const auto& background=replay.background;
     if(!w || !h || w>64 || h>64 || background.pitch!=w*4 || (background.format!=0xd5 && background.format!=0xcf)
         || background.rect[0]!=0 || background.rect[1]!=0 || background.rect[2]!=w || background.rect[3]!=h || background.mask!=15)
         throw std::runtime_error("Guest draw background ABI mismatch");
-    const VkFormat format=background.format==0xcf ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat format=uv_readback ? VK_FORMAT_R32G32B32A32_SFLOAT : (background.format==0xcf ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM);
+    if(uv_readback){
+        VkFormatProperties properties{};vkGetPhysicalDeviceFormatProperties(context.physical,format,&properties);
+        const auto required=VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT|VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+        if((properties.optimalTilingFeatures&required)!=required)throw std::runtime_error("Float UV attachment unsupported on this device");
+    }
     const auto color=context.image(format,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_COLOR_BIT,w,h);
-    const auto readback=context.buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto readback=context.buffer(uv_readback?bytes*4:bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     Image depth{};Buffer depth_upload{},depth_readback{};
     if(depth_data){
         depth=context.image(VK_FORMAT_D32_SFLOAT,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_DEPTH_BIT,w,h);
@@ -1131,7 +1142,7 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         std::array<VkPipelineShaderStageCreateInfo,2> stages{};
         for(auto& stage:stages)stage=structure<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
         stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=context.shader(source.vertex,source.vertex_words);stages[0].pName="main";
-        stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=context.shader(source.fragment,source.fragment_words);stages[1].pName="main";
+        stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=uv_readback ? context.shader(shaders::interpolation_frag) : context.shader(source.fragment,source.fragment_words);stages[1].pName="main";
         const VkVertexInputBindingDescription binding{0,(textured?8u:4u)*sizeof(float),VK_VERTEX_INPUT_RATE_VERTEX};
         const std::array<VkVertexInputAttributeDescription,2> attributes{{{0,0,VK_FORMAT_R32G32B32A32_SFLOAT,0},{1,0,VK_FORMAT_R32G32B32A32_SFLOAT,16}}};
         auto vertex=structure<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
@@ -1253,9 +1264,19 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
     }
     buffer_barrier(command,readback,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
     context.submit(command);const auto actual=context.read(readback);
-    if(depth_data){const auto actual_depth=context.read(depth_readback);if(actual_depth.size()!=bytes || std::memcmp(actual_depth.data(),depth_data->expected,bytes)!=0)return false;}
+    if(uv_readback){*uv_readback=actual;return actual.size()==bytes*4;}
+    const auto color_result=replay_evidence::compare(actual,replay.pixels,w,h);
+    bool passed=color_result.passed;
+    context.last_comparison="{\"color\":"+color_result.json;
+    if(depth_data){
+        const auto actual_depth=context.read(depth_readback);
+        const auto depth_result=replay_evidence::compare(actual_depth,reinterpret_cast<const uint8_t*>(depth_data->expected),w,h,true);
+        context.last_comparison+=",\"depth\":"+depth_result.json;
+        passed=passed && depth_result.passed;
+    }
+    context.last_comparison+='}';
     if(rendered)*rendered=color;
-    return actual.size()==bytes && std::equal(actual.begin(),actual.end(),replay.pixels);
+    return passed;
 }
 
 bool guest_draw_command_replay(Context& context,uint32_t index) {
@@ -1264,6 +1285,90 @@ bool guest_draw_command_replay(Context& context,uint32_t index) {
 bool guest_depth_replay(Context& context,uint32_t index,Image* rendered=nullptr){
     const auto replay=emulator_depth_replay_v1(index);
     return render_guest_commands(context,replay.color,rendered,&replay);
+}
+
+float unpack_float(uint32_t bits) { float value;std::memcpy(&value,&bits,4);return value; }
+uint32_t pack_float(float value) { uint32_t bits;std::memcpy(&bits,&value,4);return bits; }
+
+// Host-only diagnostic controls over a copy of our captured inset replay.
+// They do not change guest commands, shader translation or the original case.
+std::array<double,2> inset_uv(uint32_t x,uint32_t y) {
+    const double px=x+0.5,py=y+0.5;
+    if(px<2 || px>=14 || py<1 || py>=7)return {0,0};
+    const bool second=px>=5 && px<11 && py>=2.5 && py<5.5;
+    const double left=second?5:2,top=second?2.5:1,width=second?6:12,height=second?3:6;
+    return {1.5*(px-left)/width-0.25,1.5*(py-top)/height-0.25};
+}
+std::array<uint8_t,512> inset_pixels(double du,double dv) {
+    constexpr std::array<std::array<uint8_t,4>,4> palette{{{255,0,0,255},{255,255,0,255},{0,255,0,255},{0,255,255,255}}};
+    std::array<uint8_t,512> out{};
+    for(uint32_t y=0;y<8;++y)for(uint32_t x=0;x<16;++x){
+        std::array<uint8_t,4> color{{0,0,0,255}};
+        if(x>=2 && x<14 && y>=1 && y<7){
+            const auto uv=inset_uv(x,y);
+            const auto tx=std::clamp(static_cast<int>(std::floor((uv[0]+du)*4)),0,3);
+            const auto ty=std::clamp(static_cast<int>(std::floor((uv[1]+dv)*4)),0,3);
+            color=palette[(tx+ty)%4];
+        }
+        std::copy(color.begin(),color.end(),out.begin()+(y*16+x)*4);
+    }
+    return out;
+}
+TextureReplay inset_control(uint32_t mode) {
+    auto replay=emulator_texture_replay_v1(6);
+    const auto baseline=inset_pixels(0,0);
+    if(replay.status || !std::equal(baseline.begin(),baseline.end(),replay.pixels))throw std::runtime_error("Inset control source/oracle mismatch");
+    constexpr double offset=1./64.;
+    const double du=(mode==3 || mode==7)?-offset:(mode==4 || mode==8)?offset:0;
+    const double dv=(mode==5 || mode==7)?-offset:(mode==6 || mode==8)?offset:0;
+    for(uint32_t n=0;n<replay.draw_count;++n){auto& source=replay.draws[n];
+        for(uint32_t v=0;v<6;++v){
+            auto* p=source.draw.vertices+v*4;
+            if(mode<2){
+                const float old_w=unpack_float(p[3]),new_w=mode==0?1.f:2.f;
+                for(uint32_t c=0;c<3;++c)p[c]=pack_float(unpack_float(p[c])/old_w*new_w);
+                p[3]=pack_float(new_w);
+            }
+            source.varyings[v*4]=pack_float(unpack_float(source.varyings[v*4])+static_cast<float>(du));
+            source.varyings[v*4+1]=pack_float(unpack_float(source.varyings[v*4+1])+static_cast<float>(dv));
+        }
+        if(mode==2)for(uint32_t triangle=0;triangle<6;triangle+=3)for(uint32_t c=0;c<4;++c){
+            std::swap(source.draw.vertices[(triangle+1)*4+c],source.draw.vertices[(triangle+2)*4+c]);
+            std::swap(source.varyings[(triangle+1)*4+c],source.varyings[(triangle+2)*4+c]);
+        }
+    }
+    const auto expected=inset_pixels(du,dv);std::copy(expected.begin(),expected.end(),replay.pixels);
+    return replay;
+}
+bool inset_uv_capture(Context& context,bool unit_w) {
+    auto replay=inset_control(unit_w?0:9);
+    std::vector<uint8_t> actual;
+    if(!render_guest_commands(context,replay,nullptr,nullptr,nullptr,&actual))throw std::runtime_error("Incomplete float UV readback");
+    // A diagnostic interpolation bound, not a tolerance on guest color checks.
+    // Every original and control texture comparison remains byte-exact.
+    constexpr double tolerance=0.0001;
+    size_t unexpected=0;double maximum=0;
+    std::ostringstream observed,reference;
+    for(uint32_t y=0;y<8;++y)for(uint32_t x=0;x<16;++x){
+        const auto index=y*16+x;const auto uv=inset_uv(x,y);
+        if(index){observed<<',';reference<<',';}
+        observed<<'[';reference<<'[';bool bad=false;
+        for(uint32_t c=0;c<4;++c){
+            uint32_t bits;std::memcpy(&bits,actual.data()+index*16+c*4,4);
+            const auto value=unpack_float(bits);
+            const auto expected=c<2?uv[c]:c==3?1.:0.;
+            if(c<2){if(c){observed<<',';reference<<',';}observed<<bits;reference<<pack_float(static_cast<float>(expected));}
+            const bool covered=x>=2 && x<14 && y>=1 && y<7;
+            if(!std::isfinite(value))bad=true;
+            else {const auto error=std::abs(value-expected);maximum=std::max(maximum,error);if(error>((covered && c<2)?tolerance:0.))bad=true;}
+        }
+        observed<<']';reference<<']';if(bad)++unexpected;
+    }
+    std::ostringstream evidence;
+    evidence<<std::setprecision(10)<<"{\"interpolation\":{\"width\":16,\"height\":8,\"encoding\":\"row-major-float32-uint-bits-uv\",\"absoluteTolerance\":"<<tolerance
+        <<",\"maxAbsoluteError\":"<<maximum<<",\"unexpectedPixels\":"<<unexpected
+        <<",\"actualUvBits\":["<<observed.str()<<"],\"referenceUvBits\":["<<reference.str()<<"]}}";
+    context.last_comparison=evidence.str();return unexpected==0;
 }
 
 // This backend stays on the single Java render worker. Every frame is bounded;
@@ -1422,6 +1527,11 @@ GpuReport run_gpu_checks() {
     Context context;
     std::vector<Test> tests;
     std::string error;
+    const auto record=[&](const std::string& name,const auto& run,const std::string& detail){
+        context.last_comparison.clear();
+        const bool passed=run();
+        tests.push_back({name,passed,detail,context.last_comparison});
+    };
     try {
         context.initialize();
         tests.push_back({"rgba8-transfer-roundtrip", transfer_roundtrip(context), "Exact buffer/image/buffer byte comparison"});
@@ -1439,31 +1549,42 @@ GpuReport run_gpu_checks() {
         tests.push_back({"sm53-translated-rgba-draw",translated_shader_draw(context,0),"Original SM53 vertex/fragment code -> typed IR -> emitted SPIR-V; every RGBA pixel matches"});
         tests.push_back({"sm53-transformed-bgra-draw",translated_shader_draw(context,1),"Translated FMUL transforms position; geometry coverage, clear border and BGRA bytes match"});
         tests.push_back({"sm53-shader-change-ordered-draws",translated_shader_draw(context,2),"Two translated fragment shaders draw green then scoped red in one submission; all pixels match"});
-        tests.push_back({"guest-nv-draw-command-replay",guest_draw_command_replay(context,0),"Interpreted NRO -> NV commands -> SPH/shader/vertex/draw decode -> Vulkan; all512 bytes match guest and independent oracle"});
-        tests.push_back({"owned-nv-bgra-draw-command-replay",guest_draw_command_replay(context,1),"Decoded guest BGRA draw state, shader headers, transformed geometry and byte storage match"});
-        tests.push_back({"owned-nv-scissor-draw-command-replay",guest_draw_command_replay(context,2),"Decoded guest scissor and vertex transforms preserve surrounding pixels across ordered draws"});
+        record("guest-nv-draw-command-replay", [&]{return guest_draw_command_replay(context,0);}, "Interpreted NRO -> NV commands -> SPH/shader/vertex/draw decode -> Vulkan; all512 bytes match guest and independent oracle");
+        record("owned-nv-bgra-draw-command-replay", [&]{return guest_draw_command_replay(context,1);}, "Decoded guest BGRA draw state, shader headers, transformed geometry and byte storage match");
+        record("owned-nv-scissor-draw-command-replay", [&]{return guest_draw_command_replay(context,2);}, "Decoded guest scissor and vertex transforms preserve surrounding pixels across ordered draws");
         tests.push_back({"live-homebrew-frames-input-and-completion",live_homebrew_check(),"111 interpreted homebrew frames; live Vulkan completion before guest publication; catches, misses, reset and resource release"});
-        for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-sampled-texture-rgba","guest-sampled-texture-bgra","guest-sampled-texture-updated"}[i],render_guest_commands(context,emulator_texture_replay_v1(i)),"Guest SPH/IPA/TEX/TIC/TSC -> original SPIR-V and Vulkan; every byte matches independent sampling and raster oracles"});
-        for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-indexed-u8-portable-widening","guest-indexed-u16-negative-base","guest-indexed-u32-first-base-and-triangle"}[i],render_guest_commands(context,emulator_indexed_replay_v1(i)),"Captured guest index elements -> actual Vulkan indexed draws; first index, signed base, shared corners and every pixel match independent oracles"});
-        for(uint32_t i=0;i<6;++i)tests.push_back({std::array<const char*,6>{"guest-tiled-rgba","guest-multigob-rgba","guest-pitch-bc1-fallback","guest-tiled-bc1-alpha-fallback","guest-pitch-bc3-alpha-fallback","guest-tiled-bc3-alpha-fallback"}[i],render_guest_commands(context,emulator_texture_storage_replay_v1(i)),"Captured guest pitch/GOB storage and BC1/BC3 -> original RGBA fallback -> Vulkan; every color and alpha byte matches independent source and frame oracles"});
-        for(uint32_t i=0;i<9;++i)tests.push_back({std::array<const char*,9>{"guest-depth-never","guest-depth-less-occlusion","guest-depth-equal","guest-depth-less-equal","guest-depth-greater-occlusion","guest-depth-not-equal","guest-depth-greater-equal","guest-depth-always","guest-depth-read-only"}[i],guest_depth_replay(context,i),"Guest B197 ZF32 comparison/write state and captured shaders -> Vulkan D32 attachment; every color and depth bit matches independent oracles"});
-        for(uint32_t i=9;i<11;++i)tests.push_back({std::array<const char*,2>{"guest-depth-sloped-occlusion","guest-depth-reverse-sloped-occlusion"}[i-9],guest_depth_replay(context,i),"Guest varying vertex Z -> Vulkan raster depth interpolation; every color and D32 bit matches independent pixel-center plane oracles"});
-        for(uint32_t i=0;i<16;++i){const auto clear=emulator_depth_clear_replay_v1(i);tests.push_back({"guest-depth-clear-"+std::to_string(i),render_guest_commands(context,clear.scene.color,nullptr,&clear.scene,&clear),"Captured B197 depth clears at actual draw positions -> VkCmdClearAttachments; every color and D32 bit matches independent full/partial/ordered oracles"});}
-        for(uint32_t i=0;i<8;++i)tests.push_back({"guest-projection-texture-"+std::to_string(i),render_guest_commands(context,emulator_texture_replay_v1(i+3)),"Captured clip-space positions -> actual Vulkan divide by W; every nearest-sampled screen-linear texture pixel matches independent coordinate formulas"});
-        for(uint32_t i=0;i<4;++i)tests.push_back({"guest-projection-indexed-"+std::to_string(i),render_guest_commands(context,emulator_indexed_replay_v1(i+3)),"Projected indexed byte/u16/u32 geometry, signed base, reversed winding and unused prefix; every framebuffer byte matches"});
-        for(uint32_t i=0;i<4;++i)tests.push_back({"guest-projection-depth-"+std::to_string(i),guest_depth_replay(context,i+11),"Actual clip-space Z/W and screen-linear depth interpolation; complete color and D32 readback matches independent formulas"});
+        for(uint32_t i=0;i<3;++i)record(std::array<const char*,3>{"guest-sampled-texture-rgba","guest-sampled-texture-bgra","guest-sampled-texture-updated"}[i], [&]{return render_guest_commands(context,emulator_texture_replay_v1(i));}, "Guest SPH/IPA/TEX/TIC/TSC -> original SPIR-V and Vulkan; every byte matches independent sampling and raster oracles");
+        for(uint32_t i=0;i<3;++i)record(std::array<const char*,3>{"guest-indexed-u8-portable-widening","guest-indexed-u16-negative-base","guest-indexed-u32-first-base-and-triangle"}[i], [&]{return render_guest_commands(context,emulator_indexed_replay_v1(i));}, "Captured guest index elements -> actual Vulkan indexed draws; first index, signed base, shared corners and every pixel match independent oracles");
+        for(uint32_t i=0;i<6;++i)record(std::array<const char*,6>{"guest-tiled-rgba","guest-multigob-rgba","guest-pitch-bc1-fallback","guest-tiled-bc1-alpha-fallback","guest-pitch-bc3-alpha-fallback","guest-tiled-bc3-alpha-fallback"}[i], [&]{return render_guest_commands(context,emulator_texture_storage_replay_v1(i));}, "Captured guest pitch/GOB storage and BC1/BC3 -> original RGBA fallback -> Vulkan; every color and alpha byte matches independent source and frame oracles");
+        for(uint32_t i=0;i<9;++i)record(std::array<const char*,9>{"guest-depth-never","guest-depth-less-occlusion","guest-depth-equal","guest-depth-less-equal","guest-depth-greater-occlusion","guest-depth-not-equal","guest-depth-greater-equal","guest-depth-always","guest-depth-read-only"}[i], [&]{return guest_depth_replay(context,i);}, "Guest B197 ZF32 comparison/write state and captured shaders -> Vulkan D32 attachment; every color and depth bit matches independent oracles");
+        for(uint32_t i=9;i<11;++i)record(std::array<const char*,2>{"guest-depth-sloped-occlusion","guest-depth-reverse-sloped-occlusion"}[i-9], [&]{return guest_depth_replay(context,i);}, "Guest varying vertex Z -> Vulkan raster depth interpolation; every color and D32 bit matches independent pixel-center plane oracles");
+        for(uint32_t i=0;i<16;++i){const auto clear=emulator_depth_clear_replay_v1(i);record("guest-depth-clear-"+std::to_string(i), [&]{return render_guest_commands(context,clear.scene.color,nullptr,&clear.scene,&clear);}, "Captured B197 depth clears at actual draw positions -> VkCmdClearAttachments; every color and D32 bit matches independent full/partial/ordered oracles");}
+        for(uint32_t i=0;i<8;++i)record("guest-projection-texture-"+std::to_string(i), [&]{return render_guest_commands(context,emulator_texture_replay_v1(i+3));}, "Captured clip-space positions -> actual Vulkan divide by W; every nearest-sampled screen-linear texture pixel matches independent coordinate formulas");
+        for(uint32_t i=0;i<4;++i)record("guest-projection-indexed-"+std::to_string(i), [&]{return render_guest_commands(context,emulator_indexed_replay_v1(i+3));}, "Projected indexed byte/u16/u32 geometry, signed base, reversed winding and unused prefix; every framebuffer byte matches");
+        for(uint32_t i=0;i<4;++i)record("guest-projection-depth-"+std::to_string(i), [&]{return guest_depth_replay(context,i+11);}, "Actual clip-space Z/W and screen-linear depth interpolation; complete color and D32 readback matches independent formulas");
+        for(uint32_t i=0;i<10;++i){
+            const std::array<const char*,10> names{{"unit-w","uniform-w-two","reverse-winding","u-minus","u-plus","v-minus","v-plus","uv-minus","uv-plus","repeat-original"}};
+            record(std::string("inset-control-")+names[i],[&]{return render_guest_commands(context,inset_control(i));},"Diagnostic copy of original inset replay; independent rectangle/texel oracle, exact color bytes; coordinate offsets are 1/64 normalized");
+        }
+        for(bool unit_w:{false,true}){
+            try {record(unit_w?"inset-uv-unit-w":"inset-uv-variable-w",[&]{return inset_uv_capture(context,unit_w);},"Diagnostic float attachment observes original translated vertex output before sampling; complete UV bit pairs, exact coverage, absolute UV bound 0.0001; original color tests remain strict");}
+            catch(const std::exception& e){tests.push_back({unit_w?"inset-uv-unit-w":"inset-uv-variable-w",false,std::string("UV capture unavailable: ")+e.what()});}
+        }
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 71 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 83 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":15,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":16,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
          << ",\"deviceType\":" << context.properties.deviceType
+         << ",\"rasterPrecision\":{\"subPixelPrecisionBits\":" << context.properties.limits.subPixelPrecisionBits
+         << ",\"subTexelPrecisionBits\":" << context.properties.limits.subTexelPrecisionBits
+         << ",\"mipmapPrecisionBits\":" << context.properties.limits.mipmapPrecisionBits << '}'
          << ",\"isSoftwareRenderer\":" << (context.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU ? "true" : "false")
          << ",\"features\":{\"textureCompressionBC\":" << (context.features.textureCompressionBC ? "true" : "false")
          << ",\"textureCompressionASTC_LDR\":" << (context.features.textureCompressionASTC_LDR ? "true" : "false")
@@ -1472,7 +1593,9 @@ GpuReport run_gpu_checks() {
          << capabilities.str() << ",\"tests\":[";
     for (size_t index = 0; index < tests.size(); ++index) {
         if (index) json << ',';
-        json << "{\"name\":" << quoted(tests[index].name) << ",\"passed\":" << (tests[index].passed ? "true" : "false") << ",\"detail\":" << quoted(tests[index].detail) << '}';
+        json << "{\"name\":" << quoted(tests[index].name) << ",\"passed\":" << (tests[index].passed ? "true" : "false") << ",\"detail\":" << quoted(tests[index].detail);
+        if(!tests[index].comparison.empty())json<<",\"comparison\":"<<tests[index].comparison;
+        json << '}';
     }
     json << "],\"diagnosticAllocations\":{\"scope\":\"all-lab-workloads\",\"bytesRequested\":" << context.allocation_bytes
          << ",\"count\":" << context.allocations.size() << ",\"includesDriverOverhead\":false},\"allPassed\":" << (passed ? "true" : "false") << ",\"error\":" << quoted(error) << '}';
@@ -1522,6 +1645,7 @@ std::string texture_scene_json(bool running,const std::string& error="") {
       << ",\"isSoftwareRenderer\":" << (scene && scene->context.properties.deviceType==VK_PHYSICAL_DEVICE_TYPE_CPU?"true":"false")
       << ",\"validationErrors\":" << (scene?scene->context.validation_errors.load():0)
       << ",\"frameAllocationCount\":" << (scene?scene->context.allocations.size():0)
+      << ",\"comparison\":" << (scene && !scene->context.last_comparison.empty()?scene->context.last_comparison:"null")
       << ",\"error\":" << quoted(error) << "}";return j.str();
 }
 }
@@ -1553,3 +1677,26 @@ std::string start_texture_scene(void* window,unsigned variant) {
     }catch(const std::exception& e){const auto result=texture_scene_json(false,e.what());texture_scene.reset();return result;}
 }
 std::string stop_texture_scene() {const auto result=texture_scene_json(false,texture_scene?texture_scene->error:"");texture_scene.reset();return result;}
+
+#ifndef __ANDROID__
+// Host test entry point only; no test switch or injected reference ships in APKs.
+GpuReport run_replay_evidence_self_test() {
+    try {
+        Context context;context.initialize();
+        auto color=emulator_texture_replay_v1(6);color.pixels[0]^=1;
+        const bool rejected_color=!render_guest_commands(context,color);
+        const auto color_json=context.last_comparison;
+        auto depth=emulator_depth_replay_v1(11);depth.expected[127]^=1;
+        const bool rejected_depth=!render_guest_commands(context,depth.color,nullptr,&depth);
+        const auto depth_json=context.last_comparison;
+        texture_scene=std::make_unique<LiveRenderer>();texture_variant=42;texture_scene->initialize(nullptr);
+        const bool rejected_scene=texture_scene->render(color)!=0;
+        const auto scene_json=texture_scene_json(false,texture_scene->error);
+        const bool not_published=texture_scene->completed==0 && texture_scene->presented==0;
+        const bool validated=context.validation_errors==0 && texture_scene->context.validation_errors==0;
+        texture_scene.reset();
+        const bool passed=rejected_color && rejected_depth && rejected_scene && not_published && validated;
+        return {passed,"{\"passed\":"+std::string(passed?"true":"false")+",\"colorFailure\":"+color_json+",\"depthFailure\":"+depth_json+",\"sceneFailure\":"+scene_json+"}"};
+    }catch(const std::exception& e){texture_scene.reset();return {false,"{\"passed\":false,\"error\":"+quoted(e.what())+"}"};}
+}
+#endif

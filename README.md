@@ -16,7 +16,7 @@ blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
 The Android app embeds this engine, eighteen guest checks, fifty NV API scenarios,
-seventy-six GPU core cases, twenty-five shader cases and seventy-one Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
+seventy-six GPU core cases, twenty-five shader cases and eighty-three Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
@@ -51,8 +51,8 @@ The [shader translation batch](docs/shader-translation-batch.md) adds original t
 and SPIR-V. The [guest draw batch](docs/guest-draw-batch.md) connects SPH headers, vertex
 fetch, B197 draw state, transactional rasterization and guest-command Vulkan replay.
 The supplied [0.17 G720 report](docs/validation/g720-shader-translation-batch.md) passes
-all78 previous checks. The [0.18 G720 report](docs/validation/g720-guest-draw-batch.md)
-passes all102. The [0.19 live G720 report](docs/validation/g720-live-homebrew.md)
+all 78 previous checks. The [0.18 G720 report](docs/validation/g720-guest-draw-batch.md)
+passes all 102. The [0.19 live G720 report](docs/validation/g720-live-homebrew.md)
 passes103 checks and records578 presented homebrew frames. Broader shaders, general
 display services and commercial games remain open.
 
@@ -72,7 +72,7 @@ the single run to 208 diagnostics and 39 patterns, now
 [confirmed on physical Mali](docs/validation/g720-depth-clear.md). The
 [0.27 projection batch](docs/projection-batch.md) adds division by positive W
 across textures, indexed geometry and depth: 240 diagnostics and 55 patterns.
-The [physical 0.27 report](docs/validation/g720-projection.md) passes 239/240 checks and 54/55 patterns; the projected inset texture fails exact pixel comparison. That issue remains open.
+The [physical 0.27 report](docs/validation/g720-projection.md) passes 239/240 checks and 54/55 patterns; the projected inset texture fails exact pixel comparison. The 0.27.1 report reproduces the same failure. The [0.27.2 investigation](docs/inset-evidence.md) adds twelve controls and exact failure evidence; a physical repair is not yet confirmed.
 Broader 3D/runtime and games remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
@@ -82,23 +82,23 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.27.1-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.27.2-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
 Tap **Test all & export JSON** on the home screen to display all 55 patterns,
-run all 240 checks and automatically save the JSON in **Downloads/Emulator**.
+run all 252 checks and automatically save the JSON in **Downloads/Emulator**.
 The result offers **Share JSON**. See [one-tap testing](docs/one-tap-testing.md).
 Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.1-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.2-dev).
 The existing Android application ID/signing identity is retained for updates.
 The [in-app updater](docs/app-updates.md) now checks private GitHub releases, verifies downloads and opens Android's installer. Connect once under **Settings → App updates** using read-only repository access.
 See the [projection profile](docs/projection-batch.md) and
-[0.27 rendering validation](docs/validation/android-projection.md) and [updater validation](docs/validation/android-app-updates.md).
+[0.27 rendering validation](docs/validation/android-projection.md) and [updater validation](docs/validation/android-app-updates.md). See [0.27.2 investigation validation](docs/validation/android-inset-evidence.md).
 This is a debug development build, not a production-ready commercial-game emulator.
 See [indexed geometry](docs/indexed-geometry-batch.md) and [storage implementation](docs/texture-storage-batch.md) and [build verification](docs/validation/android-texture-storage.md).
 
@@ -214,12 +214,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.1-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.2-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
@@ -251,7 +251,7 @@ Output: `android/gpu-lab/build/outputs/apk/debug/gpu-lab-debug.apk`.
 The APK includes arm64-v8a and x86_64 libraries. For support, open **Settings → Diagnostics**, select **Run all checks**, then **Export report** to save its JSON through Android's file
 picker. It uses the system Vulkan driver and requests no network or storage
 permissions. Reports explicitly distinguish software renderers from physical
-devices. Schema4/workload23 separates seventeen guest checks (`engine`), eleven GPU-core
+devices. Schema4/workload 23 separates seventeen guest checks (`engine`), eleven GPU-core
 cases (`gpuCore`), fifty NV scenarios (`nv`), twenty-five shader cases (`shader`) and
 nineteen Vulkan cases (`gpu`). All121 run together, with one summary and export. See [the Android boundary](docs/android-engine.md)
 for its build, report schema and verification limits.
