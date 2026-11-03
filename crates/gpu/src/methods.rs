@@ -46,6 +46,7 @@ pub enum ExecutionError {
     UnsupportedDrawState,
     Shader(String),
     DrawInputFeedback,
+    InputsNotSnapshotted,
     UninitializedRegister,
     EmptyCopy,
     Capacity,
@@ -92,6 +93,31 @@ struct Copy {
     target: GpuMemoryRange,
     buffer: Vec<u8>,
 }
+impl Copy {
+    fn resolve(&mut self, earlier: &[Copy]) -> Result<(), ExecutionError> {
+        match &self.source {
+            CopyInput::Prepared => {}
+            CopyInput::Memory(source) => read_projected(source, &mut self.buffer, earlier)?,
+            CopyInput::Solid {
+                color,
+                mask,
+                previous,
+            } => {
+                if let Some(source) = previous {
+                    read_projected(source, &mut self.buffer, earlier)?;
+                }
+                for pixel in self.buffer.chunks_exact_mut(4) {
+                    for component in 0..4 {
+                        if mask & (1 << component) != 0 {
+                            pixel[component] = color[component];
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
 #[derive(Debug)]
 pub(crate) struct PreparedBatch {
     state: MethodState,
@@ -101,6 +127,7 @@ pub(crate) struct PreparedBatch {
     draws: Vec<crate::Draw>,
     draw_inputs: Vec<GpuMemoryRange>,
     snapshot_bytes: usize,
+    inputs_snapshotted: bool,
     stats: ExecutionStats,
 }
 impl PreparedBatch {
@@ -121,35 +148,72 @@ impl PreparedBatch {
             .iter()
             .flat_map(|copy| copy.target.backing_ranges())
     }
+    pub(crate) fn read_after(
+        &self,
+        source: &GpuMemoryRange,
+        output: &mut [u8],
+    ) -> Result<(), ExecutionError> {
+        if !self.inputs_snapshotted {
+            return Err(ExecutionError::InputsNotSnapshotted);
+        }
+        if output.len() > MAX_BYTES {
+            return Err(ExecutionError::Capacity);
+        }
+        read_projected(source, output, &self.copies)
+    }
+    pub(crate) fn snapshot_inputs(&mut self) -> Result<(), ExecutionError> {
+        if !self.inputs_snapshotted {
+            for index in 0..self.copies.len() {
+                let (earlier, current) = self.copies.split_at_mut(index);
+                current[0].resolve(earlier)?;
+            }
+            self.inputs_snapshotted = true;
+        }
+        Ok(())
+    }
+    pub(crate) fn verify_frame_pixels(&self, pixels: &[u8]) -> Result<(), String> {
+        let clear = self.clears.first().ok_or("Missing frame clear")?;
+        let row_bytes = clear.width as usize * 4;
+        let rows = clear.height as usize;
+        if pixels.len() != row_bytes * rows || self.copies.len() < rows {
+            return Err("Frame projection size mismatch".into());
+        }
+        for (row, expected) in self.copies[..rows]
+            .iter()
+            .zip(pixels.chunks_exact(row_bytes))
+        {
+            // A full, unmasked first clear establishes every row byte even if
+            // the destination is write-only. No read permission is synthesized.
+            if row.buffer.len() != row_bytes
+                || !matches!(
+                    row.source,
+                    CopyInput::Solid {
+                        mask: 15,
+                        previous: None,
+                        ..
+                    }
+                )
+            {
+                return Err("Frame projection requires a full first clear".into());
+            }
+            let mut projected = row.buffer.clone();
+            overlay(&row.target, &mut projected, &self.copies);
+            if projected != expected {
+                return Err("Raster oracle differs from prepared memory effects".into());
+            }
+        }
+        Ok(())
+    }
     /// All fallible validation/allocation finishes before any memory changes.
     /// Pins hold immutable permissions/lengths; the executor is single threaded,
     /// and no callbacks or borrowed storage escape. Exact-sized accesses below
     /// therefore cannot fail unless an internal pin invariant is broken.
     pub(crate) fn commit(mut self) -> (MethodState, ExecutionStats) {
         for copy in &mut self.copies {
-            // Read at execution time so a later launch sees earlier writes,
-            // including through a different virtual address of the same backing.
-            match &copy.source {
-                CopyInput::Prepared => {}
-                CopyInput::Memory(source) => {
-                    source.read(&mut copy.buffer).expect("prepared read pin")
-                }
-                CopyInput::Solid {
-                    color,
-                    mask,
-                    previous,
-                } => {
-                    if let Some(source) = previous {
-                        source.read(&mut copy.buffer).expect("prepared color read");
-                    }
-                    for pixel in copy.buffer.chunks_exact_mut(4) {
-                        for component in 0..4 {
-                            if mask & (1 << component) != 0 {
-                                pixel[component] = color[component];
-                            }
-                        }
-                    }
-                }
+            if !self.inputs_snapshotted {
+                // Default execution-time reads see preceding published effects.
+                // Explicit snapshots instead own all input-dependent bytes.
+                copy.resolve(&[]).expect("prepared read pin");
             }
             copy.target.write(&copy.buffer).expect("prepared write pin");
         }
@@ -178,6 +242,7 @@ impl MethodState {
             draws: Vec::new(),
             draw_inputs: Vec::new(),
             snapshot_bytes: 0,
+            inputs_snapshotted: false,
             stats: ExecutionStats {
                 methods: writes.len(),
                 ..ExecutionStats::default()
@@ -396,6 +461,13 @@ impl PreparedBatch {
                     .try_reserve_exact(length)
                     .map_err(|_| ExecutionError::Capacity)?;
                 buffer.resize(length, 0);
+                for pixel in buffer.chunks_exact_mut(4) {
+                    for component in 0..4 {
+                        if mask & (1 << component) != 0 {
+                            pixel[component] = color[component];
+                        }
+                    }
+                }
                 self.copies.push(Copy {
                     source: CopyInput::Solid {
                         color,
@@ -417,6 +489,39 @@ impl PreparedBatch {
 
 fn overlaps(a: BackingRange, b: BackingRange) -> bool {
     a.id == b.id && a.offset < b.offset + b.length && b.offset < a.offset + a.length
+}
+/// Resolve an ordered read without publishing any prepared writes. Backing IDs
+/// and offsets, rather than virtual addresses, preserve aliases and split views.
+/// Applying each target span in its write order also matches repeated backing
+/// spans within a single target pin. No extra copy of the pending effects is made.
+fn read_projected(
+    source: &GpuMemoryRange,
+    output: &mut [u8],
+    copies: &[Copy],
+) -> Result<(), ExecutionError> {
+    source.read(output).map_err(ExecutionError::Memory)?;
+    overlay(source, output, copies);
+    Ok(())
+}
+fn overlay(source: &GpuMemoryRange, output: &mut [u8], copies: &[Copy]) {
+    for copy in copies {
+        let mut written = 0;
+        for target in copy.target.backing_ranges() {
+            let mut read = 0;
+            for input in source.backing_ranges() {
+                if overlaps(target, input) {
+                    let start = target.offset.max(input.offset);
+                    let end = (target.offset + target.length).min(input.offset + input.length);
+                    let to = read + start - input.offset;
+                    let from = written + start - target.offset;
+                    output[to..to + end - start]
+                        .copy_from_slice(&copy.buffer[from..from + end - start]);
+                }
+                read += input.length;
+            }
+            written += target.length;
+        }
+    }
 }
 impl PreparedBatch {
     fn add_draw(

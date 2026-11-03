@@ -47,6 +47,9 @@ A successful batch executes copies in order and consumes its front exactly once.
 Later copies read earlier writes, including via another virtual alias. Command
 bytes were captured at admission; data mappings and bytes resolve at execution.
 The single-thread reference executor has no callbacks or escaped backing borrows.
+The later [memory projection API](gpu-memory-projection.md) adds an explicit
+`snapshot_inputs()` option for callers that need stable dependencies before
+publication. Default execution-time reads remain unchanged.
 Prepared pins retain immutable rights and lengths, making exact-sized commit
 accesses infallible under those invariants. Internal invariant violations panic;
 this is not crash isolation or a concurrent renderer implementation.

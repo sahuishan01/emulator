@@ -76,9 +76,11 @@ general graphics services and commercial games remain separate open gates.
 The [0.23 storage batch](texture-storage-batch.md) adds pitch/tiled RGBA and
 BC1/BC3 canonical conversion for hosts without BC. It batches six source-format/
 layout cases, ten core rejection/rollback/lifetime/budget groups and an original
-NRO. One-button testing now runs151 checks and twelve visible patterns. New
-physical storage evidence remains pending; guest depth, broader shaders/runtime
-and general display services remain open.
+NRO. One-button testing runs 151 checks and twelve visible patterns, now
+[confirmed on physical G720](validation/g720-texture-storage.md).
+[Ordered input snapshots and memory projection](gpu-memory-projection.md) form
+the next source step toward transactional depth planning. Guest depth, broader
+shaders/runtime and general display services remain open.
 
 ## Milestones and dependency gates
 

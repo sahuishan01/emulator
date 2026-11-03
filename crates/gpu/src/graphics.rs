@@ -60,6 +60,10 @@ impl PreparedSubmission {
                 }
             }
         }
+        // The independently composed shader/raster oracle must agree with the
+        // memory effects that will actually publish. Reuse the retained first
+        // clear's target pins; no GPU address lookup or new lifetime is needed.
+        self.batch.verify_frame_pixels(&pixels)?;
         Ok(GraphicsFrame {
             background: c,
             draws: draws.to_vec(),

@@ -1,8 +1,9 @@
 # Texture storage validation (0.23.0-dev)
 
-The supplied [0.22.1 physical report](g720-one-tap.md) confirms all134 prior
-diagnostics/six patterns on Mali-G720. New storage evidence below is from the
-host and owned software Android device; new Mali confirmation is pending.
+The build evidence below is from the host and owned software Android device.
+The subsequently supplied [0.23.0 physical report](g720-texture-storage.md) now
+also confirms all 151 diagnostics and twelve patterns on Mali-G720, including
+the new storage cases without native BC support. Its validation layer was disabled.
 
 ## Host and packaging
 

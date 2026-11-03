@@ -151,6 +151,13 @@ fn live_frame_preserves_operation_order_and_serial_pixels_without_committing() {
         let mut untouched = [0; 512];
         cpu.read(0x1800, &mut untouched).unwrap();
         assert_eq!(untouched, [0; 512]);
+        let work = work.snapshot_inputs().unwrap();
+        let pin = gpu
+            .pin(GpuVa((1 << 32) + 0x800), 512, emulator_memory::Access::Read)
+            .unwrap();
+        let mut projected = [0; 512];
+        work.read_after(&pin, &mut projected).unwrap();
+        assert_eq!(projected.as_slice(), frame.pixels);
         work.commit();
         let mut actual = [0; 512];
         cpu.read(0x1800, &mut actual).unwrap();
@@ -163,4 +170,46 @@ fn live_frame_preserves_operation_order_and_serial_pixels_without_committing() {
     entry[4..8].copy_from_slice(&(1u32 | (128 << 10)).to_le_bytes());
     let (_, work) = ChannelProcessor::default().prepare(&gpu, &entry).unwrap();
     assert!(work.graphics_frame().is_err());
+}
+
+#[test]
+fn live_frame_rejects_backing_aliases_that_disagree_with_the_raster_oracle() {
+    let (cpu, mut gpu, entry) = rig(0);
+    let base = 1 << 32;
+    let id = gpu
+        .pin(GpuVa(base), 4096, emulator_memory::Access::Read)
+        .unwrap()
+        .mapping_ids()
+        .next()
+        .unwrap();
+    gpu.unmap(id).unwrap();
+    gpu.map(
+        GpuVa(base),
+        cpu.pin(0x1000, 0x800, Permissions::READ_WRITE).unwrap(),
+    )
+    .unwrap();
+    // Eight distinct GPU rows all refer to the same retained physical row.
+    for row in 0..8 {
+        gpu.map(
+            GpuVa(base + 0x800 + row * 64),
+            cpu.pin(0x1800, 64, Permissions::READ_WRITE).unwrap(),
+        )
+        .unwrap();
+    }
+    gpu.map(
+        GpuVa(base + 0xa00),
+        cpu.pin(0x1a00, 0x600, Permissions::READ_WRITE).unwrap(),
+    )
+    .unwrap();
+    let (_, work) = ChannelProcessor::default().prepare(&gpu, &entry).unwrap();
+    assert!(work
+        .graphics_frame()
+        .unwrap_err()
+        .contains("Raster oracle differs"));
+    let mut bytes = [0; 512];
+    cpu.read(0x1800, &mut bytes).unwrap();
+    assert_eq!(bytes, [0; 512]);
+    drop(work);
+    cpu.read(0x1800, &mut bytes).unwrap();
+    assert_eq!(bytes, [0; 512]);
 }

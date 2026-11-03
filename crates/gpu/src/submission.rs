@@ -141,6 +141,26 @@ impl PreparedSubmission {
     pub fn write_ranges(&self) -> impl Iterator<Item = BackingRange> + '_ {
         self.batch.write_ranges()
     }
+    /// Resolve deferred inputs through an ordered backing overlay without
+    /// publishing writes. Repeating preserves the first snapshot. Commit then
+    /// uses captured bytes, despite later CPU mutation/unmapping. The default
+    /// path retains execution-time reads unless this is explicitly requested.
+    pub fn snapshot_inputs(mut self) -> Result<Self, crate::ExecutionError> {
+        self.batch.snapshot_inputs()?;
+        Ok(self)
+    }
+    /// After snapshot_inputs, read this batch's ordered writes overlaid on a pin
+    /// without changing memory or consuming the batch. The pin must permit reads and
+    /// exactly match output (at most 4 MiB). Unwritten bytes are read at this call;
+    /// prepared writes are immutable. This is a synchronous reference projection,
+    /// not a guest fence or an asynchronous visibility/cache model.
+    pub fn read_after(
+        &self,
+        source: &GpuMemoryRange,
+        output: &mut [u8],
+    ) -> Result<(), crate::ExecutionError> {
+        self.batch.read_after(source, output)
+    }
     pub fn commit(mut self) -> (SubmissionQueue, crate::ExecutionStats) {
         let (state, stats) = self.batch.commit();
         self.queue.methods = state;
@@ -261,6 +281,7 @@ impl SubmissionQueue {
     /// Consume this queue into a prepared transaction, preserving all pins.
     /// Preparation errors/drop have no memory effects. No mapping changes or
     /// callbacks occur during commit; data is read through its retained pins.
+    /// Call snapshot_inputs explicitly for immutable, ordered input resolution.
     pub fn prepare_front(
         self,
         space: &GpuAddressSpace,

@@ -13,12 +13,44 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.23.0-dev texture storage
+## Source follow-up: ordered memory projection
 
-Latest supplied report confirms0.22.1 on physical G720: all134 diagnostics and
-all6 ordered current-run patterns, including indexed geometry. Four Rust groups
-match host exceptarch; native validation disabled, BC supportfalse. Hash/limits
-in docs/validation/g720-one-tap.md; rawcopy ignoredreports/physical-g720/.
+The supplied 0.23.0 report now confirms all 151 checks and twelve patterns on
+physical G720. Four Rust groups match the host exactly except architecture;
+all 28 native records also match. BC support is false, validation disabled.
+File SHA-256: 0555229a829d70cda57c75c7354dddcf1cb43e53436084d193bd9d9d1712eb87.
+See docs/validation/g720-texture-storage.md. Ignored raw copy:
+reports/physical-g720/v0.23.0-dev-report.json.
+
+Source now adds explicit PreparedSubmission::snapshot_inputs() and read_after()
+for ordered backing-aware projection. Snapshot uses existing scratch buffers,
+retains pins and is idempotent; commit publishes resolved bytes. Default DMA/
+masked-clear commit-time reads are preserved, including the existing test for
+CPU mutation between prepare and commit. read_after requires snapshot, checks
+rights/length and caps output at 4 MiB; unwritten bytes remain live at read time.
+Split/reordered/repeated backing spans and aliased dependent writes are covered.
+graphics_frame cross-checks its raster oracle against actual ordered backing
+effects and rejects aliased rows that cannot represent the expected framebuffer.
+See docs/gpu-memory-projection.md. No guest depth or DMA-to-draw feedback support
+is implied. The released APK remains 0.23.0-dev; these internal source changes
+will join the next connected rendering batch instead of another phone cycle.
+
+Verified: 218 workspace Rust tests (12 new projection + one aliased-row case),
+then final GPU tests after adding draw/projection comparison; fmt/Clippy with
+warnings denied; all 31 independent LLVM fixtures. Rebuilt host archive/native
+runner passes all 28 Vulkan checks with enabled validation and zero errors.
+Four Rust groups and all 28 native records equal the 0.23 baseline exactly.
+Ignored evidence: reports/gpu-projection-*. New code has no phone validation or
+new APK yet. Next implement per-operation depth attachment reads/comparisons/
+writes over a transactional overlay; the public completed-plan snapshot is a
+foundation, not depth execution. Keep current feedback rejection until those
+semantics are explicitly handled.
+
+## Released implementation: 0.23.0-dev texture storage
+
+The preceding 0.22.1 physical report confirmed 134 checks and six patterns.
+The supplied 0.23.0 report above now closes the 151-check/twelve-pattern storage
+checkpoint. Physical validation remains disabled and native BC support false.
 
 Original bounded pitch/GOB RGBA,BC1/BC3 capture+decode now feed canonicalRGBA
 into the existing Vulkan shader path without nativeBC. Width/height<=64; pitch
@@ -56,7 +88,7 @@ before manual tests/shutdown. Exact raw frames encoded to PNG (no second capture
 bounded fresh-run recapture supported, final run needs none. No external Python
 dependency. Evidence docs/validation/android-texture-storage.md and ignored
 reports/android-qa/v0.23.0-dev/{one-tap-final-apk,manual-textures,batch}/.
-NewMali151/12 confirmation pending; commercial games remain unsupported.
+Physical Mali 151/12 confirmation is now recorded above; commercial games remain unsupported.
 Next major GPU correctness gate is guest depth/ordering, not another host-only
 triangle. GOB utility is reusable, but depth writes need proper transactional
 read/write overlay and alias rules. Do not infer game compatibility from this lab.

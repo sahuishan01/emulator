@@ -88,5 +88,7 @@ window is opaque; display samples check RGB while native readback checks alpha.
 
 App0.23.0-dev/code26/schema4/workload26/native11 contains151 checks:
 engine18/NV50/core30/shader25/Vulkan28, plus12 visible pattern snapshots.
-The supplied [0.22.1 physical report](validation/g720-one-tap.md) confirms the
-prior134/six-pattern checkpoint; new storage confirmation on Mali is pending.
+The supplied [0.23.0 physical report](validation/g720-texture-storage.md) confirms
+all 151 checks and twelve patterns on the target Mali GPU, including BC1/BC3
+decoding and presentation without native BC support. Validation layers were
+disabled; this does not establish general 3D or commercial-game support.

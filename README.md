@@ -59,7 +59,11 @@ display services and commercial games remain open.
 The supplied [0.21.1 G720 report](docs/validation/g720-texture-batch.md) confirms
 all 121 checks and presentation of the updated texture pattern. The supplied [0.22.1 physical report](docs/validation/g720-one-tap.md) confirms
 all 134 diagnostics and six visible patterns, including indexed geometry. The new
-storage batch has151 checks/twelve patterns; target-phone confirmation is pending.
+storage batch is now also [confirmed on the target Mali GPU](docs/validation/g720-texture-storage.md):
+all 151 checks and twelve patterns pass, including BC1/BC3 without native BC support.
+The next [source foundation](docs/gpu-memory-projection.md) adds explicit ordered
+memory snapshots and a backing-write check for the live raster oracle. Guest
+depth and general 3D/game support remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
 Eden/Lemon checkouts under `upstream/` are historical references, ignored by
@@ -256,8 +260,8 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has196 Rust tests and29 independently assembled fixtures
-(12 raw A64 programs and seventeen NROs). Verify guest draw pages with
+The current suite has 218 Rust tests and 31 independently assembled fixtures
+(12 raw A64 programs and nineteen NROs). Verify guest draw pages with
 `python3 tools/generate_draw_fixtures.py --check` and emitted shader modules with
 `python3 tools/generate_shader_fixtures.py --check --validate-spirv`.
 Verify texture/varying fixtures with `python3 tools/generate_texture_fixtures.py --check --validate-spirv`.
