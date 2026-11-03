@@ -1449,14 +1449,17 @@ GpuReport run_gpu_checks() {
         for(uint32_t i=0;i<9;++i)tests.push_back({std::array<const char*,9>{"guest-depth-never","guest-depth-less-occlusion","guest-depth-equal","guest-depth-less-equal","guest-depth-greater-occlusion","guest-depth-not-equal","guest-depth-greater-equal","guest-depth-always","guest-depth-read-only"}[i],guest_depth_replay(context,i),"Guest B197 ZF32 comparison/write state and captured shaders -> Vulkan D32 attachment; every color and depth bit matches independent oracles"});
         for(uint32_t i=9;i<11;++i)tests.push_back({std::array<const char*,2>{"guest-depth-sloped-occlusion","guest-depth-reverse-sloped-occlusion"}[i-9],guest_depth_replay(context,i),"Guest varying vertex Z -> Vulkan raster depth interpolation; every color and D32 bit matches independent pixel-center plane oracles"});
         for(uint32_t i=0;i<16;++i){const auto clear=emulator_depth_clear_replay_v1(i);tests.push_back({"guest-depth-clear-"+std::to_string(i),render_guest_commands(context,clear.scene.color,nullptr,&clear.scene,&clear),"Captured B197 depth clears at actual draw positions -> VkCmdClearAttachments; every color and D32 bit matches independent full/partial/ordered oracles"});}
+        for(uint32_t i=0;i<8;++i)tests.push_back({"guest-projection-texture-"+std::to_string(i),render_guest_commands(context,emulator_texture_replay_v1(i+3)),"Captured clip-space positions -> actual Vulkan divide by W; every nearest-sampled screen-linear texture pixel matches independent coordinate formulas"});
+        for(uint32_t i=0;i<4;++i)tests.push_back({"guest-projection-indexed-"+std::to_string(i),render_guest_commands(context,emulator_indexed_replay_v1(i+3)),"Projected indexed byte/u16/u32 geometry, signed base, reversed winding and unused prefix; every framebuffer byte matches"});
+        for(uint32_t i=0;i<4;++i)tests.push_back({"guest-projection-depth-"+std::to_string(i),guest_depth_replay(context,i+11),"Actual clip-space Z/W and screen-linear depth interpolation; complete color and D32 readback matches independent formulas"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 55 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 71 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":14,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":15,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1525,7 +1528,7 @@ std::string texture_scene_json(bool running,const std::string& error="") {
 std::string start_texture_scene(void* window,unsigned variant) {
     try {
         texture_scene.reset();texture_variant=variant;
-        if(variant>38)throw std::runtime_error("Unknown texture scene variant");
+        if(variant>54)throw std::runtime_error("Unknown texture scene variant");
         texture_scene=std::make_unique<LiveRenderer>();texture_scene->initialize(window);
         const auto render=[&](const auto& replay) {
             if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
@@ -1535,10 +1538,16 @@ std::string start_texture_scene(void* window,unsigned variant) {
             const auto depth=emulator_depth_replay_v1(variant-12);
             if(depth.color.status)throw std::runtime_error(std::string(depth.color.error,strnlen(depth.color.error,sizeof(depth.color.error))));
             if(texture_scene->render(depth.color,&depth))throw std::runtime_error(texture_scene->error);
-        }else{
+        }else if(variant<39){
             const auto clear=emulator_depth_clear_replay_v1(variant-23);
             if(clear.scene.color.status)throw std::runtime_error(std::string(clear.scene.color.error,strnlen(clear.scene.color.error,sizeof(clear.scene.color.error))));
             if(texture_scene->render(clear.scene.color,&clear.scene,&clear))throw std::runtime_error(texture_scene->error);
+        }else if(variant<47)render(emulator_texture_replay_v1(variant-36));
+        else if(variant<51)render(emulator_indexed_replay_v1(variant-44));
+        else {
+            const auto depth=emulator_depth_replay_v1(variant-40);
+            if(depth.color.status)throw std::runtime_error(std::string(depth.color.error,strnlen(depth.color.error,sizeof(depth.color.error))));
+            if(texture_scene->render(depth.color,&depth))throw std::runtime_error(texture_scene->error);
         }
         return texture_scene_json(true);
     }catch(const std::exception& e){const auto result=texture_scene_json(false,e.what());texture_scene.reset();return result;}

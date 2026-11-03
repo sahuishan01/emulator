@@ -125,6 +125,9 @@ pub fn replay(index: u32) -> IndexedReplay {
     out
 }
 fn fill(index: u32, out: &mut IndexedReplay) -> Result<(), String> {
+    if index >= 3 {
+        return super::projection::fill_indexed(index - 3, out);
+    }
     let mut page = PAGES
         .get(index as usize)
         .ok_or("Unknown indexed case")?
@@ -410,7 +413,7 @@ mod tests {
         for c in cases() {
             assert!(c.passed, "{}: {}", c.name, c.error);
         }
-        let r = replay(3);
+        let r = replay(7);
         assert_ne!(r.status, 0);
         assert_eq!((r.draw_count, r.image_bytes), (0, 0));
     }

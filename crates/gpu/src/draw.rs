@@ -402,8 +402,9 @@ fn capture(
 }
 impl Draw {
     /// Fixed 1/16-pixel grid, pixel-center sampling and top-left edge ownership.
-    /// Only finite, unclipped w=1 positions on this grid are accepted. Fragment
-    /// attributes and enabled depth interpolate screen-linearly; no blending/culling.
+    /// Finite positive normal W with a normal reciprocal is required. Unclipped
+    /// projected XY must lie exactly on this grid. IPA.PASS attributes remain
+    /// screen-linear; enabled depth interpolates Z/W. No clipping/blending/culling.
     pub(crate) fn raster(&self) -> Result<Vec<Option<[u8; 4]>>, E> {
         self.raster_depth().map(|r| r.0)
     }
@@ -446,31 +447,37 @@ impl Draw {
                 .invoke([*input, *extra], None)
                 .map_err(|e| E::Shader(e.to_string()))?;
             let p = invocation.output.map(f32::from_bits);
-            depths.push(p[2]);
             let varying = invocation.varying.unwrap_or([0; 4]).map(f32::from_bits);
             if varying.iter().any(|x| !x.is_finite()) {
                 return Err(invalid());
             }
             attributes.push(varying);
             if p.iter().any(|x| !x.is_finite())
-                || p[3] != 1.
-                || !(0.0..=1.0).contains(&p[2])
-                || !(-1.0..=1.0).contains(&p[0])
-                || !(-1.0..=1.0).contains(&p[1])
+                || p[3] <= 0.
+                || !p[3].is_normal()
+                || !(1. / p[3]).is_normal()
+                || !(0.0..=p[3]).contains(&p[2])
+                || !(-p[3]..=p[3]).contains(&p[0])
+                || !(-p[3]..=p[3]).contains(&p[1])
             {
                 return Err(invalid());
             }
+            // Wider reference arithmetic avoids accepting a rounded off-grid
+            // quotient. Retain captured clip coordinates for the host backend:
+            // its fixed-function stage performs the actual perspective divide.
+            let w = f64::from(p[3]);
+            depths.push((f64::from(p[2]) / w) as f32);
             let xy = [
-                (p[0] + 1.) * (s.width as f32 / 2.) * 16.,
-                (p[1] + 1.) * (s.height as f32 / 2.) * 16.,
+                (f64::from(p[0]) / w + 1.) * f64::from(s.width) * 8.,
+                (f64::from(p[1]) / w + 1.) * f64::from(s.height) * 8.,
             ];
             if xy.iter().any(|v| v.fract() != 0.) {
                 return Err(invalid());
             }
             // A rounded viewport sum must not make an off-grid NDC value
             // appear aligned. Require an exact reversible grid position.
-            if xy[0] / (s.width as f32 * 8.) - 1. != p[0]
-                || xy[1] / (s.height as f32 * 8.) - 1. != p[1]
+            if (xy[0] / (f64::from(s.width) * 8.) - 1.) * w != f64::from(p[0])
+                || (xy[1] / (f64::from(s.height) * 8.) - 1.) * w != f64::from(p[1])
             {
                 return Err(invalid());
             }

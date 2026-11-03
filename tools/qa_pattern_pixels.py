@@ -1,5 +1,21 @@
 """Independent screen-pixel formulas; no guest decoder or GPU readback as oracle."""
 def expected_pixel(variant,px,py):
+ if variant>=39:
+  i=variant-39
+  if i>=12:
+   center=4<=px<12 and 2<=py<6
+   if i==15 and not center:return (0,0,0,255)
+   return (255,0,0,255) if center and (i==14 or i<14 and px>=8) else (0,255,0,255)
+  rects=[(4,2,12,6),(0,0,16,8),(0,0,16,8),(2,1,14,7),(0,0,16,8),(0,0,16,8),(2,0,14,8),(.125,.125,15.875,7.875),(0,0,16,8),(2,0,14,8),(0,0,16,8),(4,0,12,8)]
+  x,y=px+.5,py+.5;r=rects[i];inside=lambda q:q[0]<=x<q[2] and q[1]<=y<q[3]
+  if not inside(r) or i in (5,11) and px<8:return (0,0,0,255)
+  c=((r[0]+8)/2,(r[1]+4)/2,(r[2]+8)/2,(r[3]+4)/2)
+  if inside(c) and (i!=10 or px+2*py<=14):r=c
+  import math
+  sx=max(0,min(3,math.floor(6*(x-r[0])/(r[2]-r[0])-1)))
+  sy=max(0,min(3,math.floor(6*(y-r[1])/(r[3]-r[1])-1)))
+  c=[(255,0,0,255),(255,255,0,255),(0,255,0,255),(0,255,255,255)][(sx+sy+(i==10))%4]
+  return c # BGRA storage is interpreted by Vulkan during presentation.
  if variant>=23:
   i=variant-23;c=4<=px<12 and 2<=py<6
   region=px>=8 if i in (2,5) else 8<=px<14 and 1<=py<7 if i==3 else px==15 and py==7 if i==14 else True

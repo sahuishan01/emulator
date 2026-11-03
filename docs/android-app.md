@@ -1,4 +1,4 @@
-# Android application (0.20 foundation, 0.26 depth clears)
+# Android application (0.20 foundation, 0.27 projection)
 
 The launcher is a library, with the original Catch player, the 0.21 guest texture scene, supported static
 NRO imports, text-mode execution, recents and settings. The home screen also offers
@@ -77,13 +77,13 @@ background in-memory resume feature.
 
 The library uses a full-page scroll in landscape; program output/settings scroll
 in either orientation. The only exported activity is HomeActivity. The diagnostics
-now run all 208 cases and export one report. The diagnostics, Catch and texture-scene caches use synchronized
+now run all 240 cases and export one report. The diagnostics, Catch and texture-scene caches use synchronized
 AtomicFile writes and bounded reads, including backup recovery. No QA document
 provider or its fixtures ship in the main APK.
 
 ## Remaining production work
 
-The [texture scene](texture-draw-batch.md) presents actual sampled guest shader output, supports 39 variants including indexed geometry, six compressed/tiled storage patterns, eleven depth patterns and sixteen depth-clear patterns, recreates on rotation/foreground and skips superseded queued work. Its support snapshot joins the ordinary report export. Imported programs still use the text runner.
+The [texture scene](texture-draw-batch.md) presents actual sampled guest shader output, supports 55 variants including indexed geometry, six compressed/tiled storage patterns, eleven depth patterns, sixteen depth-clear patterns and sixteen projection patterns, recreates on rotation/foreground and skips superseded queued work. Its support snapshot joins the ordinary report export. Imported programs still use the text runner.
 
 This is the application foundation, not production readiness. Broader CPU/runtime,
 module loading, normal HID/VI/BufferQueue, general graphics/shaders, audio,

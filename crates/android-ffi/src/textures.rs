@@ -137,6 +137,9 @@ pub fn replay(index: u32) -> TextureReplay {
     out
 }
 fn fill(index: u32, out: &mut TextureReplay) -> Result<(), String> {
+    if index >= 3 {
+        return super::projection::fill_texture(index - 3, out);
+    }
     let mut page = PAGES
         .get(index as usize)
         .ok_or("Unknown texture case")?
@@ -432,7 +435,7 @@ mod tests {
             assert_eq!(r.status, 0, "{}", String::from_utf8_lossy(&r.error));
             assert_eq!(r.pixels, super::expected(i as usize));
         }
-        let r = super::replay(3);
+        let r = super::replay(11);
         assert_ne!(r.status, 0);
         assert_eq!(r.draw_count, 0);
         assert_eq!(r.image_bytes, 0);

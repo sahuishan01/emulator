@@ -139,6 +139,9 @@ pub fn replay(index: u32) -> DepthReplay {
     out
 }
 fn fill(index: u32, out: &mut DepthReplay) -> Result<(), String> {
+    if index >= 11 {
+        return super::projection::fill_depth(index - 11, out);
+    }
     let page = PAGES.get(index as usize).ok_or("Unknown depth case")?;
     let (mem, gpu) = textures::setup(page.to_vec())?;
     let (_, work) = ChannelProcessor::default().prepare(&gpu, &textures::wire(0, WORDS))?;
@@ -443,6 +446,6 @@ mod tests {
         for c in super::cases() {
             assert!(c.passed, "{}: {}", c.name, c.error);
         }
-        assert_ne!(super::replay(11).status, 0);
+        assert_ne!(super::replay(15).status, 0);
     }
 }

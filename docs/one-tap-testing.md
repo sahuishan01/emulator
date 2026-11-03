@@ -1,8 +1,8 @@
 # One-tap testing and JSON export (0.22.1)
 
-The [0.26 depth-clear batch](depth-clear-batch.md) uses this workflow for
-39 patterns and 208 diagnostics: app/code 0.26.0-dev/29, schema/workload/native
-4/29/14. The new cases cover sixteen rendered scenarios and twenty portable
+The [0.27 projection batch](projection-batch.md) uses this workflow for
+55 patterns and 240 diagnostics: app/code 0.27.0-dev/30, schema/workload/native
+4/30/15. The new cases cover sixteen rendered scenarios and sixteen portable
 correctness groups in one run. Pattern and diagnostic totals are derived by
 the app. The older sections below describe historical checkpoints.
 

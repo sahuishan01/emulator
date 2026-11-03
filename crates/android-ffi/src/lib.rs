@@ -10,6 +10,7 @@ mod depth;
 mod depth_clear;
 mod draws;
 mod indexed;
+mod projection;
 mod storage;
 mod textures;
 pub use indexed::{IndexedDraw, IndexedReplay};
@@ -512,7 +513,7 @@ mod tests {
         assert_eq!(report.abi_version, 2);
         let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 60);
+        assert_eq!(text.matches("\"passed\":true").count(), 76);
         assert!(text.contains(
             "\"capturedSubmissions\":2,\"decodedWrites\":4,\"residentBytesAfterRelease\":0"
         ));

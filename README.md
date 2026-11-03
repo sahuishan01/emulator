@@ -16,7 +16,7 @@ blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
 The Android app embeds this engine, eighteen guest checks, fifty NV API scenarios,
-sixty GPU core cases, twenty-five shader cases and fifty-five Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
+seventy-six GPU core cases, twenty-five shader cases and seventy-one Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
@@ -68,7 +68,11 @@ now confirms all 168 checks and 21 patterns. The [0.25 interpolation extension](
 adds sloped depth, now [confirmed on physical Mali](docs/validation/g720-sloped-depth.md)
 with 172 diagnostics and 23 patterns. The [0.26 depth-clear batch](docs/depth-clear-batch.md)
 adds sixteen rendered scenarios and twenty portable correctness groups, bringing
-the single run to 208 diagnostics and 39 patterns. New Mali confirmation is pending.
+the single run to 208 diagnostics and 39 patterns, now
+[confirmed on physical Mali](docs/validation/g720-depth-clear.md). The
+[0.27 projection batch](docs/projection-batch.md) adds division by positive W
+across textures, indexed geometry and depth: 240 diagnostics and 55 patterns.
+New physical confirmation is pending.
 Broader 3D/runtime and games remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
@@ -78,22 +82,22 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.26.0-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.27.0-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
-Tap **Test all & export JSON** on the home screen to display all 39 patterns,
-run all 208 checks and automatically save the JSON in **Downloads/Emulator**.
+Tap **Test all & export JSON** on the home screen to display all 55 patterns,
+run all 240 checks and automatically save the JSON in **Downloads/Emulator**.
 The result offers **Share JSON**. See [one-tap testing](docs/one-tap-testing.md).
 Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.26.0-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.0-dev).
 The existing Android application ID/signing identity is retained for updates.
-See the [new depth-clear profile](docs/depth-clear-batch.md) and
-[0.26 build and Android validation](docs/validation/android-depth-clear.md).
+See the [projection profile](docs/projection-batch.md) and
+[0.27 build and Android validation](docs/validation/android-projection.md).
 This is a debug development build, not a production-ready commercial-game emulator.
 See [indexed geometry](docs/indexed-geometry-batch.md) and [storage implementation](docs/texture-storage-batch.md) and [build verification](docs/validation/android-texture-storage.md).
 
@@ -110,7 +114,7 @@ remain unsupported. See [the execution path and limits](docs/live-homebrew.md).
 
 Open **Texture scene → Open scene** in the library. **Next pattern** cycles through
 RGBA, BGRA, updated textures, indexed geometry and six pitch/tiled/BC1/BC3
-storage variants, eleven depth cases and sixteen depth-clear cases. Native BC support is not required for the software fallback. This renders our captured guest shaders,
+storage variants, eleven depth cases, sixteen depth-clear cases and sixteen projection cases. Native BC support is not required for the software fallback. This renders our captured guest shaders,
 vertex coordinates and texture descriptors through Vulkan; it is not a prerecorded
 image. The original guest tests pixels, rollback and resource lifetime. See the
 [texture and varying profile](docs/texture-draw-batch.md) and [indexed draw profile](docs/indexed-geometry-batch.md).
@@ -209,12 +213,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.26.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks

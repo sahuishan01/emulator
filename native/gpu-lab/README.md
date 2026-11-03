@@ -7,7 +7,7 @@ General guest shaders and commercial Switch games remain unsupported. The C++ im
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-55 bounded workloads (native workload version 14). The first nine are:
+71 bounded workloads (native workload version 15). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -149,3 +149,5 @@ The previous replay tests remain unchanged; general display queues and games are
 
 The 0.20 launcher is a library rather than the diagnostics screen. Its import,
 text execution, settings and lifecycle contracts are in [android-app.md](../../docs/android-app.md).
+
+The0.27 projection batch appends16 cases (56..71) for actual fixed-function W division across textures/indexed geometry/depth. Native workload15,71 checks. All21 value exports/layouts remain stable; see [projection profile](../../docs/projection-batch.md).

@@ -73,3 +73,5 @@ drives the sixteen new Android patterns and native diagnostics.
 
 See [build and Android evidence](validation/android-depth-clear.md). New physical
 Mali confirmation is pending; host/software Android evidence is separate.
+
+The supplied [physical 0.26 report](validation/g720-depth-clear.md) now confirms all208 checks and39 patterns.

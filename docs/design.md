@@ -8,7 +8,7 @@ interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
 event/thread waits, cancellation and virtual deadlines in one process. The Android
 application has a private SQLite library, bounded file-picker imports, static NRO
 text execution, settings and the live Catch player. Support diagnostics run eighteen
-guest checks, fifty NV cases, sixty GPU-core groups, twenty-five shader cases and fifty-five
+guest checks, fifty NV cases, seventy-six GPU-core groups, twenty-five shader cases and seventy-one
 Vulkan workloads, with report export. Broader synchronization and general guest
 graphics remain planned. See [the implemented app contracts](android-app.md), [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.
@@ -62,6 +62,11 @@ partial footprints preserve previous bits through ordered projection and read
 pins. Empty regions need no backing access. Vulkan executes the clear operations
 with explicit depth dependencies, then checks color/depth readback. Stencil,
 mixed clear masks and larger layouts remain explicit errors.
+
+The [0.27 positive-W projection batch](projection-batch.md) brings the corpus to
+240 diagnostics and 55 patterns; screen-linear IPA.PASS remains explicit. The
+[physical 0.26 report](validation/g720-depth-clear.md) confirms 208/39. Physical
+projection confirmation remains pending.
 
 ## 1. Process, addresses and memory
 

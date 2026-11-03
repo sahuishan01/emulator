@@ -13,7 +13,44 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.26.0-dev depth clears and expanded batch
+## Current implementation: 0.27.0-dev positive-W projection
+
+The supplied physical0.26 report confirms all208 checks/39 ordered patterns,
+including all16 depth clears. Four complete Rust groups match host after removing
+only architecture; all55 native records match. Validation disabled/0errors.
+Report78905bytes/SHA2564920b315fea8853cb18ee6864b08155d35144e3a8ddee588330a5c2e9125b19f.
+See docs/validation/g720-depth-clear.md; ignored reports/physical-g720/v0.26.0-dev-report.json.
+
+The original GPU rasterizer now divides post-VS XYZ by W, retaining captured
+clip inputs for actual fixed-function Vulkan projection. Requires finite positive
+normal W and normal reciprocal, inclusive x/y[-W,W]/z[0,W], reversible projected
+1/16pixel XY. f64 reference divide/reconstruction; Z/W rounds to f32 then old
+f64 screen-depth interpolation. IPA.PASS/SPH linear/NoPerspective unchanged;
+smooth perspective-correct varyings and clipping remain unsupported. No new
+exports/layouts: all21 stable; texture3..10/indexed3..6/depth11..14 extend IDs.
+
+Sixteen original authored command pages (not new interpreted NROs) cover textures,
+indexed formats/first/signed base/unused NaN prefix/reversed winding/scissor,
+small/nonpower/per-corner W/subpixel edges and four projected depth scenarios.
+Sixteen portable groups/167 items/cycles cover positive/negative/rollback/lifetime,
+64resourcecycles, six clip planes, nonfinite/offgrid, snapshots/read-only semantics.
+App0.27/code30/schema4/workload30/native15:240 diagnostics
+(engine18/NV50/core76suite9/shader25/Vulkan71),55patterns. Old208 namedrecords
+unchanged. All267Rust/fmt/Clippy/31LLVMfixtures and hostVulkan71 with validation
+and0errors pass. TwoABI assembly/lint/signature/21exports/16KiB/manifest pass. APK16773825bytes,
+SHA256dbe3ccbcbf76fb60f669036820c83e3e9c81ed33472e46698095337dcb217453.
+Auto14flows/two240check55patternruns/7040displaypoints; manual63flows/
+59successfulcaptures/7552points. Initial55zero-durationtaps ended53instead0;
+retainedfailure/probe evidence. Separate55x80ms probe passed; resumed samecount/
+expectedvariant with80ms stationarytouch passed, plus54pressnav tolast/lifecycle.
+No appcode/pixel/presscount relaxation; zero-duration injection cause unresolved.
+Picker/cold/bothpresentAtomicFile recoveries byteexact; originalautomaticJSON
+immutable; allcrashbuffersempty/no appfatal/ANR. AVD98.28%idle/nice10/twocores,
+compactauto/native manual; stopped/processawaitedexit0/ADBempty.
+See docs/projection-batch.md and docs/validation/android-projection.md.
+New physical240/55 confirmation pending. Games/general runtime/display remain open.
+
+## Previous implementation: 0.26.0-dev depth clears and expanded batch
 
 The supplied physical Mali 0.25 report confirms all172 diagnostics/23 patterns,
 including both interpolated-depth cases. All four Rust groups match host except
@@ -42,7 +79,7 @@ No expected-cleared-depth upload. See docs/depth-clear-batch.md.
 
 App0.26/code29/schema4/workload29/native14:208 diagnostics
 (engine18/NV50/core60suite8/shader25/Vulkan55),39 visiblepatterns. Allprevious172
-namedrecords unchanged. Physical208/39 confirmation pending. One-button workflow
+namedrecords unchanged. Physical208/39 confirmation is now recorded above. One-button workflow
 unchanged. Stencil/mixedclear/largerlayouts/perspective/clipping/runtime/games open.
 
 Verification evidence: docs/validation/android-depth-clear.md; ignored reports/v0.26-*

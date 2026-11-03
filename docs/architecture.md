@@ -7,8 +7,8 @@ acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
 event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
-Rust engine for eighteen original guest checks, fifty NV scenarios, sixty GPU
-core groups, twenty-five shader cases and fifty-five Vulkan workloads. The user
+Rust engine for eighteen original guest checks, fifty NV scenarios, seventy-six GPU
+core groups, twenty-five shader cases and seventy-one Vulkan workloads. The user
 supplied a physical G720 0.3.0-dev report passing all six workloads at that checkpoint,
 including BC1 conversion, sampling and updates. The supplied 0.16 report now passes all60
 checks on G720. A bounded original SM53/SPH decoder/typed SSA/SPIR-V path now feeds
@@ -29,9 +29,13 @@ adds a single-GOB ZF32 attachment and transactional color/depth effects. The
 bit-exact dyadic Vulkan replay. The [depth-clear batch](depth-clear-batch.md)
 adds ordered depth-only clears, sixteen rendered scenarios and twenty portable
 correctness groups. General depth and live display integration remain open.
+The [0.27 positive-W projection batch](projection-batch.md) brings the corpus to
+240 diagnostics and 55 patterns; screen-linear IPA.PASS remains explicit. The
+[physical 0.26 report](validation/g720-depth-clear.md) confirms 208/39. Physical
+projection confirmation remains pending.
 The [one-tap test workflow](one-tap-testing.md) now owns visible pattern sequencing,
 shared diagnostics and automatic app-owned Downloads publication. Completed reports
-retain all 39 pattern proofs and remain immutable when reopened for manual export.
+retain all 55 pattern proofs and remain immutable when reopened for manual export.
 See [the supported shader subset](shader-translation-batch.md).
 The color-clear batch adds original B197 operations and offscreen Vulkan replay
 of decoded guest commands; see [the exact scope](color-clear-batch.md).
@@ -134,18 +138,18 @@ crates/
   kernel/             implemented handles/IPC, guest threads, blocking waits and timeouts
   services/           implemented minimal SM and emulator-owned diagnostic service
   shader/             original SM53/SPH subset / typed SSA / SPIR-V emitter
-  gpu/                implemented mappings, command framing and owned decode queues; execution planned
+  gpu/                implemented mappings/framing, DMA/clears, captured draws/depth and reference rasterization
   renderer-vulkan/    planned host backend
   session/            implemented single-process bounded execution
-  texture/            implemented linear BC1 RGBA UNORM reference decoding
-  android-ffi/        implemented reference-program C ABI; gameplay API planned
+  texture/            implemented BC1/BC3 decoding and generic GOB storage conversion
+  android-ffi/        implemented owned diagnostic/upload/live Catch C ABI; general runtime API planned
 android/
-  app/                planned user application
-  gpu-lab/            fifteen guest, fifty NV cases, three GPU-core, nineteen shader and sixteen Vulkan checks; visible homebrew presentation
+  app/                planned separate module; current library/player shell lives in gpu-lab
+  gpu-lab/            library/player shell; eighteen guest, fifty NV, seventy-six GPU-core, twenty-five shader and seventy-one Vulkan checks
 native/
   gpu-lab/            implemented C++ Vulkan workload and owned-clear replay runner
 examples/
-  homebrew/           fifteen implemented original static NRO fixtures
+  homebrew/           nineteen implemented original static NRO fixtures
 tests/
   gpu-workloads/      planned command, shader and reference-image tests
 ```
@@ -160,7 +164,7 @@ tests/
 | Kernel | Handles, threads, scheduling, events, address-space operations, SVCs | Handles/IPC, cloned sessions, single-core guest scheduling, event/thread blocking waits and virtual timeouts |
 | Services | Horizon IPC and needed filesystem/display/GPU/audio/input services | CMIF v0 SM Initialize/GetService for `emu:test`; system device services planned |
 | Guest GPU | Tegra command decoding, GPU addresses, draw/compute state and shaders | GPU mappings, captured decode batches, framing, linear DMA and a guest diagnostic bridge implemented; NV Initialize/device descriptors/NVMap backing imports/NV GPU mapping implemented; fresh allocation, async submission, color clears implemented; raw SM53/SPH and bounded draw reference implemented; bounded live homebrew rendering implemented |
-| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Sixteen workloads, including111 live guest frames; bounded synchronous backend and Android homebrew presentation implemented; general display queues remain open |
+| Host graphics | Vulkan resource lifetime, formats, pipelines, barriers and Android presentation | Seventy-one workloads, including111 live guest frames; bounded synchronous backend and Android homebrew presentation implemented; general display queues remain open |
 | Android host | Lifecycle, surface, input, audio and diagnostics | Engine reference checks, GPU Lab and JSON export implemented; gameplay integration planned |
 | CLI | Bounded interpreter execution with explicit unsupported-operation errors | Implemented |
 
