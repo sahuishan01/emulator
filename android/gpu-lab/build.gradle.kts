@@ -13,8 +13,9 @@ android {
         applicationId = "com.algosculptor.emulator.gpulab"
         minSdk = 31
         targetSdk = 35
-        versionCode = 30
-        versionName = "0.27.0-dev"
+        testInstrumentationRunner = "com.algosculptor.emulator.gpulab.UpdateInstrumentation"
+        versionCode = providers.gradleProperty("qaUpdateVersionCode").orNull?.toInt() ?: 31
+        versionName = providers.gradleProperty("qaUpdateVersionName").orNull ?: "0.27.1-dev"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
             cmake {
@@ -29,6 +30,7 @@ android {
             version = "3.22.1"
         }
     }
+    sourceSets.getByName("androidTest").assets.srcDir(layout.buildDirectory.dir("generated/updateQaAssets"))
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -52,4 +54,9 @@ val buildOriginalEngine by tasks.registering(Exec::class) {
 }
 tasks.configureEach {
     if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) dependsOn(buildOriginalEngine)
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

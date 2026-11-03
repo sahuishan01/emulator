@@ -25,6 +25,14 @@ class HomeActivity : Activity() {
     private lateinit var banner: LinearLayout
     private lateinit var search: EditText
     private lateinit var importButton: Button
+    private lateinit var updateBanner: LinearLayout
+    private val updateObserver: (UpdateStatus) -> Unit = { value ->
+        updateBanner.removeAllViews()
+        if (value.release != null) {
+            updateBanner.addView(ui.text(value.message, 15f, ui.muted))
+            updateBanner.addView(ui.button(if (value.phase == UpdatePhase.READY) "Install app update" else "View app update") { startActivity(Intent(this, UpdatesActivity::class.java)) })
+        }
+    }
     private var entries = emptyList<LibraryEntry>()
     private val observer: (ImportStatus) -> Unit = { status ->
         importButton.isEnabled = !status.busy
@@ -44,6 +52,7 @@ class HomeActivity : Activity() {
         root.addView(top); ui.space(root, 22)
         root.addView(ui.text("Your library", 30f, bold = true)); ui.space(root, 6)
         root.addView(ui.text("Play included homebrew or import your own.", 15f, ui.muted)); ui.space(root, 18)
+        updateBanner = ui.column(); root.addView(updateBanner)
         root.addView(ui.button(BatchActivity.ACTION_LABEL, true) { startActivity(Intent(this, BatchActivity::class.java)) })
         importButton = ui.button("Import homebrew", true) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -70,8 +79,8 @@ class HomeActivity : Activity() {
         })
         search.setText(savedInstanceState?.getString("query") ?: "")
     }
-    override fun onStart() { super.onStart(); store.observe(observer); refresh() }
-    override fun onStop() { store.unobserve(observer); super.onStop() }
+    override fun onStart() { super.onStart(); store.observe(observer); (application as EmulatorApplication).updates.observe(updateObserver); (application as EmulatorApplication).updates.automatic(); refresh() }
+    override fun onStop() { store.unobserve(observer); (application as EmulatorApplication).updates.unobserve(updateObserver); super.onStop() }
     override fun onSaveInstanceState(outState: Bundle) { outState.putString("query", search.text.toString()); super.onSaveInstanceState(outState) }
     private fun refresh() { store.list { if (!isDestroyed && !isFinishing) { entries = it; render() } } }
     private fun render() {

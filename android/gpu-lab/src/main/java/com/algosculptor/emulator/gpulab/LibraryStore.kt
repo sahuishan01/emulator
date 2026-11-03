@@ -23,6 +23,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 class EmulatorApplication : Application() {
     val library by lazy { LibraryStore(this) }
+    internal val updates by lazy { UpdateManager(this) }
+    override fun onCreate() { super.onCreate(); UpdateSchedule.sync(this) }
 }
 
 data class LibraryEntry(val id: String, val title: String, val filename: String, val bytes: Long,

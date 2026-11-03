@@ -72,7 +72,7 @@ the single run to 208 diagnostics and 39 patterns, now
 [confirmed on physical Mali](docs/validation/g720-depth-clear.md). The
 [0.27 projection batch](docs/projection-batch.md) adds division by positive W
 across textures, indexed geometry and depth: 240 diagnostics and 55 patterns.
-New physical confirmation is pending.
+The [physical 0.27 report](docs/validation/g720-projection.md) passes 239/240 checks and 54/55 patterns; the projected inset texture fails exact pixel comparison. That issue remains open.
 Broader 3D/runtime and games remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
@@ -82,7 +82,7 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.27.0-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.27.1-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
 Tap **Test all & export JSON** on the home screen to display all 55 patterns,
@@ -92,12 +92,13 @@ Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.0-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.1-dev).
 The existing Android application ID/signing identity is retained for updates.
+The [in-app updater](docs/app-updates.md) now checks private GitHub releases, verifies downloads and opens Android's installer. Connect once under **Settings → App updates** using read-only repository access.
 See the [projection profile](docs/projection-batch.md) and
-[0.27 build and Android validation](docs/validation/android-projection.md).
+[0.27 rendering validation](docs/validation/android-projection.md) and [updater validation](docs/validation/android-app-updates.md).
 This is a debug development build, not a production-ready commercial-game emulator.
 See [indexed geometry](docs/indexed-geometry-batch.md) and [storage implementation](docs/texture-storage-batch.md) and [build verification](docs/validation/android-texture-storage.md).
 
@@ -213,12 +214,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.1-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.0-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.1-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks

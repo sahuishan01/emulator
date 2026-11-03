@@ -16,7 +16,21 @@ def verify_main_app(apk, aapt):
     badging = subprocess.run([str(aapt), "dump", "badging", str(apk)], check=True, capture_output=True, text=True).stdout
     assert "application-label:'Emulator'" in badging
     assert "launchable-activity: name='com.algosculptor.emulator.gpulab.HomeActivity'" in badging
-    assert not re.search(r"E: (?:provider|service|receiver|uses-permission)\b", manifest), "Unexpected component or permission"
+    assert not re.search(r"E: receiver\b", manifest), "Unexpected receiver"
+    components = re.split(r'\s+E: (provider|service|uses-permission) \(line=\d+\)', manifest)
+    found = {'provider': [], 'service': [], 'uses-permission': []}
+    for index in range(1, len(components), 2):
+        kind, body = components[index], components[index+1].split('\n    E: ')[0]
+        found[kind].append(body)
+    permissions = {re.search(r'android:name[^\n]*="([^"]+)"', block).group(1) for block in found['uses-permission']}
+    assert permissions == {'android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE', 'android.permission.RECEIVE_BOOT_COMPLETED', 'android.permission.REQUEST_INSTALL_PACKAGES'}, permissions
+    assert len(found['provider']) == len(found['service']) == 1
+    provider, service = found['provider'][0], found['service'][0]
+    assert 'UpdateApkProvider' in provider and 'com.algosculptor.emulator.gpulab.updates' in provider
+    assert re.search(r'android:exported[^\n]*0x0\s*$', provider, re.M)
+    assert re.search(r'android:grantUriPermissions[^\n]*0xffffffff\s*$', provider, re.M)
+    assert 'UpdateJobService' in service and 'android.permission.BIND_JOB_SERVICE' in service
+    assert re.search(r'android:exported[^\n]*0xffffffff\s*$', service, re.M)
     assert re.search(r'android:allowBackup[^\n]*0x0\s*$', manifest, re.M)
     assert re.search(r'android:usesCleartextTraffic[^\n]*0x0\s*$', manifest, re.M)
     activities = {}
@@ -24,10 +38,10 @@ def verify_main_app(apk, aapt):
         name = re.search(r'android:name[^\n]*="([^"]+)"', block).group(1)
         exported = re.search(r'android:exported[^\n]*\(type 0x12\)(0x[0-9a-f]+)', block).group(1)
         activities[name.rsplit('.', 1)[-1]] = exported != '0x0'
-    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False, 'TextureActivity': False, 'BatchActivity': False}, activities
+    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False, 'TextureActivity': False, 'BatchActivity': False, 'UpdatesActivity': False}, activities
     with zipfile.ZipFile(apk) as archive:
-        assert not any(n.startswith('assets/') and n.endswith('.nro') for n in archive.namelist()), "QA documents leaked into main APK"
-    return dict(label='Emulator', launcher='HomeActivity', exportedActivities=['HomeActivity'], permissions=[], qaDocumentsExcluded=True)
+        assert not any(n.startswith('assets/') and n.endswith(('.nro', '.apk')) for n in archive.namelist()), "QA documents leaked into main APK"
+    return dict(label='Emulator', launcher='HomeActivity', exportedActivities=['HomeActivity'], permissions=sorted(permissions), updateProviderPrivate=True, updateServicePermission='android.permission.BIND_JOB_SERVICE', qaDocumentsExcluded=True)
 
 
 def verify(apk, signer, main_app=False):

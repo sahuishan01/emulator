@@ -13,7 +13,54 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.27.0-dev positive-W projection
+## Current implementation: 0.27.1-dev private in-app updates
+
+User requested auto updates. The new attached0.27 report is NOT a full pass:
+239/240 diagnostics/54of55 patterns, physicalMali projected inset texture(case3,
+visible42) pixel mismatch. All fourRustgroups and other70native records match.
+Strictfailurekept; no graphics/CPU/native changes. Rawignoredreport
+reports/physical-g720/v0.27.0-dev-report.json SHA256
+b102439185869df51b034301a5e73f001fa6e3f8c5428a14fd5a6fa98b812b91.
+See docs/validation/g720-projection.md. Do not say240/55 passed onphone.
+
+PrivateGitHub updater uses token entered once onphone, KeystoreAES-GCM,
+list30published releases includingprereleases, SemVer, exactAPI/CDN HTTPSrules,
+authstrippedbeforeCDNredirect, boundedstream/SHA256/size, cancel/retry/cleanup,
+package/versionCode/signercertificate/ABI/minSDKchecks. Persisted6hJobScheduler
+plusHomechecks, battery/storage/networkconstraints, unmeteredautodownloads.
+Private read-only checksumURI provider grantsinstalleraccess onlyonrequest.
+SettingsAppUpdates/Homebanner, Android unknownsourcepermission+userconfirmation,
+completeddownloadrestore/recheck, no silentbackgroundinstall. ReadonlyContents
+privateGitHubtoken requiredonce; optionalprivacyquestionunanswered, safeprivate
+assumption stated. No publicfeed/backend or hostcredential inAPK/device.
+
+App0.27.1/code31/schema4/workload30/native15; same240diagnostics/55patterns and
+21Rustexports. NativeSO byte-identicalto0.27. FinalAPK12036168bytes/SHA256
+ d379152c576613be5cbb799dc03d5c2f282d6f8d279de97343ece1efd33288ec.
+Build/lint/signature/2ABIs/16KiB/strictmanifest pass. Exact4permissions:
+INTERNET,ACCESS_NETWORK_STATE,RECEIVE_BOOT_COMPLETED,REQUEST_INSTALL_PACKAGES.
+OnlyHomeActivity exported; providerprivate; JobServiceprotected BIND_JOB_SERVICE.
+
+24JVMpolicy/networktests and25deviceupdatertests pass. Real11flow installerQA
+updatesbase31toQA-only0.27.2/code32, confirmscancel/retry, privateURI, actualnew
+version, librarypreservation, cachecleanup, rotation/maskedaccess. Neverpublish
+QA-futureAPK. MainAPKexcludesQAAPKs/tokens. EphemeralQA signingkey/password deleted.
+Cache-statebugfound/fixed: methodcheck(Boolean...) shadowedKotlinassert inmetadata
+reader; renamedcheckForUpdates andqualifiedkotlin.check; device regression asserts
+metadata read makesno networkrequest/READYstatechange. UIharnessfixedCompose row,
+stagingdialogmoves, successOpen action andexec-out remoteexitstatus; lastfourUI
+checks resumed fromsevenrecorded completedassertions. Allrawfailures retained.
+
+Onecomplete fresh240/55 one-tap run passes11workflowchecks/7040displayedpoints,
+exactfourRustgroups/all71native records, byteexactDownloads/share/coldrestore.
+Usedqa_one_tap --single-run toomit unrelatedinterruptionrepeats. OriginalJSON
+immutable. Finalcrashbuffers empty/no targetfatal/ANR; fakeaccesscleared/testAPK
+uninstalled; wmrestored; ownedAVD stopped/processawaited0/ADBempty. Oneearlier
+AVDgracefulshutdown causeunconfirmed. See docs/app-updates.md and
+ docs/validation/android-app-updates.md; ignored reports/v0.27.1-* and
+reports/update-qa/v0.27.1-dev, reports/android-qa/v0.27.1-dev.
+
+## Previous implementation: 0.27.0-dev positive-W projection
 
 The supplied physical0.26 report confirms all208 checks/39 ordered patterns,
 including all16 depth clears. Four complete Rust groups match host after removing

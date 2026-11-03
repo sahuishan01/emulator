@@ -1,4 +1,4 @@
-# Android application (0.20 foundation, 0.27 projection)
+# Android application (0.20 foundation, 0.27.1 updater)
 
 The launcher is a library, with the original Catch player, the 0.21 guest texture scene, supported static
 NRO imports, text-mode execution, recents and settings. The home screen also offers
@@ -91,3 +91,5 @@ save-state semantics and commercial content remain open. Device performance and
 compatibility require actual workloads on the target GPU. Store distribution also
 requires a deliberate release-signing/migration policy and release qualification;
 this iteration remains a private, debug-signed development prerelease.
+
+The [private in-app updater](app-updates.md) adds periodic/foreground checks, Keystore-protected access, verified downloads and the Android installer. It adds an explicitly private read-only update provider and a system-permission-protected JobService.
