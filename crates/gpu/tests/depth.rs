@@ -112,8 +112,8 @@ fn write_only_depth_is_rejected_before_any_color_write() {
     assert_eq!(pixels(&cpu), [0; 512]);
 }
 #[test]
-fn unsupported_varying_depth_and_invalid_second_draw_cancel_the_entire_batch() {
-    for z in [0.5f32, f32::NAN, f32::INFINITY, -0.1, 1.1] {
+fn invalid_depth_in_the_second_draw_cancels_the_entire_batch() {
+    for z in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
         let mut page = PAGE.to_vec();
         page[0x1308..0x130c].copy_from_slice(&z.to_le_bytes());
         let (cpu, gpu) = setup(page);
@@ -212,4 +212,85 @@ fn depth_backend_is_explicit_and_color_alias_feedback_is_rejected() {
         .unwrap_err()
         .contains("DrawInputFeedback"));
     assert_eq!(pixels(&cpu), [0; 512]);
+}
+
+fn check_slope(cpu: &AddressSpace, reverse: bool, red: bool) {
+    let mut raw = [0; 512];
+    cpu.read(0x2000, &mut raw).unwrap();
+    let decoded = emulator_texture::unpack_2d(
+        &raw,
+        64,
+        8,
+        emulator_texture::StorageLayout::BlockLinear { height_log2: 0 },
+    )
+    .unwrap();
+    let color = pixels(cpu);
+    for y in 0..8 {
+        for x in 0..16 {
+            let center = red && (8..12).contains(&x) && (2..6).contains(&y);
+            let z = (2 * x + 1) as f32 / 32.;
+            let z = if center {
+                0.5
+            } else if reverse {
+                1. - z
+            } else {
+                z
+            };
+            assert_eq!(
+                &decoded[(y * 16 + x) * 4..(y * 16 + x + 1) * 4],
+                &z.to_le_bytes()
+            );
+            assert_eq!(
+                &color[(y * 16 + x) * 4..(y * 16 + x + 1) * 4],
+                if center {
+                    &[255, 0, 0, 255]
+                } else {
+                    &[0, 255, 0, 255]
+                }
+            );
+        }
+    }
+}
+#[test]
+fn sloped_depth_matches_independent_pixel_center_plane_in_both_directions() {
+    for (page, reverse) in [
+        (
+            include_bytes!("../../../examples/gpu/depth-9-page.bin").as_slice(),
+            false,
+        ),
+        (
+            include_bytes!("../../../examples/gpu/depth-10-page.bin").as_slice(),
+            true,
+        ),
+    ] {
+        let (cpu, gpu) = setup(page.to_vec());
+        let (_, work) = ChannelProcessor::default()
+            .prepare(&gpu, &entry(162))
+            .unwrap();
+        assert_eq!(pixels(&cpu), [0; 512]);
+        work.commit();
+        check_slope(&cpu, reverse, true);
+    }
+}
+#[test]
+fn sloped_depth_keeps_vertex_depth_attached_to_winding_and_respects_scissor() {
+    for scissor in [false, true] {
+        let mut p = include_bytes!("../../../examples/gpu/depth-9-page.bin").to_vec();
+        for base in [0xd00, 0x1300] {
+            for tri in [0, 48] {
+                for byte in 0..16 {
+                    p.swap(base + tri + 16 + byte, base + tri + 32 + byte);
+                }
+            }
+        }
+        if scissor {
+            set(&mut p, 0xe04, 8 << 16);
+        }
+        let (cpu, gpu) = setup(p);
+        let (_, work) = ChannelProcessor::default()
+            .prepare(&gpu, &entry(162))
+            .unwrap();
+        work.commit();
+        check_slope(&cpu, false, !scissor);
+    }
 }

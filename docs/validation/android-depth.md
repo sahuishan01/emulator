@@ -3,7 +3,8 @@
 The preceding [physical Mali report](g720-texture-storage.md) confirms the
 released 0.23 texture checkpoint. Evidence here covers the new depth batch on
 the host and the owned software Android device. Physical 0.24 confirmation is
-pending. See the [exact depth profile and limits](../depth-batch.md).
+now recorded separately in the [supplied Mali depth report](g720-depth.md),
+which confirms all 168 checks and 21 patterns. See the [exact depth profile and limits](../depth-batch.md).
 
 ## Engine and native renderer
 

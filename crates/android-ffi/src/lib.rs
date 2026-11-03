@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(report.abi_version, 2);
         let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 38);
+        assert_eq!(text.matches("\"passed\":true").count(), 40);
         assert!(text.contains(
             "\"capturedSubmissions\":2,\"decodedWrites\":4,\"residentBytesAfterRelease\":0"
         ));

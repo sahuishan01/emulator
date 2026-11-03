@@ -400,7 +400,7 @@ fn capture(
 impl Draw {
     /// Fixed 1/16-pixel grid, pixel-center sampling and top-left edge ownership.
     /// Only finite, unclipped w=1 positions on this grid are accepted. Fragment
-    /// attributes interpolate screen-linearly; depth/blending/culling are disabled.
+    /// attributes and enabled depth interpolate screen-linearly; no blending/culling.
     pub(crate) fn raster(&self) -> Result<Vec<Option<[u8; 4]>>, E> {
         self.raster_depth().map(|r| r.0)
     }
@@ -485,10 +485,11 @@ impl Draw {
             None
         };
         for triangle in order.chunks_exact(3) {
-            let z = depths[triangle[0]];
-            if self.depth.is_some() && (depths[triangle[1]] != z || depths[triangle[2]] != z) {
-                return Err(invalid());
-            }
+            let [az, mut bz, mut cz] = [
+                depths[triangle[0]],
+                depths[triangle[1]],
+                depths[triangle[2]],
+            ];
             let [a, mut b, mut c] = [
                 points[triangle[0]],
                 points[triangle[1]],
@@ -506,7 +507,9 @@ impl Draw {
             if area < 0 {
                 std::mem::swap(&mut b, &mut c);
                 std::mem::swap(&mut bv, &mut cv);
+                std::mem::swap(&mut bz, &mut cz);
             }
+            let area = edge(a, b, c) as f64;
             for y in s.rect[1]..s.rect[3] {
                 for x in s.rect[0]..s.rect[2] {
                     let p = [i64::from(x) * 16 + 8, i64::from(y) * 16 + 8];
@@ -516,7 +519,19 @@ impl Draw {
                     });
                     if inside {
                         let at = (y * s.width + x) as usize;
+                        let weights = if self.depth.is_some() || constant.is_none() {
+                            [edge(b, c, p), edge(c, a, p), edge(a, b, p)]
+                        } else {
+                            [0; 3]
+                        };
                         if let Some(depth) = &self.depth {
+                            let z = ((weights[0] as f64 * az as f64
+                                + weights[1] as f64 * bz as f64
+                                + weights[2] as f64 * cz as f64)
+                                / area) as f32;
+                            if !z.is_finite() || !(0.0..=1.0).contains(&z) {
+                                return Err(invalid());
+                            }
                             if !depth.passes(z, f32::from_bits(depth_values[at])) {
                                 continue;
                             }
@@ -527,8 +542,6 @@ impl Draw {
                         let color = if let Some(color) = constant {
                             color
                         } else {
-                            let weights = [edge(b, c, p), edge(c, a, p), edge(a, b, p)];
-                            let area = edge(a, b, c) as f64;
                             let input = std::array::from_fn(|i| {
                                 ((weights[0] as f64 * av[i] as f64
                                     + weights[1] as f64 * bv[i] as f64

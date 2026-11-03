@@ -269,5 +269,5 @@ pub fn report() -> String {
             super::quote(&case.error)
         ));
     }
-    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":6,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
+    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":7,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
 }

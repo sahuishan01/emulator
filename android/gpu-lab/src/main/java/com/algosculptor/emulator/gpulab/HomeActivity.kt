@@ -112,7 +112,7 @@ class HomeActivity : Activity() {
         })
     }
     private fun details(entry: LibraryEntry) {
-        val text = if (entry.id == "builtin:catch") "Included homebrew. Drag the screen, hold Left/Right, or use a D-pad.\n\nSessions played: ${entry.launches}" else if (entry.id == "builtin:textures") "Included guest graphics scene. Twenty-one texture, indexed geometry and depth patterns.\n\nScenes opened: ${entry.launches}" else
+        val text = if (entry.id == "builtin:catch") "Included homebrew. Drag the screen, hold Left/Right, or use a D-pad.\n\nSessions played: ${entry.launches}" else if (entry.id == "builtin:textures") "Included guest graphics scene. Twenty-three texture, indexed geometry and depth patterns.\n\nScenes opened: ${entry.launches}" else
             "NRO0 · ${entry.bytes} bytes\nSessions started: ${entry.launches}\n\nThis build runs a limited static homebrew subset. A valid file may still require instructions or services that are not implemented."
         val dialog = AlertDialog.Builder(this).setTitle(entry.title).setMessage(text).setPositiveButton("Close", null)
         if (!entry.included) dialog.setNeutralButton("Remove") { _, _ ->

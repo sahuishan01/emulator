@@ -24,12 +24,12 @@ The [physical storage report](validation/g720-texture-storage.md) confirms all
 151 diagnostics and twelve patterns on G720. The next source step adds
 [ordered memory snapshots/projection](gpu-memory-projection.md) while retaining
 default execution-time DMA semantics. The [depth batch](depth-batch.md) now
-adds bounded flat-Z triangles with a single-GOB ZF32 attachment, transactional
-color/depth effects and bit-exact Vulkan replay. General depth and live display
-integration remain open.
+adds a single-GOB ZF32 attachment and transactional color/depth effects. The
+[interpolation extension](sloped-depth-batch.md) adds w=1 sloped triangles and
+bit-exact dyadic Vulkan replay. General depth and live display integration remain open.
 The [one-tap test workflow](one-tap-testing.md) now owns visible pattern sequencing,
 shared diagnostics and automatic app-owned Downloads publication. Completed reports
-retain all 21 pattern proofs and remain immutable when reopened for manual export.
+retain all 23 pattern proofs and remain immutable when reopened for manual export.
 See [the supported shader subset](shader-translation-batch.md).
 The color-clear batch adds original B197 operations and offscreen Vulkan replay
 of decoded guest commands; see [the exact scope](color-clear-batch.md).

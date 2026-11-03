@@ -1424,14 +1424,15 @@ GpuReport run_gpu_checks() {
         for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-indexed-u8-portable-widening","guest-indexed-u16-negative-base","guest-indexed-u32-first-base-and-triangle"}[i],render_guest_commands(context,emulator_indexed_replay_v1(i)),"Captured guest index elements -> actual Vulkan indexed draws; first index, signed base, shared corners and every pixel match independent oracles"});
         for(uint32_t i=0;i<6;++i)tests.push_back({std::array<const char*,6>{"guest-tiled-rgba","guest-multigob-rgba","guest-pitch-bc1-fallback","guest-tiled-bc1-alpha-fallback","guest-pitch-bc3-alpha-fallback","guest-tiled-bc3-alpha-fallback"}[i],render_guest_commands(context,emulator_texture_storage_replay_v1(i)),"Captured guest pitch/GOB storage and BC1/BC3 -> original RGBA fallback -> Vulkan; every color and alpha byte matches independent source and frame oracles"});
         for(uint32_t i=0;i<9;++i)tests.push_back({std::array<const char*,9>{"guest-depth-never","guest-depth-less-occlusion","guest-depth-equal","guest-depth-less-equal","guest-depth-greater-occlusion","guest-depth-not-equal","guest-depth-greater-equal","guest-depth-always","guest-depth-read-only"}[i],guest_depth_replay(context,i),"Guest B197 ZF32 comparison/write state and captured shaders -> Vulkan D32 attachment; every color and depth bit matches independent oracles"});
+        for(uint32_t i=9;i<11;++i)tests.push_back({std::array<const char*,2>{"guest-depth-sloped-occlusion","guest-depth-reverse-sloped-occlusion"}[i-9],guest_depth_replay(context,i),"Guest varying vertex Z -> Vulkan raster depth interpolation; every color and D32 bit matches independent pixel-center plane oracles"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 37 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 39 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":12,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":13,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1500,7 +1501,7 @@ std::string texture_scene_json(bool running,const std::string& error="") {
 std::string start_texture_scene(void* window,unsigned variant) {
     try {
         texture_scene.reset();texture_variant=variant;
-        if(variant>20)throw std::runtime_error("Unknown texture scene variant");
+        if(variant>22)throw std::runtime_error("Unknown texture scene variant");
         texture_scene=std::make_unique<LiveRenderer>();texture_scene->initialize(window);
         const auto render=[&](const auto& replay) {
             if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));

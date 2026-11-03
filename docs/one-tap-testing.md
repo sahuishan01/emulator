@@ -1,5 +1,10 @@
 # One-tap testing and JSON export (0.22.1)
 
+The [0.25 interpolated-depth extension](sloped-depth-batch.md) uses the same
+workflow for 23 patterns and 172 diagnostics: app/code 0.25.0-dev/28,
+schema/workload/native 4/28/13. Pattern and diagnostic totals are derived by
+the app; the baseline sections below are historical.
+
 The [0.24 depth extension](depth-batch.md) expands the same workflow to
 21 patterns and 168 diagnostics. Current reports use app 0.24.0-dev/code 27,
 schema 4/workload 27/native 12. The historical baseline below describes the

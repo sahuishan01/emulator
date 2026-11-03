@@ -5,7 +5,7 @@ from pathlib import Path
 from qa_pattern_pixels import expected_pixel
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--previous-workload',type=int,default=26);p.add_argument('--version',default='0.24.0-dev');p.add_argument('--workload',type=int,default=27);p.add_argument('--pattern-count',type=int,default=21);p.add_argument('--gpu-tests',type=int,default=37);p.add_argument('--native-workload',type=int,default=12);p.add_argument('--reference-prefix',default='reports/v0.24-host-');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--previous-workload',type=int,default=27);p.add_argument('--version',default='0.25.0-dev');p.add_argument('--workload',type=int,default=28);p.add_argument('--pattern-count',type=int,default=23);p.add_argument('--gpu-tests',type=int,default=39);p.add_argument('--native-workload',type=int,default=13);p.add_argument('--reference-prefix',default='reports/v0.25-host-');a=p.parse_args()
  out=a.output;out.mkdir(parents=True,exist_ok=True);pkg='com.algosculptor.emulator.gpulab';adb=[str(Path.home()/'Android/Sdk/platform-tools/adb'),'-s','emulator-5580'];notes=[];completed_reports=[]
  def call(*args,timeout=35):return subprocess.check_output(adb+list(args),timeout=timeout,stderr=subprocess.PIPE)
  def cache(name='last-report.json'):return json.loads(call('exec-out','run-as',pkg,'cat','files/'+name))
@@ -46,7 +46,7 @@ def main():
   raise RuntimeError('New visible pattern did not complete')
  def verify_report(raw):
   r=json.loads(raw);assert r['appVersion']==a.version and r['workloadVersion']==a.workload and r['schemaVersion']==4 and r['allPassed']
-  assert {k:len(r[k]['tests']) for k in ['engine','nv','gpuCore','shader','gpu']}=={'engine':18,'nv':50,'gpuCore':38,'shader':25,'gpu':a.gpu_tests}
+  assert {k:len(r[k]['tests']) for k in ['engine','nv','gpuCore','shader','gpu']}=={'engine':18,'nv':50,'gpuCore':40,'shader':25,'gpu':a.gpu_tests}
   assert r['gpu']['workloadVersion']==a.native_workload and r['gpu']['validationErrors']==0
   for key,name in [('engine','engine'),('nv','nv'),('gpuCore','gpu-core'),('shader','shader')]:
    reference=json.load(open(a.reference_prefix+name+'.json'));actual=r[key].copy();reference.pop('hostArchitecture',None);actual.pop('hostArchitecture',None);assert actual==reference,key
@@ -142,7 +142,7 @@ def main():
   root=ui('cold-restored');assert any(f'All {sum(len(second[k]["tests"]) for k in ("engine","nv","gpuCore","shader","gpu"))} checks passed' in n.get('text','') and f'Patterns: {a.pattern_count}/{a.pattern_count}' in n.get('text','') for n in root.iter('node'))
   assert call('exec-out','run-as',pkg,'cat','files/last-report.json')==expected;shot('cold-restored')
   assert not call('logcat','-b','crash','-d').strip();assert not re.search(rb'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab',call('logcat','-d'))
-  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON','all 21 automatically displayed patterns','2688 displayed pixel centers match formulas','all 168 diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run','cold Diagnostics restores complete 21-pattern report'],'notes':notes,'completedRuns':len(completed_reports),'displaySamples':a.pattern_count*128}
+  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON','all 23 automatically displayed patterns','2944 displayed pixel centers match formulas','all 172 diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run','cold Diagnostics restores complete 23-pattern report'],'notes':notes,'completedRuns':len(completed_reports),'displaySamples':a.pattern_count*128}
   (out/'verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
  finally:
   try:call('shell','settings','put','system','user_rotation','0');call('shell','settings','put','system','accelerometer_rotation','1')

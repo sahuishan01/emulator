@@ -7,7 +7,7 @@ General guest shaders and commercial Switch games remain unsupported. The C++ im
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-37 bounded workloads (native workload version 12). The first nine are:
+39 bounded workloads (native workload version 13). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -40,6 +40,8 @@ green/red pipeline changes. Cases 13–15 replay decoded guest draws. Case 16 ru
 General guest display integration remains open.
 Cases 20–28 extend indexed geometry and tiled/compressed textures; cases 29–37
 add all depth comparisons and disabled writes. See the [bounded depth contract](../../docs/depth-batch.md).
+Cases 38–39 add forward/reverse sloped depth with exact D32 plane oracles;
+see the [interpolation profile](../../docs/sloped-depth-batch.md).
 See [the supported shader subset](../../docs/shader-translation-batch.md).
 
 The report includes device/driver/API identity, software-renderer status,
@@ -48,8 +50,8 @@ format-query results, plus per-test outcomes and errors. Format entries report
 optimal-tiling feature bits and a combined 2D sampled/transfer-source/transfer-
 destination image query. Heap sizes are advertised capacity, not free memory
 or the application's allocation budget. A passing report
-establishes these workloads only. Compressed texture sampling, formats beyond
-linear BC1 RGBA UNORM, stencil,
+establishes these workloads only. Formats beyond the bounded RGBA/BC1/BC3
+conversion profile, stencil,
 additional shader stages, Android swapchain presentation and general guest GPU command
 handling are not established by these tests.
 

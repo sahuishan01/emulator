@@ -7,7 +7,7 @@ use crate::{
 use emulator_gpu::{ChannelProcessor, ExecutionLimits, GpuVa, QueueLimits, SubmissionQueue};
 use emulator_memory::{Access, Permissions};
 const WORDS: u32 = 162;
-const PAGES: [&[u8]; 9] = [
+const PAGES: [&[u8]; 11] = [
     include_bytes!("../../../examples/gpu/depth-0-page.bin"),
     include_bytes!("../../../examples/gpu/depth-1-page.bin"),
     include_bytes!("../../../examples/gpu/depth-2-page.bin"),
@@ -17,6 +17,8 @@ const PAGES: [&[u8]; 9] = [
     include_bytes!("../../../examples/gpu/depth-6-page.bin"),
     include_bytes!("../../../examples/gpu/depth-7-page.bin"),
     include_bytes!("../../../examples/gpu/depth-8-page.bin"),
+    include_bytes!("../../../examples/gpu/depth-9-page.bin"),
+    include_bytes!("../../../examples/gpu/depth-10-page.bin"),
 ];
 #[repr(C)]
 pub struct DepthReplay {
@@ -46,7 +48,7 @@ fn expected(i: usize) -> ([u8; 512], [u32; 128]) {
     for y in 0..8 {
         for x in 0..16 {
             let center = (4..12).contains(&x) && (2..6).contains(&y);
-            let red = center && [3, 6, 7, 8].contains(&i);
+            let red = center && ([3, 6, 7, 8].contains(&i) || i >= 9 && x >= 8);
             let pixel = if i == 0 {
                 [0, 0, 0, 255]
             } else if red {
@@ -65,6 +67,18 @@ fn expected(i: usize) -> ([u8; 512], [u32; 128]) {
                         0.75
                     } else {
                         0.25
+                    }
+                }
+                9 | 10 => {
+                    if red {
+                        0.5
+                    } else {
+                        let z = (2 * x + 1) as f32 / 32.;
+                        if i == 9 {
+                            z
+                        } else {
+                            1. - z
+                        }
                     }
                 }
                 _ => unreachable!(),
@@ -335,8 +349,65 @@ fn core_case(i: usize) -> Result<usize, String> {
             }
             Ok(8)
         }
+        8 => {
+            for n in [9, 10] {
+                check(replay(n).status == 0)?;
+            }
+            Ok(2)
+        }
+        9 => {
+            for n in [9, 10] {
+                let mut p = PAGES[n].to_vec();
+                for base in [0xd00, 0x1300] {
+                    for tri in [0, 48] {
+                        for byte in 0..16 {
+                            p.swap(base + tri + 16 + byte, base + tri + 32 + byte);
+                        }
+                    }
+                }
+                let (color, depth) = expected(n);
+                check_page(p, color, depth)?;
+            }
+            let mut p = PAGES[9].to_vec();
+            let first = p[0xd00..0xd10].to_vec();
+            for vertex in p[0xd00..0xd60].chunks_exact_mut(16) {
+                vertex.copy_from_slice(&first);
+            }
+            let (mut color, mut depth) = expected(8);
+            for y in 0..8 {
+                for x in 0..16 {
+                    if (4..12).contains(&x) && (2..6).contains(&y) {
+                        depth[y * 16 + x] = 0.5f32.to_bits();
+                    } else {
+                        color[(y * 16 + x) * 4..(y * 16 + x + 1) * 4]
+                            .copy_from_slice(&[0, 0, 0, 255]);
+                    }
+                }
+            }
+            check_page(p, color, depth)?;
+            let mut p = PAGES[9].to_vec();
+            set(&mut p, 0x12e8, 0);
+            set(&mut p, 0x7f8, 1);
+            let (color, depth) = expected(8);
+            check_page(p, color, depth)?;
+            Ok(4)
+        }
         _ => Err("Unknown depth check".into()),
     }
+}
+fn check_page(page: Vec<u8>, color: [u8; 512], depth: [u32; 128]) -> Result<(), String> {
+    let (mem, gpu) = textures::setup(page)?;
+    let (_, work) = ChannelProcessor::default().prepare(&gpu, &textures::wire(0, WORDS))?;
+    work.commit();
+    check(textures::pixels(&mem)? == color)?;
+    let mut raw = [0; 512];
+    mem.read(0x2000, &mut raw).map_err(|e| e.to_string())?;
+    for y in 0..8 {
+        for x in 0..16 {
+            check(gob_word(&raw, x, y) == depth[y * 16 + x])?;
+        }
+    }
+    Ok(())
 }
 pub fn cases() -> Vec<TextureCase> {
     [
@@ -348,6 +419,8 @@ pub fn cases() -> Vec<TextureCase> {
         "depth-late-failure-and-cancel-rollback",
         "depth-shared-memory-budget-rollback",
         "depth-d3d-and-ogl-comparison-encodings",
+        "depth-sloped-forward-and-reverse-oracles",
+        "depth-sloped-winding-degenerate-and-write-control",
     ]
     .into_iter()
     .enumerate()
@@ -370,6 +443,6 @@ mod tests {
         for c in super::cases() {
             assert!(c.passed, "{}: {}", c.name, c.error);
         }
-        assert_ne!(super::replay(9).status, 0);
+        assert_ne!(super::replay(11).status, 0);
     }
 }

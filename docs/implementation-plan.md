@@ -82,8 +82,11 @@ NRO. One-button testing runs 151 checks and twelve visible patterns, now
 the foundation for the [0.24 depth batch](depth-batch.md): a single-GOB ZF32
 attachment, flat-Z triangle comparisons, depth writes and Vulkan color/depth
 readback. All eight comparisons and disabled writes join one 168-check/21-pattern
-run. Physical confirmation is pending. Depth interpolation/clears, broader
-shaders/runtime and general display services remain open.
+run, now [confirmed on physical Mali](validation/g720-depth.md). The
+[0.25 interpolation extension](sloped-depth-batch.md) adds screen-linear Z for
+w=1 triangles and exact dyadic plane oracles, bringing the batch to 172 checks
+and 23 patterns. Its physical confirmation is pending. Depth clears, larger
+layouts, perspective/clipping, broader shaders/runtime and display remain open.
 
 ## Milestones and dependency gates
 

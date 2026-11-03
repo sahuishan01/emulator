@@ -1,5 +1,9 @@
 # Guest depth testing (0.24)
 
+The subsequent [0.25 interpolation extension](sloped-depth-batch.md) removes the
+flat-Z restriction and adds sloped depth cases. The original profile below is
+now [confirmed on physical Mali](validation/g720-depth.md), all 168 checks/21 patterns.
+
 The original B197 command processor now captures a bounded ZF32 depth attachment,
 compares each covered fragment and prepares color/depth writes transactionally.
 The Android scene and automatic batch add nine depth patterns. The app is

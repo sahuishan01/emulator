@@ -8,7 +8,8 @@ ROOT=Path(__file__).resolve().parent.parent
 # compare index, initial value, first Z, second Z, write enable
 PROFILES=[(0,1.,.25,.75,1),(1,1.,.25,.75,1),(2,.5,.5,.25,1),
           (3,1.,.5,.5,1),(4,0.,.75,.25,1),(5,1.,.25,.25,1),
-          (6,0.,.5,.5,1),(7,1.,.25,.75,1),(1,1.,.25,.75,0)]
+          (6,0.,.5,.5,1),(7,1.,.25,.75,1),(1,1.,.25,.75,0),
+          (1,1.,0.,.5,1),(4,0.,1.,.5,1)]
 def depth_page(index):
     commands,original=build(0)
     function,initial,z0,z1,write=PROFILES[index]
@@ -29,7 +30,9 @@ def depth_page(index):
     page[:0x400]=bytes(0x400);page[:len(commands)]=commands
     first_vertices=bytearray(original[0xd00:0xd60]);second_vertices=bytearray(first_vertices)
     for i in range(6):
-        struct.pack_into('<f',first_vertices,i*16+8,z0)
+        z=(struct.unpack_from('<f',first_vertices,i*16)[0]+1.)/2. if index>=9 else z0
+        if index==10:z=1.-z
+        struct.pack_into('<f',first_vertices,i*16+8,z)
         struct.pack_into('<f',second_vertices,i*16+8,z1)
     page[0xd00:0xd60]=first_vertices;page[0x1300:0x1360]=second_vertices
     page[0x1000:0x1200]=struct.pack('<128f',*[initial]*128)
