@@ -16,7 +16,7 @@ blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
 The Android app embeds this engine, eighteen guest checks, fifty NV API scenarios,
-forty GPU core cases, twenty-five shader cases and thirty-nine Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
+sixty GPU core cases, twenty-five shader cases and fifty-five Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
@@ -65,8 +65,11 @@ The [depth batch](docs/depth-batch.md) now builds on ordered memory snapshots
 to compare and write a bounded D32F attachment. Nine new cases cover every
 comparison and disabled depth writes. The [physical depth report](docs/validation/g720-depth.md)
 now confirms all 168 checks and 21 patterns. The [0.25 interpolation extension](docs/sloped-depth-batch.md)
-adds sloped depth with 172 diagnostics and 23 patterns; its new Mali check is
-pending. Broader 3D/runtime and games remain open.
+adds sloped depth, now [confirmed on physical Mali](docs/validation/g720-sloped-depth.md)
+with 172 diagnostics and 23 patterns. The [0.26 depth-clear batch](docs/depth-clear-batch.md)
+adds sixteen rendered scenarios and twenty portable correctness groups, bringing
+the single run to 208 diagnostics and 39 patterns. New Mali confirmation is pending.
+Broader 3D/runtime and games remain open.
 
 No existing emulator core is linked or copied into the implementation. Earlier
 Eden/Lemon checkouts under `upstream/` are historical references, ignored by
@@ -75,22 +78,22 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.25.0-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.26.0-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
-Tap **Test all & export JSON** on the home screen to display all 23 patterns,
-run all 172 checks and automatically save the JSON in **Downloads/Emulator**.
+Tap **Test all & export JSON** on the home screen to display all 39 patterns,
+run all 208 checks and automatically save the JSON in **Downloads/Emulator**.
 The result offers **Share JSON**. See [one-tap testing](docs/one-tap-testing.md).
 Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.25.0-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.25.0-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.25.0-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.26.0-dev).
 The existing Android application ID/signing identity is retained for updates.
-See the [new depth profile](docs/depth-batch.md) and
-[0.25 build and Android validation](docs/validation/android-sloped-depth.md).
+See the [new depth-clear profile](docs/depth-clear-batch.md) and
+[0.26 build and Android validation](docs/validation/android-depth-clear.md).
 This is a debug development build, not a production-ready commercial-game emulator.
 See [indexed geometry](docs/indexed-geometry-batch.md) and [storage implementation](docs/texture-storage-batch.md) and [build verification](docs/validation/android-texture-storage.md).
 
@@ -107,7 +110,7 @@ remain unsupported. See [the execution path and limits](docs/live-homebrew.md).
 
 Open **Texture scene → Open scene** in the library. **Next pattern** cycles through
 RGBA, BGRA, updated textures, indexed geometry and six pitch/tiled/BC1/BC3
-storage variants and eleven depth cases. Native BC support is not required for the software fallback. This renders our captured guest shaders,
+storage variants, eleven depth cases and sixteen depth-clear cases. Native BC support is not required for the software fallback. This renders our captured guest shaders,
 vertex coordinates and texture descriptors through Vulkan; it is not a prerecorded
 image. The original guest tests pixels, rollback and resource lifetime. See the
 [texture and varying profile](docs/texture-draw-batch.md) and [indexed draw profile](docs/indexed-geometry-batch.md).
@@ -206,16 +209,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.25.0-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.26.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.25.0-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.25.0-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.26.0-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.25.0-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.26.0-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.
@@ -265,7 +268,7 @@ python3 tools/assemble_a64_fixtures.py
 python3 tools/assemble_a64_fixtures.py --check
 ```
 
-The current suite has 229 Rust tests and 31 independently assembled fixtures
+The current suite has 250 Rust tests and 31 independently assembled fixtures
 (12 raw A64 programs and nineteen NROs). Verify guest draw pages with
 `python3 tools/generate_draw_fixtures.py --check` and emitted shader modules with
 `python3 tools/generate_shader_fixtures.py --check --validate-spirv`.

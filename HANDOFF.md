@@ -13,7 +13,52 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.25.0-dev interpolated guest depth
+## Current implementation: 0.26.0-dev depth clears and expanded batch
+
+The supplied physical Mali 0.25 report confirms all172 diagnostics/23 patterns,
+including both interpolated-depth cases. All four Rust groups match host except
+architecture; all39 native records match. Validation was disabled. File61326bytes,
+SHA2566102d6a51c23b8e83a63b902343a6e2341916e5249d66f3505933896e7b87593.
+See docs/validation/g720-sloped-depth.md and ignored reports/physical-g720/v0.25.0-dev-report.json.
+
+Original B197 SET_Z_CLEAR_VALUE/CLEAR_SURFACE depth-only execution now supports
+ordered full/partial/scissored/empty depth clears before/between/after draws.
+Single512-byte GOB/<=16x8 ZF32/finite[0,1] scope persists. Fullfootprint requires
+write-only permission; partial/logically smaller reads/writes wholefootprint to
+preserve untouched/padded bits. Emptyrect requires no access. No colortarget or
+pipeline compare/write/test state needed; targetreadonly must0. Mixedcolor/depth,
+stencil, -0, invalid/uninitializedstate reject. Pins/orderedprojection/aliasguards/
+byte/span/launchbudgets/rollback/cancel/unmapreuse remain transactional. Catch
+old graphics_frame explicitly rejects clears. General live depth/display open.
+
+Sixteen new authored command pages, independent coordinate color/D32 oracles,
+twenty portable correctness groups (including128resourcecycles and eightcompares
+at threeadjacentfloatvalues),21newRustunit tests. New21st valueexport
+emulator_depth_clear_replay_v1:52112bytes/alignment4; DepthReplay51500 prefix,
+original128u32 at51500,count52012,four24byteclearrecords52016. Old20exports stable.
+Vulkan uploads original depth then actual vkCmdClearAttachments at draw positions,
+subpassselfdependency/BY_REGION depthbarriers, complete color/depth readback.
+No expected-cleared-depth upload. See docs/depth-clear-batch.md.
+
+App0.26/code29/schema4/workload29/native14:208 diagnostics
+(engine18/NV50/core60suite8/shader25/Vulkan55),39 visiblepatterns. Allprevious172
+namedrecords unchanged. Physical208/39 confirmation pending. One-button workflow
+unchanged. Stencil/mixedclear/largerlayouts/perspective/clipping/runtime/games open.
+
+Verification evidence: docs/validation/android-depth-clear.md; ignored reports/v0.26-*
+and reports/android-qa/v0.26.0-dev/. Do not infer commercial compatibility.
+All250 Rust/fmt/Clippy/31LLVMfixtures pass; all16clearpages reproduce. HostVulkan55
+enabledvalidation/zeroerrors, previous172records unchanged. PinnedtwoABI build/
+lint/signature/21exports/16KiB/manifest pass. APK11650428bytes/SHA256
+97890cbb2f96b3eac81b33d9487206b13d805dd85733967255d516c439d89d5f.
+Auto14flows/three208check39patternruns/4992screenpoints; manual47flows/43captures/
+5504points; picker/cold/bothpresentbackupcache recoveries byteexact. Original
+automaticJSON immutable. Auto runner interruption resumed against actual third
+report; manual first39tap burst ended38, repeatedsameburst passed. Initialfailures
+retained; see validationnotes, no appcode/expectation relaxation. Finalcrashbuffers
+empty/no appfatal/ANR. Native display restored; ownedAVD stopped/processawaited.
+
+## Previous implementation: 0.25.0-dev interpolated guest depth
 
 The supplied physical Mali 0.24 report now confirms all 168 checks and 21
 patterns, including all nine depth cases. Four Rust groups match host exactly
@@ -35,8 +80,8 @@ generator/shaders. Same 51500-byte DepthReplay and all20 exports; indices9/10
 extend replay. Two appended GPU-core groups test slopes, reversed winding,
 degenerate triangles and disabled writes; all previous168 named records stay
 unchanged. App0.25/code28/schema4/workload28/native13,172 checks:
-engine18/NV50/core40suite7/shader25/Vulkan39;23 visible patterns. New physical
-Mali172/23 evidence is pending. See docs/sloped-depth-batch.md. Depth clears,
+engine18/NV50/core40suite7/shader25/Vulkan39;23 visible patterns. Physical
+Mali172/23 evidence is confirmed above. See docs/sloped-depth-batch.md. Depth clears,
 larger layouts, arbitrary w/perspective/clipping, general live guest display and
 commercial games remain open.
 
@@ -51,7 +96,7 @@ relaxed. Manual31flows/27captures3456samples and actual export/cold/both present
 backup recoveries are byte-exact. All final crash buffers empty/no target fatal/ANR.
 OwnedAVD started after96.7% idle; native resolution restored before manual; stopped
 and awaited. See docs/validation/android-sloped-depth.md and ignored
-reports/android-qa/v0.25.0-dev/. New Mali confirmation remains pending.
+reports/android-qa/v0.25.0-dev/. Mali172/23 confirmation is now recorded above.
 
 ## Previous implementation: 0.24.0-dev bounded guest depth
 

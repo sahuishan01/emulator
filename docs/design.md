@@ -7,8 +7,8 @@ Current implemented slice: bounded region memory, static NRO loading, A64
 interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
 event/thread waits, cancellation and virtual deadlines in one process. The Android
 application has a private SQLite library, bounded file-picker imports, static NRO
-text execution, settings and the live Catch player. Support diagnostics run sixteen
-guest checks, fifty NV cases, eleven GPU-core cases, twenty-five shader cases and nineteen
+text execution, settings and the live Catch player. Support diagnostics run eighteen
+guest checks, fifty NV cases, sixty GPU-core groups, twenty-five shader cases and fifty-five
 Vulkan workloads, with report export. Broader synchronization and general guest
 graphics remain planned. See [the implemented app contracts](android-app.md), [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.
@@ -55,6 +55,13 @@ unpacking and BC1/BC3 canonicalization. Raw padded input and decoded RGBA join
 snapshot budgets and backing-identity feedback rejection; immutable decoded
 pixels cross the unchanged replay ABI into host RGBA textures. The standalone
 codec cap is128MiB; guest dimensions<=64 limit raw padding to64KiB/decoded16KiB.
+
+The [depth-clear profile](depth-clear-batch.md) adds transactional depth-only
+clears before, between and after draws. Full footprints need only write access;
+partial footprints preserve previous bits through ordered projection and read
+pins. Empty regions need no backing access. Vulkan executes the clear operations
+with explicit depth dependencies, then checks color/depth readback. Stencil,
+mixed clear masks and larger layouts remain explicit errors.
 
 ## 1. Process, addresses and memory
 
@@ -211,8 +218,10 @@ depth writes without publishing them. It explicitly freezes deferred inputs in
 depth batches, retains their pins and validates alias/budget/reply constraints
 before commit. Native replay uploads the captured initial attachment and compares
 both color and depth readback. The [interpolation extension](sloped-depth-batch.md)
-covers screen-linear Z for w=1 triangles in one GOB. Depth clears, perspective/
-clipping, larger layouts and live display handoff remain separate gates.
+covers screen-linear Z for w=1 triangles in one GOB. The
+[depth-clear extension](depth-clear-batch.md) adds ordered depth-only clears.
+Perspective/clipping, stencil, mixed clear masks, larger layouts and live display
+handoff remain separate gates.
 
 Create a `DeviceCapabilities` report from queried features, limits, queue
 families, driver information and format/image support. Use Vulkan 1.1 as the

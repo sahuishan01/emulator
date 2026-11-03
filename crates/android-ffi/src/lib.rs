@@ -7,6 +7,7 @@ pub use program::ProgramChunk;
 mod demo;
 pub use demo::{DemoStatus, LiveDraw};
 mod depth;
+mod depth_clear;
 mod draws;
 mod indexed;
 mod storage;
@@ -427,6 +428,10 @@ pub extern "C" fn emulator_texture_storage_replay_v1(index: u32) -> TextureRepla
 pub extern "C" fn emulator_depth_replay_v1(index: u32) -> depth::DepthReplay {
     depth::replay(index)
 }
+#[no_mangle]
+pub extern "C" fn emulator_depth_clear_replay_v1(index: u32) -> depth_clear::ClearReplay {
+    depth_clear::replay(index)
+}
 
 fn encode_report(run: fn() -> String, scope: &str) -> EngineReport {
     let mut json = std::panic::catch_unwind(run).unwrap_or_else(|_| {
@@ -507,7 +512,7 @@ mod tests {
         assert_eq!(report.abi_version, 2);
         let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 40);
+        assert_eq!(text.matches("\"passed\":true").count(), 60);
         assert!(text.contains(
             "\"capturedSubmissions\":2,\"decodedWrites\":4,\"residentBytesAfterRelease\":0"
         ));

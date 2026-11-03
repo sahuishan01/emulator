@@ -7,7 +7,7 @@ mod address_space;
 mod clear;
 mod depth;
 mod draw;
-pub use depth::DepthState;
+pub use depth::{DepthClear, DepthState};
 pub use draw::{Draw, IndexBuffer};
 mod sampled_texture;
 pub use sampled_texture::SampledTexture;

@@ -39,5 +39,6 @@ App/code/schema/workload/native versions are 0.25.0-dev / 28 / 4 / 28 / 13.
 The single **Test all & export JSON** run now has **172 diagnostics and 23
 patterns**: engine 18, NV 50, GPU core 40 (suite 7), shader 25 and Vulkan 39.
 No new permissions or game-loading capabilities are added. The new physical
-Mali checkpoint is pending. Depth clears, larger layouts, perspective/clipping,
+Mali checkpoint is [now confirmed](validation/g720-sloped-depth.md). The
+[0.26 depth-clear batch](depth-clear-batch.md) extends this scope. Larger layouts, perspective/clipping,
 broader shaders/runtime and general live guest depth/display remain open.

@@ -10,6 +10,7 @@
 #include <vulkan/vulkan.h>
 #include <memory>
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -1053,7 +1054,7 @@ TextureBinding texture_binding(Context& c,const TexturedDraw& d,VkDescriptorSetL
 const TexturedDraw& texture_source(const TexturedDraw& d){return d;}
 const TexturedDraw& texture_source(const IndexedDraw& d){return d.textured;}
 const GuestDrawOp& draw_source(const IndexedDraw& d){return d.textured.draw;}
-template<class Replay> bool render_guest_commands(Context& context,const Replay& replay,Image* rendered = nullptr,const DepthReplay* depth_data=nullptr) {
+template<class Replay> bool render_guest_commands(Context& context,const Replay& replay,Image* rendered = nullptr,const DepthReplay* depth_data=nullptr,const DepthClearReplay* clears=nullptr) {
     constexpr bool indexed=std::is_same_v<Replay,IndexedReplay>;
     constexpr bool textured=std::is_same_v<Replay,TextureReplay> || indexed;
     const auto w=replay.background.width, h=replay.background.height;
@@ -1070,7 +1071,7 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
     Image depth{};Buffer depth_upload{},depth_readback{};
     if(depth_data){
         depth=context.image(VK_FORMAT_D32_SFLOAT,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_DEPTH_BIT,w,h);
-        depth_upload=context.buffer(bytes,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);context.write(depth_upload,depth_data->initial,bytes);
+        depth_upload=context.buffer(bytes,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);context.write(depth_upload,clears?clears->original:depth_data->initial,bytes);
         depth_readback=context.buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     VkAttachmentDescription attachment{};
@@ -1087,7 +1088,7 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
     VkSubpassDescription subpass{};subpass.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount=1;subpass.pColorAttachments=&ref;
     if(depth_data)subpass.pDepthStencilAttachment=&depth_ref;
-    std::array<VkSubpassDependency,2> dependencies{};
+    std::array<VkSubpassDependency,3> dependencies{};
     dependencies[0].srcSubpass=VK_SUBPASS_EXTERNAL;dependencies[0].dstSubpass=0;
     dependencies[0].srcStageMask=VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;dependencies[0].dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependencies[0].dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -1100,9 +1101,20 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         dependencies[0].dstStageMask|=stages;dependencies[0].dstAccessMask|=access;
         dependencies[1].srcStageMask|=stages;dependencies[1].srcAccessMask|=access;
     }
+    if(clears){
+        if(!depth_data || clears->count>4)throw std::runtime_error("Invalid depth-clear replay");
+        uint32_t previous=0;
+        for(uint32_t i=0;i<clears->count;++i){const auto& c=clears->clears[i];
+            float value{};std::memcpy(&value,&c.value,4);
+            if(c.before_draw<previous || c.before_draw>replay.draw_count || c.rect[0]>c.rect[2] || c.rect[1]>c.rect[3] || c.rect[2]>w || c.rect[3]>h || !std::isfinite(value) || value<0 || value>1)throw std::runtime_error("Depth-clear operation exceeds replay bounds");previous=c.before_draw;
+        }
+        auto& d=dependencies[2];d.srcSubpass=0;d.dstSubpass=0;
+        d.srcStageMask=d.dstStageMask=VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        d.srcAccessMask=d.dstAccessMask=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;d.dependencyFlags=VK_DEPENDENCY_BY_REGION_BIT;
+    }
     auto pass_info=structure<VkRenderPassCreateInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
     pass_info.attachmentCount=depth_data?2:1;pass_info.pAttachments=attachments.data();pass_info.subpassCount=1;pass_info.pSubpasses=&subpass;
-    pass_info.dependencyCount=dependencies.size();pass_info.pDependencies=dependencies.data();
+    pass_info.dependencyCount=clears?3:2;pass_info.pDependencies=dependencies.data();
     VkRenderPass pass{};check(vkCreateRenderPass(context.device,&pass_info,nullptr,&pass),"create translated shader pass");context.render_passes.push_back(pass);
     auto framebuffer_info=structure<VkFramebufferCreateInfo>(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
     const std::array<VkImageView,2> views{{color.view,depth.view}};
@@ -1207,7 +1219,18 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
     auto begin=structure<VkRenderPassBeginInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
     begin.renderPass=pass;begin.framebuffer=framebuffer;begin.renderArea={{0,0},{w,h}};begin.clearValueCount=1;begin.pClearValues=&initial;
     vkCmdBeginRenderPass(command,&begin,VK_SUBPASS_CONTENTS_INLINE);
-    for(uint32_t i=0;i<replay.draw_count;++i) {
+    for(uint32_t i=0;i<=replay.draw_count;++i) {
+        if(clears)for(uint32_t c=0;c<clears->count;++c){const auto& source=clears->clears[c];
+            if(source.before_draw!=i || source.rect[0]==source.rect[2] || source.rect[1]==source.rect[3])continue;
+            auto memory=structure<VkMemoryBarrier>(VK_STRUCTURE_TYPE_MEMORY_BARRIER);memory.srcAccessMask=memory.dstAccessMask=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            const auto stages=VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            vkCmdPipelineBarrier(command,stages,stages,VK_DEPENDENCY_BY_REGION_BIT,1,&memory,0,nullptr,0,nullptr);
+            VkClearAttachment clear{};clear.aspectMask=VK_IMAGE_ASPECT_DEPTH_BIT;std::memcpy(&clear.clearValue.depthStencil.depth,&source.value,4);
+            VkClearRect rect{{{static_cast<int32_t>(source.rect[0]),static_cast<int32_t>(source.rect[1])},{source.rect[2]-source.rect[0],source.rect[3]-source.rect[1]}},0,1};
+            vkCmdClearAttachments(command,1,&clear,1,&rect);
+            vkCmdPipelineBarrier(command,stages,stages,VK_DEPENDENCY_BY_REGION_BIT,1,&memory,0,nullptr,0,nullptr);
+        }
+        if(i==replay.draw_count)break;
         const auto& d=draw_source(replay.draws[i]);
         if(d.rect[0]==d.rect[2] || d.rect[1]==d.rect[3])continue;
         const VkDeviceSize offset=0;vkCmdBindVertexBuffers(command,0,1,&vertex_buffers[i].handle,&offset);
@@ -1361,12 +1384,12 @@ public:
         check(vkQueueWaitIdle(context.queue),"presentation queue idle");
         ++presented;
     }
-    template<class Replay> uint32_t render(const Replay& draw,const DepthReplay* depth=nullptr) noexcept {
+    template<class Replay> uint32_t render(const Replay& draw,const DepthReplay* depth=nullptr,const DepthClearReplay* clears=nullptr) noexcept {
         try {
             context.clear_workloads();
             check(vkResetCommandPool(context.device,context.command_pool,0),"reset live frame commands");
             Image image{};
-            if(!render_guest_commands(context,draw,&image,depth))throw std::runtime_error("Live guest Vulkan pixels differ from serial raster oracle");
+            if(!render_guest_commands(context,draw,&image,depth,clears))throw std::runtime_error("Live guest Vulkan pixels differ from serial raster oracle");
             if(context.validation_errors)throw std::runtime_error("Vulkan validation error");
             ++completed;
             if(swapchain)present(image,draw.background.width,draw.background.height,draw.background.format==0xcf?VK_FORMAT_B8G8R8A8_UNORM:VK_FORMAT_R8G8B8A8_UNORM);
@@ -1425,14 +1448,15 @@ GpuReport run_gpu_checks() {
         for(uint32_t i=0;i<6;++i)tests.push_back({std::array<const char*,6>{"guest-tiled-rgba","guest-multigob-rgba","guest-pitch-bc1-fallback","guest-tiled-bc1-alpha-fallback","guest-pitch-bc3-alpha-fallback","guest-tiled-bc3-alpha-fallback"}[i],render_guest_commands(context,emulator_texture_storage_replay_v1(i)),"Captured guest pitch/GOB storage and BC1/BC3 -> original RGBA fallback -> Vulkan; every color and alpha byte matches independent source and frame oracles"});
         for(uint32_t i=0;i<9;++i)tests.push_back({std::array<const char*,9>{"guest-depth-never","guest-depth-less-occlusion","guest-depth-equal","guest-depth-less-equal","guest-depth-greater-occlusion","guest-depth-not-equal","guest-depth-greater-equal","guest-depth-always","guest-depth-read-only"}[i],guest_depth_replay(context,i),"Guest B197 ZF32 comparison/write state and captured shaders -> Vulkan D32 attachment; every color and depth bit matches independent oracles"});
         for(uint32_t i=9;i<11;++i)tests.push_back({std::array<const char*,2>{"guest-depth-sloped-occlusion","guest-depth-reverse-sloped-occlusion"}[i-9],guest_depth_replay(context,i),"Guest varying vertex Z -> Vulkan raster depth interpolation; every color and D32 bit matches independent pixel-center plane oracles"});
+        for(uint32_t i=0;i<16;++i){const auto clear=emulator_depth_clear_replay_v1(i);tests.push_back({"guest-depth-clear-"+std::to_string(i),render_guest_commands(context,clear.scene.color,nullptr,&clear.scene,&clear),"Captured B197 depth clears at actual draw positions -> VkCmdClearAttachments; every color and D32 bit matches independent full/partial/ordered oracles"});}
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 39 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 55 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":13,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":14,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1501,16 +1525,20 @@ std::string texture_scene_json(bool running,const std::string& error="") {
 std::string start_texture_scene(void* window,unsigned variant) {
     try {
         texture_scene.reset();texture_variant=variant;
-        if(variant>22)throw std::runtime_error("Unknown texture scene variant");
+        if(variant>38)throw std::runtime_error("Unknown texture scene variant");
         texture_scene=std::make_unique<LiveRenderer>();texture_scene->initialize(window);
         const auto render=[&](const auto& replay) {
             if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
             if(texture_scene->render(replay))throw std::runtime_error(texture_scene->error);
         };
-        if(variant<3)render(emulator_texture_replay_v1(variant));else if(variant<6)render(emulator_indexed_replay_v1(variant-3));else if(variant<12)render(emulator_texture_storage_replay_v1(variant-6));else {
+        if(variant<3)render(emulator_texture_replay_v1(variant));else if(variant<6)render(emulator_indexed_replay_v1(variant-3));else if(variant<12)render(emulator_texture_storage_replay_v1(variant-6));else if(variant<23){
             const auto depth=emulator_depth_replay_v1(variant-12);
             if(depth.color.status)throw std::runtime_error(std::string(depth.color.error,strnlen(depth.color.error,sizeof(depth.color.error))));
             if(texture_scene->render(depth.color,&depth))throw std::runtime_error(texture_scene->error);
+        }else{
+            const auto clear=emulator_depth_clear_replay_v1(variant-23);
+            if(clear.scene.color.status)throw std::runtime_error(std::string(clear.scene.color.error,strnlen(clear.scene.color.error,sizeof(clear.scene.color.error))));
+            if(texture_scene->render(clear.scene.color,&clear.scene,&clear))throw std::runtime_error(texture_scene->error);
         }
         return texture_scene_json(true);
     }catch(const std::exception& e){const auto result=texture_scene_json(false,e.what());texture_scene.reset();return result;}

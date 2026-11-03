@@ -8,14 +8,14 @@ import java.util.concurrent.CancellationException
 
 object NativeScenes {
     init { System.loadLibrary("emulator_gpu_lab") }
-    val patterns = listOf("Texture", "BGRA texture", "Updated texture", "Indexed byte quad", "Indexed short quad", "Indexed triangle", "Tiled RGBA", "Multi-GOB RGBA", "BC1 texture", "Tiled BC1 alpha", "BC3 alpha", "Tiled BC3 alpha", "Depth never", "Near depth occlusion", "Equal depth", "Less or equal depth", "Reverse depth occlusion", "Not equal depth", "Greater or equal depth", "Always depth", "Read-only depth", "Sloped depth", "Reverse sloped depth")
+    val patterns = listOf("Texture", "BGRA texture", "Updated texture", "Indexed byte quad", "Indexed short quad", "Indexed triangle", "Tiled RGBA", "Multi-GOB RGBA", "BC1 texture", "Tiled BC1 alpha", "BC3 alpha", "Tiled BC3 alpha", "Depth never", "Near depth occlusion", "Equal depth", "Less or equal depth", "Reverse depth occlusion", "Not equal depth", "Greater or equal depth", "Always depth", "Read-only depth", "Sloped depth", "Reverse sloped depth", "Clear to far", "Clear to near", "Clear right region", "Clipped depth clear", "Empty depth clear", "Overlapping depth clears", "Clear between draws", "Near clear between draws", "Clear after draws", "Partial clear between draws", "Clear with read-only draws", "Clear with never comparison", "Reverse depth clear", "Equal depth clear", "Single pixel depth clear", "Full and partial clear")
     external fun start(surface: Surface, variant: Int): ByteArray
     external fun stop(): ByteArray
 }
 
 /** Shared native checks and report shape for manual and automatic workflows. */
 object Diagnostics {
-    const val WORKLOAD_VERSION = 28
+    const val WORKLOAD_VERSION = 29
     init { System.loadLibrary("emulator_gpu_lab") }
     private external fun runEngineChecks(): ByteArray
     private external fun runGpuCoreChecks(): ByteArray

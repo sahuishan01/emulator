@@ -5,7 +5,7 @@ from pathlib import Path
 from qa_pattern_pixels import expected_pixel
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--resume-after-patterns',action='store_true',help='Resume control/lifecycle checks after recorded full pattern captures');a=p.parse_args()
  out=a.output;out.mkdir(parents=True,exist_ok=True);adb=[str(Path.home()/'Android/Sdk/platform-tools/adb'),'-s','emulator-5580'];pkg='com.algosculptor.emulator.gpulab';notes=[]
  def call(*args,timeout=30):return subprocess.run(adb+list(args),check=True,capture_output=True,timeout=timeout).stdout
  def bounds(n):return tuple(map(int,re.findall(r'\d+',n.get('bounds'))))
@@ -55,19 +55,26 @@ def main():
   (out/f'{phase}.png').write_bytes(call('exec-out','screencap','-p'))
   print('Verified',phase,'128 displayed pixel centers',flush=True)
  try:
-  call('install','-r',str(a.apk),timeout=60);call('shell','am','force-stop',pkg);call('logcat','-c')
-  open_scene('initial');q=wait(0,True,0,'rgba-ready');pixels(0,'rgba-display')
-  for variant in [*range(1,23),0]:
-   previous=q['capturedAtEpochMs'];tap('Next pattern','next-'+str(variant));q=wait(variant,True,previous,'variant-'+str(variant));pixels(variant,'display-'+str(variant))
+  if a.resume_after_patterns:
+   for variant in range(39):
+    r=json.loads((out/f'variant-{variant}.json').read_bytes());assert r['variant']==variant and r['pixelsVerified'] and r['completedFrames']==r['presentedFrames']==1 and r['validationErrors']==0 and not r['error']
+    assert (out/f'display-{variant}.png').is_file()
+   open_scene('resume-controls');q=wait(0,True,0,'resumed-rgba-ready')
+   notes.append('Resumed from all39 verified pattern captures after first rapid-input wrap timed out; repeated the same39-tap sequence')
+  else:
+   call('install','-r',str(a.apk),timeout=60);call('shell','am','force-stop',pkg);call('logcat','-c')
+   open_scene('initial');q=wait(0,True,0,'rgba-ready');pixels(0,'rgba-display')
+   for variant in [*range(1,39),0]:
+    previous=q['capturedAtEpochMs'];tap('Next pattern','next-'+str(variant));q=wait(variant,True,previous,'variant-'+str(variant));pixels(variant,'display-'+str(variant))
   n=button('Next pattern','rapid-patterns');baseline=q['capturedAtEpochMs']
-  for _ in range(23):tapnode(n)
+  for _ in range(39):tapnode(n)
   q=wait(0,True,baseline,'rapid-pattern-final');pixels(0,'rapid-display')
-  for variant in range(1,23):
+  for variant in range(1,39):
    baseline=q['capturedAtEpochMs'];tap('Next pattern','indexed-lifecycle-'+str(variant));q=wait(variant,True,baseline,'indexed-lifecycle-ready-'+str(variant))
   baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','accelerometer_rotation','0');call('shell','settings','put','system','user_rotation','1')
-  q=wait(22,True,baseline,'landscape-recreated');pixels(22,'landscape-display')
-  baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','user_rotation','0');q=wait(22,True,baseline,'portrait-recreated')
-  baseline=q['capturedAtEpochMs'];call('shell','input','keyevent','3');stopped=wait(22,False,baseline,'background-closed')
+  q=wait(38,True,baseline,'landscape-recreated');pixels(38,'landscape-display')
+  baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','user_rotation','0');q=wait(38,True,baseline,'portrait-recreated')
+  baseline=q['capturedAtEpochMs'];call('shell','input','keyevent','3');stopped=wait(38,False,baseline,'background-closed')
   time.sleep(.8);assert report()['completedFrames']==stopped['completedFrames']
   open_scene('foreground');q=wait(0,True,stopped['capturedAtEpochMs'],'foreground-reopened');pixels(0,'foreground-display')
   for i in range(2):
@@ -75,7 +82,7 @@ def main():
   tap('Back to library','final-back');wait(0,False,q['capturedAtEpochMs'],'final-closed')
   assert not call('logcat','-b','crash','-d').strip()
   assert not re.search(rb'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab',call('logcat','-d'))
-  result={'passed':True,'checks':['library scene launch','real RGBA sampled pixels','BGRA rendering preserves displayed colors','changed source texture pixels','byte indexed quad pixels','short indexed negative-base pixels','u32 indexed triangle coverage','tiled RGBA pixels','multi-GOB odd-dimension pixels','pitched BC1 pixels','tiled BC1 alpha pixels','pitched BC3 alpha pixels','tiled BC3 alpha pixels','depth never pixels','depth less occlusion','depth equal pixels','depth less-equal pixels','reverse depth occlusion','depth not-equal pixels','depth greater-equal pixels','depth always pixels','read-only depth pixels','sloped depth pixels','reverse sloped depth pixels','pattern wrap','rapid input coalescing','landscape surface recreation','portrait surface recreation','background teardown','foreground reopen','repeated native/surface teardown'],'displaySamplesPerCapture':128,'notes':notes}
+  result={'passed':True,'checks':['library scene launch','real RGBA sampled pixels','BGRA rendering preserves displayed colors','changed source texture pixels','byte indexed quad pixels','short indexed negative-base pixels','u32 indexed triangle coverage','tiled RGBA pixels','multi-GOB odd-dimension pixels','pitched BC1 pixels','tiled BC1 alpha pixels','pitched BC3 alpha pixels','tiled BC3 alpha pixels','depth never pixels','depth less occlusion','depth equal pixels','depth less-equal pixels','reverse depth occlusion','depth not-equal pixels','depth greater-equal pixels','depth always pixels','read-only depth pixels','sloped depth pixels','reverse sloped depth pixels','depth clear 0 pixels','depth clear 1 pixels','depth clear 2 pixels','depth clear 3 pixels','depth clear 4 pixels','depth clear 5 pixels','depth clear 6 pixels','depth clear 7 pixels','depth clear 8 pixels','depth clear 9 pixels','depth clear 10 pixels','depth clear 11 pixels','depth clear 12 pixels','depth clear 13 pixels','depth clear 14 pixels','depth clear 15 pixels','pattern wrap','rapid input coalescing','landscape surface recreation','portrait surface recreation','background teardown','foreground reopen','repeated native/surface teardown'],'displaySamplesPerCapture':128,'notes':notes}
   (out/'verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
  finally:
   try:call('shell','settings','put','system','user_rotation','0');call('shell','settings','put','system','accelerometer_rotation','1')

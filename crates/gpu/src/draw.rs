@@ -86,6 +86,9 @@ fn invalid() -> E {
     E::UnsupportedDrawState
 }
 impl Registers {
+    pub(crate) fn depth_clear(&self, color: &ColorRegisters) -> Result<crate::DepthClear, E> {
+        self.depth.clear(color)
+    }
     /// None means method belongs to the color engine. A returned draw command
     /// encodes topology/count/first in the public BEGIN_END_INSTANCE_FIRST word.
     pub(crate) fn write(&mut self, offset: u32, data: u32) -> Result<Option<Option<Command>>, E> {

@@ -3,7 +3,7 @@
 The supplied [0.24 physical Mali report](g720-depth.md) confirms all 168 earlier
 checks and 21 patterns. The new [interpolation profile](../sloped-depth-batch.md)
 is validated below on the host and owned software Android device; its physical
-Mali checkpoint remains pending.
+Mali checkpoint is [now confirmed separately](g720-sloped-depth.md).
 
 All 229 workspace Rust tests, formatting and all-target Clippy with warnings
 denied pass. The new integration tests compare every color and D32 value against

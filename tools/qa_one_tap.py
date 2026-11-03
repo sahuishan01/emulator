@@ -5,7 +5,7 @@ from pathlib import Path
 from qa_pattern_pixels import expected_pixel
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--previous-workload',type=int,default=27);p.add_argument('--version',default='0.25.0-dev');p.add_argument('--workload',type=int,default=28);p.add_argument('--pattern-count',type=int,default=23);p.add_argument('--gpu-tests',type=int,default=39);p.add_argument('--native-workload',type=int,default=13);p.add_argument('--reference-prefix',default='reports/v0.25-host-');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--previous-workload',type=int,default=28);p.add_argument('--version',default='0.26.0-dev');p.add_argument('--workload',type=int,default=29);p.add_argument('--pattern-count',type=int,default=39);p.add_argument('--gpu-tests',type=int,default=55);p.add_argument('--native-workload',type=int,default=14);p.add_argument('--reference-prefix',default='reports/v0.26-host-');p.add_argument('--resume-lifecycle',action='store_true',help='Finish recovery QA from recorded completed captures and lifecycle UI evidence');a=p.parse_args()
  out=a.output;out.mkdir(parents=True,exist_ok=True);pkg='com.algosculptor.emulator.gpulab';adb=[str(Path.home()/'Android/Sdk/platform-tools/adb'),'-s','emulator-5580'];notes=[];completed_reports=[]
  def call(*args,timeout=35):return subprocess.check_output(adb+list(args),timeout=timeout,stderr=subprocess.PIPE)
  def cache(name='last-report.json'):return json.loads(call('exec-out','run-as',pkg,'cat','files/'+name))
@@ -46,7 +46,7 @@ def main():
   raise RuntimeError('New visible pattern did not complete')
  def verify_report(raw):
   r=json.loads(raw);assert r['appVersion']==a.version and r['workloadVersion']==a.workload and r['schemaVersion']==4 and r['allPassed']
-  assert {k:len(r[k]['tests']) for k in ['engine','nv','gpuCore','shader','gpu']}=={'engine':18,'nv':50,'gpuCore':40,'shader':25,'gpu':a.gpu_tests}
+  assert {k:len(r[k]['tests']) for k in ['engine','nv','gpuCore','shader','gpu']}=={'engine':18,'nv':50,'gpuCore':60,'shader':25,'gpu':a.gpu_tests}
   assert r['gpu']['workloadVersion']==a.native_workload and r['gpu']['validationErrors']==0
   for key,name in [('engine','engine'),('nv','nv'),('gpuCore','gpu-core'),('shader','shader')]:
    reference=json.load(open(a.reference_prefix+name+'.json'));actual=r[key].copy();reference.pop('hostArchitecture',None);actual.pop('hostArchitecture',None);assert actual==reference,key
@@ -57,7 +57,7 @@ def main():
    assert pattern['completedFrames']==pattern['presentedFrames']==1 and pattern['validationErrors']==0 and pattern['error']==''
   return r
  def verify_export(phase,excluded=(),capture_bounds=None):
-  end=time.monotonic()+240;seen=set();active_id=None;capture_runs=0;excluded=set(excluded)
+  end=time.monotonic()+420;seen=set();active_id=None;capture_runs=0;excluded=set(excluded)
   while time.monotonic()<end:
    if capture_bounds:
     try:
@@ -109,31 +109,48 @@ def main():
   print('Verified',phase,'128 displayed pixel centers',flush=True);return True
  try:
   assert call('shell','getprop','sys.boot_completed').strip()==b'1'
-  call('shell','am','force-stop',pkg)
-  old=call('exec-out','run-as',pkg,'cat','files/last-report.json');previous=json.loads(old);assert previous['workloadVersion']==a.previous_workload;(out/'before-upgrade-report.json').write_bytes(old)
-  def rows(phase):
-   p=out/(phase+'.db');p.write_bytes(call('exec-out','run-as',pkg,'cat','databases/library.db'))
-   with sqlite3.connect(p) as c:return c.execute('select * from titles order by id').fetchall()
-  before=rows('before-upgrade-library');call('install','-r',str(a.apk),timeout=60);call('logcat','-c')
-  call('shell','am','start','-W','-n',pkg+'/.HomeActivity');assert rows('after-upgrade-library')==before
-  assert call('exec-out','run-as',pkg,'cat','files/last-report.json')==old
-  initial=download_names();tap('Test all & export JSON','one-tap-launch');tap('Cancel test','cancel-running')
-  r=ui('cancelled');assert any('Test cancelled' in n.get('text','') for n in r.iter('node'));assert download_names()==initial
-  box=bounds(next(n for n in r.iter('node') if n.get('content-desc')=='Automatic test patterns'))
-  first_attempt=cache('last-texture-report.json').get('batchRunId')
-  tap('Run again','restart-after-cancel');first=verify_export('first-automatic-report',(first_attempt,previous.get('patternBatch',{}).get('runId'),None),box)
-  assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports};shot('automatic-result')
-  tap('Share JSON','share-result');root=ui('share-chooser');shot('share-chooser');call('shell','input','keyevent','4');ui('share-return')
-  assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
-  call('shell','settings','put','system','accelerometer_rotation','0');call('shell','settings','put','system','user_rotation','1');ui('completed-landscape');shot('completed-landscape')
-  call('shell','settings','put','system','user_rotation','0');ui('completed-portrait');assert cache()['automaticExport']==first['automaticExport']
-  # Interrupt a second attempt during rotation/background; only its fresh restart may publish.
-  tap('Run again','lifecycle-start');interrupted=wait_scene({first['patternBatch']['runId']})['batchRunId']
-  call('shell','settings','put','system','user_rotation','1');rotated=wait_scene({first['patternBatch']['runId'],interrupted})['batchRunId']
-  call('shell','input','keyevent','3');time.sleep(.5);assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
-  call('shell','am','start','-W','-a','android.intent.action.MAIN','-c','android.intent.category.LAUNCHER','-f','0x10200000','-n',pkg+'/.HomeActivity')
-  root=ui('resumed-batch')
-  if any(n.get('text')=='Your library' for n in root.iter('node')):call('shell','input','keyevent','4')
+  if a.resume_lifecycle:
+   previous=json.loads((out/'before-upgrade-report.json').read_bytes());assert previous['workloadVersion']==a.previous_workload
+   first=verify_report((out/'first-automatic-report.json').read_bytes())
+   completed_reports[:]=[verify_report(f.read_bytes()) for f in sorted(out.glob('first-automatic-report-run-*.json'))]
+   assert completed_reports and len({r['patternBatch']['runId'] for r in completed_reports})==len(completed_reports)
+   for name in ['cancelled-0.xml','share-chooser-0.xml','completed-landscape-0.xml','resumed-batch-0.xml']:
+    assert (out/name).is_file(),name
+   assert {int(f.stem.rsplit('-',1)[-1]) for f in out.glob('first-automatic-report-pattern-*.png')}==set(range(a.pattern_count))
+   current=verify_report(call('exec-out','run-as',pkg,'cat','files/last-report.json'))
+   assert current['patternBatch']['runId'] not in {r['patternBatch']['runId'] for r in completed_reports}
+   known={r['automaticExport']['filename'] for r in [*completed_reports,current]}
+   initial=download_names()-known
+   for name in initial:
+    assert json.loads(call('exec-out','cat','/sdcard/Download/Emulator/'+name)).get('appVersion')!=a.version
+   interrupted=rotated=None
+   notes.append('Runner interrupted after recorded completed captures and lifecycle UI; resumed final published report and recovery checks')
+  else:
+   call('shell','am','force-stop',pkg)
+   old=call('exec-out','run-as',pkg,'cat','files/last-report.json');previous=json.loads(old);assert previous['workloadVersion']==a.previous_workload;(out/'before-upgrade-report.json').write_bytes(old)
+   def rows(phase):
+    p=out/(phase+'.db');p.write_bytes(call('exec-out','run-as',pkg,'cat','databases/library.db'))
+    with sqlite3.connect(p) as c:return c.execute('select * from titles order by id').fetchall()
+   before=rows('before-upgrade-library');call('install','-r',str(a.apk),timeout=60);call('logcat','-c')
+   call('shell','am','start','-W','-n',pkg+'/.HomeActivity');assert rows('after-upgrade-library')==before
+   assert call('exec-out','run-as',pkg,'cat','files/last-report.json')==old
+   initial=download_names();tap('Test all & export JSON','one-tap-launch');tap('Cancel test','cancel-running')
+   r=ui('cancelled');assert any('Test cancelled' in n.get('text','') for n in r.iter('node'));assert download_names()==initial
+   box=bounds(next(n for n in r.iter('node') if n.get('content-desc')=='Automatic test patterns'))
+   first_attempt=cache('last-texture-report.json').get('batchRunId')
+   tap('Run again','restart-after-cancel');first=verify_export('first-automatic-report',(first_attempt,previous.get('patternBatch',{}).get('runId'),None),box)
+   assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports};shot('automatic-result')
+   tap('Share JSON','share-result');root=ui('share-chooser');shot('share-chooser');call('shell','input','keyevent','4');ui('share-return')
+   assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
+   call('shell','settings','put','system','accelerometer_rotation','0');call('shell','settings','put','system','user_rotation','1');ui('completed-landscape');shot('completed-landscape')
+   call('shell','settings','put','system','user_rotation','0');ui('completed-portrait');assert cache()['automaticExport']==first['automaticExport']
+   # Interrupt a second attempt during rotation/background; only its fresh restart may publish.
+   tap('Run again','lifecycle-start');interrupted=wait_scene({first['patternBatch']['runId']})['batchRunId']
+   call('shell','settings','put','system','user_rotation','1');rotated=wait_scene({first['patternBatch']['runId'],interrupted})['batchRunId']
+   call('shell','input','keyevent','3');time.sleep(.5);assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
+   call('shell','am','start','-W','-a','android.intent.action.MAIN','-c','android.intent.category.LAUNCHER','-f','0x10200000','-n',pkg+'/.HomeActivity')
+   root=ui('resumed-batch')
+   if any(n.get('text')=='Your library' for n in root.iter('node')):call('shell','input','keyevent','4')
   second=verify_export('restarted-automatic-report',(first['patternBatch']['runId'],interrupted,rotated))
   assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
   call('shell','settings','put','system','user_rotation','0');ui('final-portrait')
@@ -142,7 +159,7 @@ def main():
   root=ui('cold-restored');assert any(f'All {sum(len(second[k]["tests"]) for k in ("engine","nv","gpuCore","shader","gpu"))} checks passed' in n.get('text','') and f'Patterns: {a.pattern_count}/{a.pattern_count}' in n.get('text','') for n in root.iter('node'))
   assert call('exec-out','run-as',pkg,'cat','files/last-report.json')==expected;shot('cold-restored')
   assert not call('logcat','-b','crash','-d').strip();assert not re.search(rb'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab',call('logcat','-d'))
-  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON','all 23 automatically displayed patterns','2944 displayed pixel centers match formulas','all 172 diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run','cold Diagnostics restores complete 23-pattern report'],'notes':notes,'completedRuns':len(completed_reports),'displaySamples':a.pattern_count*128}
+  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON','all 39 automatically displayed patterns','4992 displayed pixel centers match formulas','all 208 diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run','cold Diagnostics restores complete 39-pattern report'],'notes':notes,'completedRuns':len(completed_reports),'displaySamples':a.pattern_count*128}
   (out/'verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
  finally:
   try:call('shell','settings','put','system','user_rotation','0');call('shell','settings','put','system','accelerometer_rotation','1')

@@ -51,6 +51,44 @@ fn invalid() -> ExecutionError {
     ExecutionError::UnsupportedColorState
 }
 impl ColorRegisters {
+    pub(crate) fn depth_clear_rect(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<[u32; 4], ExecutionError> {
+        if set(self.clip[0])? != width << 16 || set(self.clip[1])? != height << 16 {
+            return Err(invalid());
+        }
+        let control = set(self.control)?;
+        if control & !0x110 != 0 {
+            return Err(invalid());
+        }
+        let mut rect = [0, 0, width, height];
+        let mut intersect = |h: u32, v: u32| -> Result<(), ExecutionError> {
+            let r = [h & 65535, v & 65535, h >> 16, v >> 16];
+            if r[0] > r[2] || r[1] > r[3] {
+                return Err(invalid());
+            }
+            rect[0] = rect[0].max(r[0]);
+            rect[1] = rect[1].max(r[1]);
+            rect[2] = rect[2].min(r[2]);
+            rect[3] = rect[3].min(r[3]);
+            Ok(())
+        };
+        if control & 0x10 != 0 {
+            intersect(set(self.clear_rect[0])?, set(self.clear_rect[1])?)?;
+        }
+        if control & 0x100 != 0 {
+            match set(self.scissor[0])? {
+                0 => {}
+                1 => intersect(set(self.scissor[1])?, set(self.scissor[2])?)?,
+                _ => return Err(invalid()),
+            }
+        }
+        rect[0] = rect[0].min(rect[2]);
+        rect[1] = rect[1].min(rect[3]);
+        Ok(rect)
+    }
     pub(crate) fn write(
         &mut self,
         offset: u32,

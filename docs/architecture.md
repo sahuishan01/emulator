@@ -7,9 +7,9 @@ acceptance gates. Proposed components below are not claims of implemented
 functionality. Implemented now: bounded static NRO loading, the small A64
 interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
 event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
-Rust engine for sixteen original guest checks
-alongside three GPU memory/command reference cases and the Vulkan laboratory. The user
-supplied a physical G720 0.3.0-dev report passing all six current workloads,
+Rust engine for eighteen original guest checks, fifty NV scenarios, sixty GPU
+core groups, twenty-five shader cases and fifty-five Vulkan workloads. The user
+supplied a physical G720 0.3.0-dev report passing all six workloads at that checkpoint,
 including BC1 conversion, sampling and updates. The supplied 0.16 report now passes all60
 checks on G720. A bounded original SM53/SPH decoder/typed SSA/SPIR-V path now feeds
 guest vertex/draw commands, a transactional CPU rasterizer and Vulkan command replay.
@@ -26,10 +26,12 @@ The [physical storage report](validation/g720-texture-storage.md) confirms all
 default execution-time DMA semantics. The [depth batch](depth-batch.md) now
 adds a single-GOB ZF32 attachment and transactional color/depth effects. The
 [interpolation extension](sloped-depth-batch.md) adds w=1 sloped triangles and
-bit-exact dyadic Vulkan replay. General depth and live display integration remain open.
+bit-exact dyadic Vulkan replay. The [depth-clear batch](depth-clear-batch.md)
+adds ordered depth-only clears, sixteen rendered scenarios and twenty portable
+correctness groups. General depth and live display integration remain open.
 The [one-tap test workflow](one-tap-testing.md) now owns visible pattern sequencing,
 shared diagnostics and automatic app-owned Downloads publication. Completed reports
-retain all 23 pattern proofs and remain immutable when reopened for manual export.
+retain all 39 pattern proofs and remain immutable when reopened for manual export.
 See [the supported shader subset](shader-translation-batch.md).
 The color-clear batch adds original B197 operations and offscreen Vulkan replay
 of decoded guest commands; see [the exact scope](color-clear-batch.md).

@@ -7,7 +7,7 @@ General guest shaders and commercial Switch games remain unsupported. The C++ im
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-39 bounded workloads (native workload version 13). The first nine are:
+55 bounded workloads (native workload version 14). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -42,6 +42,10 @@ Cases 20–28 extend indexed geometry and tiled/compressed textures; cases 29–
 add all depth comparisons and disabled writes. See the [bounded depth contract](../../docs/depth-batch.md).
 Cases 38–39 add forward/reverse sloped depth with exact D32 plane oracles;
 see the [interpolation profile](../../docs/sloped-depth-batch.md).
+Cases 40–55 execute depth-only clears before/between/after draws, including
+partial/scissored/empty/overlapping clears and comparison boundaries. Original
+depth is uploaded and actual Vulkan clears execute before color/depth readback;
+see the [expanded clear matrix](../../docs/depth-clear-batch.md).
 See [the supported shader subset](../../docs/shader-translation-batch.md).
 
 The report includes device/driver/API identity, software-renderer status,

@@ -121,6 +121,7 @@ impl Copy {
 }
 #[derive(Debug)]
 pub(crate) struct PreparedBatch {
+    depth_clears: Vec<crate::DepthClear>,
     state: MethodState,
     copies: Vec<Copy>,
     clears: Vec<crate::ColorClear>,
@@ -134,6 +135,9 @@ pub(crate) struct PreparedBatch {
     stats: ExecutionStats,
 }
 impl PreparedBatch {
+    pub(crate) fn depth_clears(&self) -> &[crate::DepthClear] {
+        &self.depth_clears
+    }
     pub(crate) fn next_state(&self) -> MethodState {
         self.state.clone()
     }
@@ -239,6 +243,7 @@ impl MethodState {
             return Err(ExecutionError::InvalidLimits);
         }
         let mut batch = PreparedBatch {
+            depth_clears: Vec::new(),
             state: self.clone(),
             copies: Vec::new(),
             clears: Vec::new(),
@@ -275,6 +280,11 @@ impl MethodState {
                 .as_mut()
                 .ok_or(ExecutionError::UnboundSubchannel(write.subchannel))?;
             if let EngineState::Color(registers, draw_registers) = engine {
+                if offset == 0x19d0 && write.data == 1 {
+                    let clear = draw_registers.depth_clear(registers)?;
+                    batch.add_depth_clear(space, clear, limits, &mut spans)?;
+                    continue;
+                }
                 if let Some(command) = draw_registers.write(offset, write.data)? {
                     if let Some(command) = command {
                         let (draw, pins) = draw_registers.plan(space, registers, command)?;
@@ -402,6 +412,13 @@ impl MethodState {
             .depth_inputs
             .iter()
             .flat_map(|p| p.backing_ranges())
+            .chain(
+                batch
+                    .copies
+                    .iter()
+                    .filter(|c| c.depth)
+                    .flat_map(|c| c.target.backing_ranges()),
+            )
             .any(|a| {
                 batch
                     .copies
@@ -426,6 +443,75 @@ impl MethodState {
 }
 
 impl PreparedBatch {
+    fn add_depth_clear(
+        &mut self,
+        space: &GpuAddressSpace,
+        mut clear: crate::DepthClear,
+        limits: ExecutionLimits,
+        spans: &mut usize,
+    ) -> Result<(), ExecutionError> {
+        let empty = clear.rect[0] == clear.rect[2] || clear.rect[1] == clear.rect[3];
+        let full = clear.width == 16 && clear.height == 8 && clear.rect == [0, 0, 16, 8];
+        let bytes = if empty { 0 } else { 512 };
+        let snapshot = if empty || full { 0 } else { 512 };
+        if self.stats.copy_launches + self.stats.clear_launches + self.stats.draw_launches
+            >= limits.launches
+            || bytes + snapshot
+                > limits.bytes.saturating_sub(
+                    self.stats.copied_bytes
+                        + self.stats.cleared_bytes
+                        + self.stats.drawn_bytes
+                        + self.snapshot_bytes,
+                )
+        {
+            return Err(ExecutionError::Capacity);
+        }
+        self.snapshot_inputs()?;
+        if !empty {
+            let target = space
+                .pin(clear.address, 512, Access::Write)
+                .map_err(ExecutionError::Memory)?;
+            let source = if full {
+                None
+            } else {
+                Some(
+                    space
+                        .pin(clear.address, 512, Access::Read)
+                        .map_err(ExecutionError::Memory)?,
+                )
+            };
+            *spans += target.backing_ranges().count()
+                + source.as_ref().map_or(0, |s| s.backing_ranges().count());
+            if *spans > crate::address_space::MAX_BACKING_SPANS {
+                return Err(ExecutionError::Capacity);
+            }
+            let mut raw = vec![0; 512];
+            if let Some(source) = &source {
+                read_projected(source, &mut raw, &self.copies)?;
+            }
+            for y in clear.rect[1]..clear.rect[3] {
+                for x in clear.rect[0]..clear.rect[2] {
+                    let at = crate::depth::offset(x as usize, y as usize);
+                    raw[at..at + 4].copy_from_slice(&clear.value.to_le_bytes());
+                }
+            }
+            if let Some(source) = source {
+                self.depth_inputs.push(source);
+            }
+            self.copies.push(Copy {
+                depth: true,
+                source: CopyInput::Prepared,
+                target,
+                buffer: raw,
+            });
+        }
+        clear.before_draw = self.draws.len() as u32;
+        self.depth_clears.push(clear);
+        self.stats.clear_launches += 1;
+        self.stats.cleared_bytes += bytes;
+        self.snapshot_bytes += snapshot;
+        Ok(())
+    }
     fn add_clear(
         &mut self,
         space: &GpuAddressSpace,

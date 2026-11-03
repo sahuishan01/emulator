@@ -17,7 +17,7 @@ Current foundation: twelve original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
 virtual timeouts/cancellation and CLI/Android execution. Nineteen owned NROs exercise
-the implemented behavior. All205 Rust tests and31 independent
+the implemented behavior. All250 Rust tests and31 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
 reference decoding and a reproducible fixture. BC3 and2D generic GOB unpacking
 now join guest descriptors and the canonical host RGBA path.
@@ -85,8 +85,11 @@ readback. All eight comparisons and disabled writes join one 168-check/21-patter
 run, now [confirmed on physical Mali](validation/g720-depth.md). The
 [0.25 interpolation extension](sloped-depth-batch.md) adds screen-linear Z for
 w=1 triangles and exact dyadic plane oracles, bringing the batch to 172 checks
-and 23 patterns. Its physical confirmation is pending. Depth clears, larger
-layouts, perspective/clipping, broader shaders/runtime and display remain open.
+and 23 patterns, now [confirmed on physical Mali](validation/g720-sloped-depth.md).
+The [0.26 depth-clear batch](depth-clear-batch.md) adds sixteen rendered scenarios
+and twenty portable correctness groups: 208 diagnostics and 39 patterns in one
+run. New physical confirmation is pending. Larger layouts, stencil, mixed clear
+masks, perspective/clipping, broader shaders/runtime and display remain open.
 
 ## Milestones and dependency gates
 

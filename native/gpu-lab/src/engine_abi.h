@@ -66,6 +66,11 @@ struct DepthReplay {
 static_assert(sizeof(DepthReplay)==51500 && alignof(DepthReplay)==4);
 static_assert(offsetof(DepthReplay,initial)==50452 && offsetof(DepthReplay,expected)==50964);
 extern "C" DepthReplay emulator_depth_replay_v1(std::uint32_t index);
+struct DepthClearOp { std::uint32_t rect[4],value,before_draw; };
+struct DepthClearReplay { DepthReplay scene;std::uint32_t original[128],count;DepthClearOp clears[4]; };
+static_assert(sizeof(DepthClearOp)==24 && sizeof(DepthClearReplay)==52112 && alignof(DepthClearReplay)==4);
+static_assert(offsetof(DepthClearReplay,original)==51500 && offsetof(DepthClearReplay,clears)==52016);
+extern "C" DepthClearReplay emulator_depth_clear_replay_v1(std::uint32_t index);
 
 struct TexturedDraw {
     GuestDrawOp draw;

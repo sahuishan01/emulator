@@ -17,6 +17,9 @@ pub trait GraphicsBackend: std::fmt::Debug {
 }
 impl PreparedSubmission {
     pub fn graphics_frame(&self) -> Result<GraphicsFrame, String> {
+        if !self.depth_clears().is_empty() {
+            return Err("Depth clears require the depth-clear replay backend".into());
+        }
         let clears = self.color_clears();
         let draws = self.draws();
         if draws.iter().any(|d| d.depth.is_some()) {
