@@ -50,6 +50,12 @@ whole-batch backing feedback validation. The separate value ABI preserves raw
 elements and signed base; the Vulkan adapter binds index buffers and widens u8
 to u16. Old value adapters reject indexed state rather than dropping it.
 
+The [texture storage profile](texture-storage-batch.md) adds original2D GOB
+unpacking and BC1/BC3 canonicalization. Raw padded input and decoded RGBA join
+snapshot budgets and backing-identity feedback rejection; immutable decoded
+pixels cross the unchanged replay ABI into host RGBA textures. The standalone
+codec cap is128MiB; guest dimensions<=64 limit raw padding to64KiB/decoded16KiB.
+
 ## 1. Process, addresses and memory
 
 Use distinct `GuestVa`, `GpuVa`, `BackingId`, `ProcessId`, `ThreadId` and

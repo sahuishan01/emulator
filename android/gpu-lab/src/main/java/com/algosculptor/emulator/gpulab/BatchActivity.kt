@@ -63,7 +63,7 @@ class BatchActivity : Activity(), TextureView.SurfaceTextureListener {
         resultSummary = ui.text("", 16f)
         resultPanel = ScrollView(this).apply { addView(resultSummary); visibility = View.GONE }
         root.addView(resultPanel, LinearLayout.LayoutParams(-1, 0, 1f)); ui.space(root, 8)
-        detail = ui.text("Runs six patterns and all checks.\nSaves JSON to Downloads/Emulator.", 13f, ui.muted).apply { setLines(3) }; root.addView(detail)
+        detail = ui.text("Runs all patterns and checks.\nSaves JSON to Downloads/Emulator.", 13f, ui.muted).apply { setLines(3) }; root.addView(detail)
         val buttons = LinearLayout(this)
         action = ui.button("Cancel test") {
             when { running -> interrupt(true); readyReport != null && saved == null -> beginExport(generation, readyReport!!); else -> {
@@ -96,7 +96,7 @@ class BatchActivity : Activity(), TextureView.SurfaceTextureListener {
         runId = "${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}"
         startedAt = System.currentTimeMillis(); results = JSONArray(); readyReport = null; saved = null
         running = true; action.text = "Cancel test"; action.isEnabled = true; share.isEnabled = false
-        detail.text = "Runs six patterns and all checks.\nSaves JSON to Downloads/Emulator."
+        detail.text = "Runs all patterns and checks.\nSaves JSON to Downloads/Emulator."
         pattern(current, texture, 0)
     }
     private fun current(token: Int) = token == generation
@@ -177,7 +177,7 @@ class BatchActivity : Activity(), TextureView.SurfaceTextureListener {
     private fun showSaved(root: JSONObject, result: ReportExporter.Saved) {
         saved = result; readyReport = root; completed = true; running = false
         val count = listOf("engine", "nv", "gpuCore", "shader", "gpu").sumOf { root.optJSONObject(it)?.optJSONArray("tests")?.length() ?: 0 }
-        status.text = if (root.optBoolean("allPassed")) "All checks passed\n6 patterns · $count checks" else "Some checks failed\nReport saved with details"
+        status.text = if (root.optBoolean("allPassed")) "All checks passed\n${NativeScenes.patterns.size} patterns · $count checks" else "Some checks failed\nReport saved with details"
         detail.text = "Saved to Downloads/Emulator\n${result.filename}"; action.text = "Run again"; action.isEnabled = true; share.isEnabled = true
         showSummary(root)
     }

@@ -1378,14 +1378,15 @@ GpuReport run_gpu_checks() {
         tests.push_back({"live-homebrew-frames-input-and-completion",live_homebrew_check(),"111 interpreted homebrew frames; live Vulkan completion before guest publication; catches, misses, reset and resource release"});
         for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-sampled-texture-rgba","guest-sampled-texture-bgra","guest-sampled-texture-updated"}[i],render_guest_commands(context,emulator_texture_replay_v1(i)),"Guest SPH/IPA/TEX/TIC/TSC -> original SPIR-V and Vulkan; every byte matches independent sampling and raster oracles"});
         for(uint32_t i=0;i<3;++i)tests.push_back({std::array<const char*,3>{"guest-indexed-u8-portable-widening","guest-indexed-u16-negative-base","guest-indexed-u32-first-base-and-triangle"}[i],render_guest_commands(context,emulator_indexed_replay_v1(i)),"Captured guest index elements -> actual Vulkan indexed draws; first index, signed base, shared corners and every pixel match independent oracles"});
+        for(uint32_t i=0;i<6;++i)tests.push_back({std::array<const char*,6>{"guest-tiled-rgba","guest-multigob-rgba","guest-pitch-bc1-fallback","guest-tiled-bc1-alpha-fallback","guest-pitch-bc3-alpha-fallback","guest-tiled-bc3-alpha-fallback"}[i],render_guest_commands(context,emulator_texture_storage_replay_v1(i)),"Captured guest pitch/GOB storage and BC1/BC3 -> original RGBA fallback -> Vulkan; every color and alpha byte matches independent source and frame oracles"});
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 22 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 28 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":10,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":11,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1454,13 +1455,13 @@ std::string texture_scene_json(bool running,const std::string& error="") {
 std::string start_texture_scene(void* window,unsigned variant) {
     try {
         texture_scene.reset();texture_variant=variant;
-        if(variant>5)throw std::runtime_error("Unknown texture scene variant");
+        if(variant>11)throw std::runtime_error("Unknown texture scene variant");
         texture_scene=std::make_unique<LiveRenderer>();texture_scene->initialize(window);
         const auto render=[&](const auto& replay) {
             if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
             if(texture_scene->render(replay))throw std::runtime_error(texture_scene->error);
         };
-        if(variant<3)render(emulator_texture_replay_v1(variant));else render(emulator_indexed_replay_v1(variant-3));
+        if(variant<3)render(emulator_texture_replay_v1(variant));else if(variant<6)render(emulator_indexed_replay_v1(variant-3));else render(emulator_texture_storage_replay_v1(variant-6));
         return texture_scene_json(true);
     }catch(const std::exception& e){const auto result=texture_scene_json(false,e.what());texture_scene.reset();return result;}
 }

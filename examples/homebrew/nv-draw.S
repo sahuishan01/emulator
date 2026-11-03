@@ -1,5 +1,9 @@
 // Original static NRO0 fixture. All labels are resolved by LLVM, not our decoder.
 .text
+.ifdef STORAGE_FIXTURE
+.include "examples/gpu/storage-profile.inc"
+.equ MESSAGE_LENGTH, 63
+.else
 .ifdef INDEXED_FIXTURE
 .include "examples/gpu/indexed-profile.inc"
 .equ MESSAGE_LENGTH, 62
@@ -9,6 +13,7 @@
 .equ MESSAGE_LENGTH, 68
 .else
 .equ MESSAGE_LENGTH, 69
+.endif
 .endif
 .endif
 .global _start
@@ -263,7 +268,11 @@ entry:
     cbnz w9, failed
     close_device w23
     close_device w28
+.ifdef STORAGE_FIXTURE
+    submit_arguments 3, 2, 0x300, 1
+.else
     submit_arguments 3, 2, 0x400, 1
+.endif
     ioctl_request submit_request, w21
     check_fence 2
     close_device w21
@@ -301,6 +310,9 @@ gpu_path:
 ctrl_path:
     .ascii "/dev/nvhost-ctrl"
 message:
+.ifdef STORAGE_FIXTURE
+    .ascii "Guest storage passed: tiles, compressed textures and lifetime.\n"
+.else
 .ifdef INDEXED_FIXTURE
     .ascii "Guest indices passed: shared vertices, rollback and lifetime.\n"
 .else
@@ -308,6 +320,7 @@ message:
     .ascii "Guest textures passed: coordinates, samples, rollback and lifetime.\n"
 .else
     .ascii "Guest draws passed: headers, shaders, pixels, rollback and lifetime.\n"
+.endif
 .endif
 .endif
 message_end:
@@ -471,6 +484,9 @@ result_storage:
     .quad 0
     .balign 4096
 imported_source:
+.ifdef STORAGE_FIXTURE
+    .incbin "examples/gpu/storage-tiled-rgba-page.bin"
+.else
 .ifdef INDEXED_FIXTURE
     .incbin "examples/gpu/indexed-u8-page.bin"
 .else
@@ -478,6 +494,7 @@ imported_source:
     .incbin "examples/gpu/texture-rgba-page.bin"
 .else
     .incbin "examples/gpu/draw-rgba-page.bin"
+.endif
 .endif
 .endif
     .balign 4096

@@ -8,14 +8,14 @@ import java.util.concurrent.CancellationException
 
 object NativeScenes {
     init { System.loadLibrary("emulator_gpu_lab") }
-    val patterns = listOf("Texture", "BGRA texture", "Updated texture", "Indexed byte quad", "Indexed short quad", "Indexed triangle")
+    val patterns = listOf("Texture", "BGRA texture", "Updated texture", "Indexed byte quad", "Indexed short quad", "Indexed triangle", "Tiled RGBA", "Multi-GOB RGBA", "BC1 texture", "Tiled BC1 alpha", "BC3 alpha", "Tiled BC3 alpha")
     external fun start(surface: Surface, variant: Int): ByteArray
     external fun stop(): ByteArray
 }
 
 /** Shared native checks and report shape for manual and automatic workflows. */
 object Diagnostics {
-    const val WORKLOAD_VERSION = 25
+    const val WORKLOAD_VERSION = 26
     init { System.loadLibrary("emulator_gpu_lab") }
     private external fun runEngineChecks(): ByteArray
     private external fun runGpuCoreChecks(): ByteArray

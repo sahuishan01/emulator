@@ -2,6 +2,7 @@
 """Exercise the real guest texture scene, displayed pixels and surface lifetime."""
 import argparse,json,re,struct,subprocess,time,xml.etree.ElementTree as ET
 from pathlib import Path
+from qa_pattern_pixels import expected_pixel
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
@@ -46,12 +47,9 @@ def main():
   if dh>h:dh=h;dw=max(1,dh*16//8)
   left=x+(w-dw)//2;top=y+(h-dh)//2
   raw=call('exec-out','screencap');width,height,fmt=struct.unpack_from('<3I',raw);header=len(raw)-width*height*4;assert fmt in(1,2) and header in(12,16)
-  palette=[(255,0,0,255),(255,255,0,255),(0,255,0,255),(0,255,255,255)]
   for py in range(8):
    for px in range(16):
-    center=4<=px<12 and 2<=py<6 and (variant!=5 or px+2*py<=14)
-    sx,sy=((6*px-29)//8,(6*py-13)//4) if center else ((6*px-13)//16,(6*py-5)//8)
-    expected=palette[(min(3,max(0,sx))+min(3,max(0,sy))+(variant in (2,5)))%4]
+    expected=expected_pixel(variant,px,py)
     xx=left+(2*px+1)*dw//32;yy=top+(2*py+1)*dh//16;at=header+(yy*width+xx)*4
     assert tuple(raw[at:at+4])==expected,(phase,px,py,tuple(raw[at:at+4]),expected)
   (out/f'{phase}.png').write_bytes(call('exec-out','screencap','-p'))
@@ -59,17 +57,17 @@ def main():
  try:
   call('install','-r',str(a.apk),timeout=60);call('shell','am','force-stop',pkg);call('logcat','-c')
   open_scene('initial');q=wait(0,True,0,'rgba-ready');pixels(0,'rgba-display')
-  for variant in [1,2,3,4,5,0]:
+  for variant in [*range(1,12),0]:
    previous=q['capturedAtEpochMs'];tap('Next pattern','next-'+str(variant));q=wait(variant,True,previous,'variant-'+str(variant));pixels(variant,'display-'+str(variant))
   n=button('Next pattern','rapid-patterns');baseline=q['capturedAtEpochMs']
-  for _ in range(6):tapnode(n)
+  for _ in range(12):tapnode(n)
   q=wait(0,True,baseline,'rapid-pattern-final');pixels(0,'rapid-display')
-  for variant in [1,2,3,4,5]:
+  for variant in range(1,12):
    baseline=q['capturedAtEpochMs'];tap('Next pattern','indexed-lifecycle-'+str(variant));q=wait(variant,True,baseline,'indexed-lifecycle-ready-'+str(variant))
   baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','accelerometer_rotation','0');call('shell','settings','put','system','user_rotation','1')
-  q=wait(5,True,baseline,'landscape-recreated');pixels(5,'landscape-display')
-  baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','user_rotation','0');q=wait(5,True,baseline,'portrait-recreated')
-  baseline=q['capturedAtEpochMs'];call('shell','input','keyevent','3');stopped=wait(5,False,baseline,'background-closed')
+  q=wait(11,True,baseline,'landscape-recreated');pixels(11,'landscape-display')
+  baseline=q['capturedAtEpochMs'];call('shell','settings','put','system','user_rotation','0');q=wait(11,True,baseline,'portrait-recreated')
+  baseline=q['capturedAtEpochMs'];call('shell','input','keyevent','3');stopped=wait(11,False,baseline,'background-closed')
   time.sleep(.8);assert report()['completedFrames']==stopped['completedFrames']
   open_scene('foreground');q=wait(0,True,stopped['capturedAtEpochMs'],'foreground-reopened');pixels(0,'foreground-display')
   for i in range(2):
@@ -77,7 +75,7 @@ def main():
   tap('Back to library','final-back');wait(0,False,q['capturedAtEpochMs'],'final-closed')
   assert not call('logcat','-b','crash','-d').strip()
   assert not re.search(rb'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab',call('logcat','-d'))
-  result={'passed':True,'checks':['library scene launch','real RGBA sampled pixels','BGRA rendering preserves displayed colors','changed source texture pixels','byte indexed quad pixels','short indexed negative-base pixels','u32 indexed triangle coverage','pattern wrap','rapid input coalescing','landscape surface recreation','portrait surface recreation','background teardown','foreground reopen','repeated native/surface teardown'],'displaySamplesPerCapture':128,'notes':notes}
+  result={'passed':True,'checks':['library scene launch','real RGBA sampled pixels','BGRA rendering preserves displayed colors','changed source texture pixels','byte indexed quad pixels','short indexed negative-base pixels','u32 indexed triangle coverage','tiled RGBA pixels','multi-GOB odd-dimension pixels','pitched BC1 pixels','tiled BC1 alpha pixels','pitched BC3 alpha pixels','tiled BC3 alpha pixels','pattern wrap','rapid input coalescing','landscape surface recreation','portrait surface recreation','background teardown','foreground reopen','repeated native/surface teardown'],'displaySamplesPerCapture':128,'notes':notes}
   (out/'verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
  finally:
   try:call('shell','settings','put','system','user_rotation','0');call('shell','settings','put','system','accelerometer_rotation','1')

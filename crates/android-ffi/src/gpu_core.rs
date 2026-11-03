@@ -257,6 +257,7 @@ pub fn report() -> String {
     for case in super::textures::cases()
         .into_iter()
         .chain(super::indexed::cases())
+        .chain(super::storage::cases())
     {
         all &= case.passed;
         tests.push(format!(
@@ -267,5 +268,5 @@ pub fn report() -> String {
             super::quote(&case.error)
         ));
     }
-    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":4,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
+    format!("{{\"scope\":\"original-gpu-memory-and-command-reference\",\"suiteVersion\":5,\"hostArchitecture\":{},\"tests\":[{}],\"allPassed\":{}}}",super::quote(std::env::consts::ARCH),tests.join(","),all)
 }

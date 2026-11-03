@@ -75,6 +75,7 @@ struct TextureReplay {
 static_assert(sizeof(TexturedDraw)==33028 && alignof(TexturedDraw)==4 && offsetof(TexturedDraw,varyings)==16536 && offsetof(TexturedDraw,texture)==16644);
 static_assert(sizeof(TextureReplay)==99928 && alignof(TextureReplay)==4 && offsetof(TextureReplay,draws)==76 && offsetof(TextureReplay,pixels)==99160 && offsetof(TextureReplay,error)==99672);
 extern "C" TextureReplay emulator_texture_replay_v1(std::uint32_t index);
+extern "C" TextureReplay emulator_texture_storage_replay_v1(std::uint32_t index);
 struct IndexedDraw {
     TexturedDraw textured;
     std::uint32_t index_count,element_bytes;

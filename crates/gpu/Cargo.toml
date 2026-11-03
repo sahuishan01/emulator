@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 emulator-shader = { path = "../shader" }
 emulator-memory = { path = "../memory" }
+emulator-texture = { path = "../texture" }
 
 [lints]
 workspace = true

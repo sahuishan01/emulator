@@ -8,6 +8,7 @@ mod demo;
 pub use demo::{DemoStatus, LiveDraw};
 mod draws;
 mod indexed;
+mod storage;
 mod textures;
 pub use indexed::{IndexedDraw, IndexedReplay};
 pub use textures::{TextureReplay, TexturedDraw};
@@ -261,6 +262,18 @@ fn reference_checks() -> String {
             ipc_buffers: (18, 11, 603),
             copy_handles: 2,
         },
+        Case {
+            name: "guest-nv-texture-storage",
+            image: storage::IMAGE,
+            message: storage::MESSAGE,
+            instructions: 5571,
+            ipc_calls: 25,
+            memory: Some((0x4040, 2)),
+            scheduler: (1, 0, 0),
+            cancellations: 0,
+            ipc_buffers: (18, 11, 603),
+            copy_handles: 2,
+        },
     ];
     let mut all_passed = true;
     let mut tests = Vec::new();
@@ -319,6 +332,9 @@ fn reference_checks() -> String {
             if case.name == "guest-nv-indexed-geometry" {
                 indexed::verify_guest(&session)?;
             }
+            if case.name == "guest-nv-texture-storage" {
+                storage::verify_guest(&session)?;
+            }
             if case.name == "guest-nv-color-clears" {
                 graphics::verify_guest(&session)?;
             }
@@ -373,7 +389,7 @@ fn reference_checks() -> String {
         tests.push(format!("{{\"name\":{},\"passed\":{},\"instructions\":{},\"ipcCalls\":{},\"copyHandles\":{},\"sendBuffers\":{},\"receiveBuffers\":{},\"bufferBytes\":{},\"handlesAfterExit\":{},\"threadsCreated\":{},\"contextSwitches\":{},\"blockingWaits\":{},\"timeouts\":{},\"virtualTimeNs\":{},\"cancelledWaits\":{},\"debugOutput\":{},\"error\":{}}}",
             quote(case.name),passed,instructions,ipc_calls,copies,buffers.0,buffers.1,buffers.2,handles,scheduling.0,scheduling.1,scheduling.2,scheduling.3,scheduling.4,scheduling.5,quote(&debug),quote(&check.err().unwrap_or_default())));
     }
-    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":14,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
+    format!("{{\"scope\":\"original-guest-reference-programs\",\"suiteVersion\":15,\"cpuBackend\":\"original-interpreter\",\"hostArchitecture\":{},\"guestArchitecture\":\"aarch64\",\"tests\":[{}],\"allPassed\":{}}}",
         quote(std::env::consts::ARCH),tests.join(","),all_passed)
 }
 
@@ -400,6 +416,11 @@ pub extern "C" fn emulator_texture_replay_v1(index: u32) -> TextureReplay {
 #[no_mangle]
 pub extern "C" fn emulator_indexed_replay_v1(index: u32) -> IndexedReplay {
     indexed::replay(index)
+}
+
+#[no_mangle]
+pub extern "C" fn emulator_texture_storage_replay_v1(index: u32) -> TextureReplay {
+    storage::replay(index)
 }
 
 fn encode_report(run: fn() -> String, scope: &str) -> EngineReport {
@@ -470,7 +491,7 @@ mod tests {
         assert_eq!(result.abi_version, 2);
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 17);
+        assert_eq!(text.matches("\"passed\":true").count(), 18);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));
@@ -481,7 +502,7 @@ mod tests {
         assert_eq!(report.abi_version, 2);
         let text = std::str::from_utf8(&report.bytes[..report.length as usize]).unwrap();
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 20);
+        assert_eq!(text.matches("\"passed\":true").count(), 30);
         assert!(text.contains(
             "\"capturedSubmissions\":2,\"decodedWrites\":4,\"residentBytesAfterRelease\":0"
         ));

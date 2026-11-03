@@ -15,8 +15,8 @@ discovery/IPC, shared cloned-session lifetimes, events, thread scheduling,
 blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
-The Android app embeds this engine, seventeen guest checks, fifty NV API scenarios,
-twenty GPU core cases, twenty-five shader cases and twenty-two Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
+The Android app embeds this engine, eighteen guest checks, fifty NV API scenarios,
+thirty GPU core cases, twenty-five shader cases and twenty-eight Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
@@ -57,8 +57,9 @@ passes103 checks and records578 presented homebrew frames. Broader shaders, gene
 display services and commercial games remain open.
 
 The supplied [0.21.1 G720 report](docs/validation/g720-texture-batch.md) confirms
-all 121 checks and presentation of the updated texture pattern. The new indexed
-batch has 134 checks; target-phone confirmation of that addition is pending.
+all 121 checks and presentation of the updated texture pattern. The supplied [0.22.1 physical report](docs/validation/g720-one-tap.md) confirms
+all 134 diagnostics and six visible patterns, including indexed geometry. The new
+storage batch has151 checks/twelve patterns; target-phone confirmation is pending.
 
 No existing emulator core is linked or copied into the implementation. Earlier
 Eden/Lemon checkouts under `upstream/` are historical references, ignored by
@@ -67,22 +68,22 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.22.1-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.23.0-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
-Tap **Test all & export JSON** on the home screen to display all six patterns,
-run all 134 checks and automatically save the JSON in **Downloads/Emulator**.
+Tap **Test all & export JSON** on the home screen to display all twelve patterns,
+run all 151 checks and automatically save the JSON in **Downloads/Emulator**.
 The result offers **Share JSON**. See [one-tap testing](docs/one-tap-testing.md).
 Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.22.1-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.23.0-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.23.0-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.23.0-dev).
 The existing Android application ID/signing identity is retained for updates.
 This is a debug development build, not a production-ready commercial-game emulator.
-See [indexed geometry](docs/indexed-geometry-batch.md) and [build verification](docs/validation/android-one-tap.md).
+See [indexed geometry](docs/indexed-geometry-batch.md) and [storage implementation](docs/texture-storage-batch.md) and [build verification](docs/validation/android-texture-storage.md).
 
 ## Play our original homebrew
 
@@ -96,8 +97,8 @@ remain unsupported. See [the execution path and limits](docs/live-homebrew.md).
 ## View guest textures
 
 Open **Texture scene → Open scene** in the library. **Next pattern** cycles through
-RGBA, BGRA, updated textures and three indexed-geometry variants. The final pattern
-renders only one triangle of the inset quad. This renders our captured guest shaders,
+RGBA, BGRA, updated textures, indexed geometry and six pitch/tiled/BC1/BC3
+storage variants. Native BC support is not required for the software fallback. This renders our captured guest shaders,
 vertex coordinates and texture descriptors through Vulkan; it is not a prerecorded
 image. The original guest tests pixels, rollback and resource lifetime. See the
 [texture and varying profile](docs/texture-draw-batch.md) and [indexed draw profile](docs/indexed-geometry-batch.md).
@@ -179,7 +180,7 @@ The test runner maps a 4 KiB data area at `0x2000` and a 64 KiB stack at
 | `crates/cli` | NRO/raw-program execution and demo |
 | `crates/android-ffi` | Bounded diagnostics, live Catch and value-only imported-program upload/execution |
 | `examples/a64` | Our assembly sources and LLVM-generated test binaries |
-| `examples/homebrew` | Seventeen original homebrew sources and assembled NRO fixtures (sixteen reference cases plus Catch) |
+| `examples/homebrew` | Nineteen original homebrew sources and assembled NRO fixtures (eighteen reference cases plus Catch) |
 | `native/gpu-lab` | Original C++ Vulkan workloads, desktop CLI and Android JNI boundary |
 | `android/gpu-lab` | Main Android library/import/player/settings and support diagnostics/export |
 | `tools/qa-documents` | Separate test-only SAF provider; never part of the main APK |
@@ -196,16 +197,16 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.22.1-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.23.0-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.22.1-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.23.0-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.23.0-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks
-access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.22.1-dev)
+access; [sign in and open the release](https://github.com/login?return_to=%2Fsahuishan01%2Femulator%2Freleases%2Ftag%2Fv0.23.0-dev)
 in Chrome, then choose the APK under Assets. GitHub redirects downloads to temporary signed asset
 URLs. If a saved download fails, start again from one of the permanent links
 above rather than retrying its old `release-assets.githubusercontent.com` URL.

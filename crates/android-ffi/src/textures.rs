@@ -103,13 +103,14 @@ pub(crate) fn wire(offset: u32, words: u32) -> Vec<u8> {
         .collect()
 }
 pub(crate) fn setup(page: Vec<u8>) -> Result<(AddressSpace, GpuAddressSpace), String> {
+    let size = page.len();
     let mut mem = AddressSpace::default();
     mem.map(0x1000, page, Permissions::READ_WRITE)
         .map_err(|e| e.to_string())?;
-    let mut gpu = GpuAddressSpace::new(8192).map_err(|e| e.to_string())?;
+    let mut gpu = GpuAddressSpace::new(size * 2).map_err(|e| e.to_string())?;
     gpu.map(
         GpuVa(1 << 32),
-        mem.pin(0x1000, 4096, Permissions::READ_WRITE)
+        mem.pin(0x1000, size, Permissions::READ_WRITE)
             .map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;

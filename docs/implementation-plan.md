@@ -16,10 +16,11 @@ Z-A. Success claims must name the build, device, driver, title version and scene
 Current foundation: twelve original Rust crates implement bounded guest memory,
 a small A64 interpreter, a static NRO subset, handles, HIPC/CMIF v0, cloned
 service sessions, single-core guest scheduling, blocking event/thread waits,
-virtual timeouts/cancellation and CLI/Android execution. Seventeen owned NROs exercise
-the implemented behavior. All200 Rust tests and30 independent
+virtual timeouts/cancellation and CLI/Android execution. Nineteen owned NROs exercise
+the implemented behavior. All205 Rust tests and31 independent
 LLVM fixture comparisons pass. The texture crate adds original BC1 RGBA UNORM
-reference decoding and a reproducible fixture.
+reference decoding and a reproducible fixture. BC3 and2D generic GOB unpacking
+now join guest descriptors and the canonical host RGBA path.
 The GPU crate adds bounded framing, shared backing, GPU mappings and owned
 decoded batches, tested independently of kernel/Vulkan on the host and Android.
 Original [DMA method execution](gpu-dma-methods.md) now supports bounded linear
@@ -69,8 +70,15 @@ The [0.22 indexed batch](indexed-geometry-batch.md) extends that path with real
 byte/u16/u32 index buffers, signed base vertices and first-index slicing. It adds
 one owned NRO, nine portable groups and three Vulkan replays, for 134 checks.
 The 0.21.1 physical report confirms the prior 121 texture tests/presentation;
-new indexed target-phone evidence is pending. Guest depth/clipping/perspective,
+the supplied0.22.1 physical report confirms all134 diagnostics/six patterns. Guest depth/clipping/perspective,
 general graphics services and commercial games remain separate open gates.
+
+The [0.23 storage batch](texture-storage-batch.md) adds pitch/tiled RGBA and
+BC1/BC3 canonical conversion for hosts without BC. It batches six source-format/
+layout cases, ten core rejection/rollback/lifetime/budget groups and an original
+NRO. One-button testing now runs151 checks and twelve visible patterns. New
+physical storage evidence remains pending; guest depth, broader shaders/runtime
+and general display services remain open.
 
 ## Milestones and dependency gates
 

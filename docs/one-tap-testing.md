@@ -1,5 +1,9 @@
 # One-tap testing and JSON export (0.22.1)
 
+The [0.23 storage extension](texture-storage-batch.md) expands the same workflow
+to12 patterns/151 diagnostics. The0.22.1 baseline and lifecycle contract below
+remain applicable; new reports use app0.23/code26/schema4/workload26/native11.
+
 The home screen's **Test all & export JSON** button opens a private activity and
 starts the complete workflow. It displays all six owned patterns in order, runs
 the existing 134 diagnostic checks, and saves a JSON report in **Downloads/Emulator**.

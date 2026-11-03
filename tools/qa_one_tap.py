@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Real one-tap visible patterns, Downloads JSON, cancellation and restart QA."""
-import argparse,json,re,sqlite3,struct,subprocess,time,xml.etree.ElementTree as ET
+import argparse,json,re,sqlite3,struct,subprocess,time,zlib,xml.etree.ElementTree as ET
 from pathlib import Path
+from qa_pattern_pixels import expected_pixel
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--previous-workload',type=int,default=24);a=p.parse_args()
- out=a.output;out.mkdir(parents=True,exist_ok=True);pkg='com.algosculptor.emulator.gpulab';adb=[str(Path.home()/'Android/Sdk/platform-tools/adb'),'-s','emulator-5580'];notes=[]
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--apk',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--previous-workload',type=int,default=25);p.add_argument('--version',default='0.23.0-dev');p.add_argument('--workload',type=int,default=26);p.add_argument('--pattern-count',type=int,default=12);p.add_argument('--gpu-tests',type=int,default=28);p.add_argument('--native-workload',type=int,default=11);p.add_argument('--reference-prefix',default='reports/v0.23-host-');a=p.parse_args()
+ out=a.output;out.mkdir(parents=True,exist_ok=True);pkg='com.algosculptor.emulator.gpulab';adb=[str(Path.home()/'Android/Sdk/platform-tools/adb'),'-s','emulator-5580'];notes=[];completed_reports=[]
  def call(*args,timeout=35):return subprocess.check_output(adb+list(args),timeout=timeout,stderr=subprocess.PIPE)
  def cache(name='last-report.json'):return json.loads(call('exec-out','run-as',pkg,'cat','files/'+name))
  def download_names():
@@ -39,44 +40,52 @@ def main():
   while time.monotonic()<end:
    try:
     r=cache('last-texture-report.json')
-    if r.get('appVersion')=='0.22.1-dev' and r.get('batchRunId') not in excluded and r.get('passed'):return r
+    if r.get('appVersion')==a.version and r.get('batchRunId') not in excluded and r.get('passed'):return r
    except (subprocess.SubprocessError,json.JSONDecodeError):pass
    time.sleep(.1)
   raise RuntimeError('New visible pattern did not complete')
  def verify_report(raw):
-  r=json.loads(raw);assert r['appVersion']=='0.22.1-dev' and r['workloadVersion']==25 and r['schemaVersion']==4 and r['allPassed']
-  assert {k:len(r[k]['tests']) for k in ['engine','nv','gpuCore','shader','gpu']}=={'engine':17,'nv':50,'gpuCore':20,'shader':25,'gpu':22}
-  assert r['gpu']['workloadVersion']==10 and r['gpu']['validationErrors']==0
+  r=json.loads(raw);assert r['appVersion']==a.version and r['workloadVersion']==a.workload and r['schemaVersion']==4 and r['allPassed']
+  assert {k:len(r[k]['tests']) for k in ['engine','nv','gpuCore','shader','gpu']}=={'engine':18,'nv':50,'gpuCore':30,'shader':25,'gpu':a.gpu_tests}
+  assert r['gpu']['workloadVersion']==a.native_workload and r['gpu']['validationErrors']==0
   for key,name in [('engine','engine'),('nv','nv'),('gpuCore','gpu-core'),('shader','shader')]:
-   reference=json.load(open('reports/v0.22-host-'+name+'.json'));actual=r[key].copy();reference.pop('hostArchitecture',None);actual.pop('hostArchitecture',None);assert actual==reference,key
-  b=r['patternBatch'];assert b['status']=='complete' and b['totalPatterns']==b['passedPatterns']==len(b['patterns'])==6 and b['allPassed']
-  assert [p['variant'] for p in b['patterns']]==list(range(6))
+   reference=json.load(open(a.reference_prefix+name+'.json'));actual=r[key].copy();reference.pop('hostArchitecture',None);actual.pop('hostArchitecture',None);assert actual==reference,key
+  b=r['patternBatch'];assert b['status']=='complete' and b['totalPatterns']==b['passedPatterns']==len(b['patterns'])==a.pattern_count and b['allPassed']
+  assert [p['variant'] for p in b['patterns']]==list(range(a.pattern_count))
   for pattern in b['patterns']:
    assert pattern['batchRunId']==b['runId'] and pattern['passed'] and pattern['surfaceUpdated'] and pattern['pixelsVerified']
    assert pattern['completedFrames']==pattern['presentedFrames']==1 and pattern['validationErrors']==0 and pattern['error']==''
   return r
  def verify_export(phase,excluded=(),capture_bounds=None):
-  end=time.monotonic()+180;seen=set();active_id=None
+  end=time.monotonic()+240;seen=set();active_id=None;capture_runs=0;excluded=set(excluded)
   while time.monotonic()<end:
    if capture_bounds:
     try:
      s=cache('last-texture-report.json');v=s.get('variant');candidate=s.get('batchRunId')
      if candidate and candidate not in excluded:active_id=candidate
      if candidate and candidate not in excluded and s.get('passed') and v not in seen:
-      verify_pixels(s,capture_bounds,phase+'-pattern-'+str(v));seen.add(v)
+      if verify_pixels(s,capture_bounds,phase+'-pattern-'+str(v)):seen.add(v)
     except (subprocess.SubprocessError,json.JSONDecodeError):pass
    try:
     raw=call('exec-out','run-as',pkg,'cat','files/last-report.json');r=json.loads(raw)
-    if r.get('appVersion')!='0.22.1-dev' or r.get('patternBatch',{}).get('runId') in excluded or 'automaticExport' not in r:time.sleep(.1);continue
+    if r.get('appVersion')!=a.version or r.get('patternBatch',{}).get('runId') in excluded or 'automaticExport' not in r:time.sleep(.1);continue
     filename=r['automaticExport']['filename'];data=call('exec-out','cat','/sdcard/Download/Emulator/'+filename)
     if data!=raw:time.sleep(.1);continue
     metadata=call('shell','content','query','--uri',r['automaticExport']['uri'],'--projection','mime_type:is_pending:relative_path').decode()
     if 'is_pending=0' not in metadata:time.sleep(.1);continue
     assert 'mime_type=application/json' in metadata and 'relative_path=Download/Emulator/' in metadata
     r=verify_report(raw);assert not active_id or r['patternBatch']['runId']==active_id
+    completed_reports.append(r)
+    (out/(phase+f'-run-{len(completed_reports)}.json')).write_bytes(raw)
+    if capture_bounds and seen!=set(range(a.pattern_count)):
+     capture_runs+=1
+     assert capture_runs<=2,('Missing displayed captures after bounded retries',seen)
+     excluded.add(r['patternBatch']['runId']);active_id=None
+     notes.append(f"Capture crossed a pattern transition; collect remaining {sorted(set(range(a.pattern_count))-seen)} in a fresh run")
+     tap('Run again',phase+f'-capture-retry-{capture_runs}')
+     continue
     (out/(phase+'.json')).write_bytes(raw)
-    if capture_bounds:assert seen==set(range(6)),seen
-    print('Verified',phase,'6 visible patterns +134 checks; exact published Downloads JSON',flush=True);return r
+    print('Verified',phase,f'{a.pattern_count} visible patterns +{sum(len(r[k]["tests"]) for k in ["engine","nv","gpuCore","shader","gpu"])} checks; exact published Downloads JSON',flush=True);return r
    except (subprocess.SubprocessError,json.JSONDecodeError):pass
    time.sleep(.1)
   raise RuntimeError('Automatic export did not complete:'+phase)
@@ -86,16 +95,18 @@ def main():
   left=x+(w-dw)//2;top=y+(h-dh)//2
   raw=call('exec-out','screencap');sw,sh,fmt=struct.unpack_from('<3I',raw);header=len(raw)-sw*sh*4;assert fmt in(1,2) and header in(12,16)
   after=cache('last-texture-report.json')
-  if (after.get('batchRunId'),after.get('variant'),after.get('capturedAtEpochMs'))!=(scene.get('batchRunId'),scene.get('variant'),scene.get('capturedAtEpochMs')):raise RuntimeError('Pattern changed during display capture')
-  palette=[(255,0,0,255),(255,255,0,255),(0,255,0,255),(0,255,255,255)];variant=scene['variant']
+  if (after.get('batchRunId'),after.get('variant'),after.get('capturedAtEpochMs'))!=(scene.get('batchRunId'),scene.get('variant'),scene.get('capturedAtEpochMs')):return False
+  variant=scene['variant']
   for py in range(8):
    for px in range(16):
-    center=4<=px<12 and 2<=py<6 and (variant!=5 or px+2*py<=14)
-    sx,sy=((6*px-29)//8,(6*py-13)//4) if center else ((6*px-13)//16,(6*py-5)//8)
-    expected=palette[(min(3,max(0,sx))+min(3,max(0,sy))+(variant in(2,5)))%4]
+    expected=expected_pixel(variant,px,py)
     xx=left+(2*px+1)*dw//32;yy=top+(2*py+1)*dh//16;at=header+(yy*sw+xx)*4
     assert tuple(raw[at:at+4])==expected,(phase,px,py,tuple(raw[at:at+4]),expected)
-  shot(phase);print('Verified',phase,'128 displayed pixel centers',flush=True)
+  def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
+  rgba=raw[header:];scan=b''.join(b'\0'+rgba[y*sw*4:(y+1)*sw*4] for y in range(sh))
+  png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',sw,sh,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(scan,1))+chunk(b'IEND',b'')
+  (out/f'{phase}.png').write_bytes(png)
+  print('Verified',phase,'128 displayed pixel centers',flush=True);return True
  try:
   assert call('shell','getprop','sys.boot_completed').strip()==b'1'
   call('shell','am','force-stop',pkg)
@@ -111,27 +122,27 @@ def main():
   box=bounds(next(n for n in r.iter('node') if n.get('content-desc')=='Automatic test patterns'))
   first_attempt=cache('last-texture-report.json').get('batchRunId')
   tap('Run again','restart-after-cancel');first=verify_export('first-automatic-report',(first_attempt,previous.get('patternBatch',{}).get('runId'),None),box)
-  assert download_names()-initial=={first['automaticExport']['filename']};shot('automatic-result')
+  assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports};shot('automatic-result')
   tap('Share JSON','share-result');root=ui('share-chooser');shot('share-chooser');call('shell','input','keyevent','4');ui('share-return')
-  assert download_names()-initial=={first['automaticExport']['filename']}
+  assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
   call('shell','settings','put','system','accelerometer_rotation','0');call('shell','settings','put','system','user_rotation','1');ui('completed-landscape');shot('completed-landscape')
   call('shell','settings','put','system','user_rotation','0');ui('completed-portrait');assert cache()['automaticExport']==first['automaticExport']
   # Interrupt a second attempt during rotation/background; only its fresh restart may publish.
   tap('Run again','lifecycle-start');interrupted=wait_scene({first['patternBatch']['runId']})['batchRunId']
   call('shell','settings','put','system','user_rotation','1');rotated=wait_scene({first['patternBatch']['runId'],interrupted})['batchRunId']
-  call('shell','input','keyevent','3');time.sleep(.5);assert download_names()-initial=={first['automaticExport']['filename']}
+  call('shell','input','keyevent','3');time.sleep(.5);assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
   call('shell','am','start','-W','-a','android.intent.action.MAIN','-c','android.intent.category.LAUNCHER','-f','0x10200000','-n',pkg+'/.HomeActivity')
   root=ui('resumed-batch')
   if any(n.get('text')=='Your library' for n in root.iter('node')):call('shell','input','keyevent','4')
   second=verify_export('restarted-automatic-report',(first['patternBatch']['runId'],interrupted,rotated))
-  assert download_names()-initial=={first['automaticExport']['filename'],second['automaticExport']['filename']}
+  assert download_names()-initial=={r['automaticExport']['filename'] for r in completed_reports}
   call('shell','settings','put','system','user_rotation','0');ui('final-portrait')
   # The complete automatic report stays byte-exact when opened in manual Diagnostics.
   expected=(out/'restarted-automatic-report.json').read_bytes();call('shell','am','force-stop',pkg);call('shell','am','start','-W','-n',pkg+'/.HomeActivity');tap('Settings','cold-settings');tap('Diagnostics','cold-diagnostics')
-  root=ui('cold-restored');assert any('All 134 checks passed' in n.get('text','') and 'Patterns: 6/6' in n.get('text','') for n in root.iter('node'))
+  root=ui('cold-restored');assert any('All 151 checks passed' in n.get('text','') and f'Patterns: {a.pattern_count}/{a.pattern_count}' in n.get('text','') for n in root.iter('node'))
   assert call('exec-out','run-as',pkg,'cat','files/last-report.json')==expected;shot('cold-restored')
   assert not call('logcat','-b','crash','-d').strip();assert not re.search(rb'FATAL EXCEPTION|Fatal signal|ANR in com\.algosculptor\.emulator\.gpulab',call('logcat','-d'))
-  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON','all six automatically displayed patterns','768 displayed pixel centers match formulas','all134 diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run','cold Diagnostics restores complete six-pattern report'],'notes':notes}
+  result={'passed':True,'checks':['one home button launches full workflow','upgrade preserves catalog/cache','cancel publishes no new JSON','all twelve automatically displayed patterns','1536 displayed pixel centers match formulas','all151 diagnostics match host results','Downloads JSON byte-exact with cache','published application/json entry with no picker','Share opens chooser without another export','completed rotation preserves export','rotation restarts unfinished run','background restart excludes abandoned attempts','exactly one file per completed run','cold Diagnostics restores complete twelve-pattern report'],'notes':notes,'completedRuns':len(completed_reports),'displaySamples':a.pattern_count*128}
   (out/'verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
  finally:
   try:call('shell','settings','put','system','user_rotation','0');call('shell','settings','put','system','accelerometer_rotation','1')

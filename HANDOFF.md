@@ -13,7 +13,55 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.22.1-dev one-tap testing
+## Current implementation: 0.23.0-dev texture storage
+
+Latest supplied report confirms0.22.1 on physical G720: all134 diagnostics and
+all6 ordered current-run patterns, including indexed geometry. Four Rust groups
+match host exceptarch; native validation disabled, BC supportfalse. Hash/limits
+in docs/validation/g720-one-tap.md; rawcopy ignoredreports/physical-g720/.
+
+Original bounded pitch/GOB RGBA,BC1/BC3 capture+decode now feed canonicalRGBA
+into the existing Vulkan shader path without nativeBC. Width/height<=64; pitch
+32aligned<=256 or blocklinear512aligned/heightlog0..5. Other modes/sRGB/mips/
+layers/formats fail. Generic codec/storage cap128MiB, guest padded source<=64KiB,
+canonical<=16KiB. Converted bytes join raw/SPIRV/index4MiB snapshot/effect budget.
+Pins preserve input lifetimes, all-batch alias feedback and atomic rollback.
+
+Six new cases: tiledRGBA4x4, multiGOB17x33, pitchBC1crop7x5, tiledBC1alpha7x9,
+pitchBC3alpha5x7, tiledBC3alpha13x9. Forward Rust GOB addresses independently
+checked by inverse-bit generator/literalRGBA fixtures and fixed offsets. BC3
+implements both alpha palettes and always-four-color RGB; precision policy is
+explicit. New original nv-storage.NRO uses retainedcmd300/payload400 in our own
+NV harness:5571instructions/25IPC/18A+11B/603bytes/2copyhandles/fence2/clean loans.
+Other variants are authored GPU pages, not six separate interpreted NROs.
+Old NRO binaries unchanged;19owned NROs/31LLVMfixtures. New19th value export
+emulator_texture_storage_replay_v1 returns unchangedTextureReplay99928/align4;
+old18 exports/layouts stable. See docs/texture-storage-batch.md.
+
+App0.23.0-dev/code26/schema4/workload26/native11,151 checks:
+engine18/suite15,NV50/suite3,core30/suite5,shader25/suite3,Vulkan28.
+One-tap/manual list12patterns. Native fullRGBA checks alpha; opaque presentation
+checks RGB. All prior134 named records unchanged.205 Rust/fmt/Clippy/31fixtures
+and hostVulkan28/enabled-validation0errors pass. Pinned twoABI assembly/lint/
+signature/19exports/16KiB/strictmanifest pass. Final APK10,858,316bytes SHA256
+32337b82818c51bf46c931cdee325049dc9ced3311966dae123e7b8d951e6eea.
+
+Final one-tap14flows/two fresh151 runs/12screens1536points pass. Manual20flows/
+16screens2048points pass. Export/cold restore/both present cache recoveries are
+byte-exact; original automatic JSON stays immutable after later scene use.
+Screenshots inspected; empty crash buffers/no app fatal/ANR. Two freshXML retries
+in legacyexport. OwnedAVD stopped/process awaited. Automatic QA temporarily
+720x1280/density280 for faster exact capture; reset to native1080x1920/density420
+before manual tests/shutdown. Exact raw frames encoded to PNG (no second capture);
+bounded fresh-run recapture supported, final run needs none. No external Python
+dependency. Evidence docs/validation/android-texture-storage.md and ignored
+reports/android-qa/v0.23.0-dev/{one-tap-final-apk,manual-textures,batch}/.
+NewMali151/12 confirmation pending; commercial games remain unsupported.
+Next major GPU correctness gate is guest depth/ordering, not another host-only
+triangle. GOB utility is reusable, but depth writes need proper transactional
+read/write overlay and alias rules. Do not infer game compatibility from this lab.
+
+## Previous implementation: 0.22.1-dev one-tap testing
 
 User explicitly requests one button for all patterns, tests and JSON export.
 Home now offers **Test all & export JSON**, launching nonexported BatchActivity.
