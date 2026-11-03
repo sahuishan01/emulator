@@ -89,6 +89,7 @@ enum CopyInput {
 }
 #[derive(Debug)]
 struct Copy {
+    depth: bool,
     source: CopyInput,
     target: GpuMemoryRange,
     buffer: Vec<u8>,
@@ -126,8 +127,10 @@ pub(crate) struct PreparedBatch {
     pub(crate) graphics_order: Vec<bool>, // false=clear, true=draw
     draws: Vec<crate::Draw>,
     draw_inputs: Vec<GpuMemoryRange>,
+    depth_inputs: Vec<GpuMemoryRange>,
     snapshot_bytes: usize,
     inputs_snapshotted: bool,
+    resolved_copies: usize,
     stats: ExecutionStats,
 }
 impl PreparedBatch {
@@ -162,12 +165,13 @@ impl PreparedBatch {
         read_projected(source, output, &self.copies)
     }
     pub(crate) fn snapshot_inputs(&mut self) -> Result<(), ExecutionError> {
-        if !self.inputs_snapshotted {
-            for index in 0..self.copies.len() {
+        {
+            for index in self.resolved_copies..self.copies.len() {
                 let (earlier, current) = self.copies.split_at_mut(index);
                 current[0].resolve(earlier)?;
             }
             self.inputs_snapshotted = true;
+            self.resolved_copies = self.copies.len();
         }
         Ok(())
     }
@@ -241,8 +245,10 @@ impl MethodState {
             graphics_order: Vec::new(),
             draws: Vec::new(),
             draw_inputs: Vec::new(),
+            depth_inputs: Vec::new(),
             snapshot_bytes: 0,
             inputs_snapshotted: false,
+            resolved_copies: 0,
             stats: ExecutionStats {
                 methods: writes.len(),
                 ..ExecutionStats::default()
@@ -373,6 +379,7 @@ impl MethodState {
                         .try_reserve(1)
                         .map_err(|_| ExecutionError::Capacity)?;
                     batch.copies.push(Copy {
+                        depth: false,
                         source: CopyInput::Memory(source),
                         target,
                         buffer,
@@ -387,6 +394,24 @@ impl MethodState {
                     })
                 }
             }
+        }
+        if batch.inputs_snapshotted {
+            batch.snapshot_inputs()?;
+        }
+        if batch
+            .depth_inputs
+            .iter()
+            .flat_map(|p| p.backing_ranges())
+            .any(|a| {
+                batch
+                    .copies
+                    .iter()
+                    .filter(|c| !c.depth)
+                    .flat_map(|c| c.target.backing_ranges())
+                    .any(|b| overlaps(a, b))
+            })
+        {
+            return Err(ExecutionError::DrawInputFeedback);
         }
         if batch
             .draw_inputs
@@ -469,6 +494,7 @@ impl PreparedBatch {
                     }
                 }
                 self.copies.push(Copy {
+                    depth: false,
                     source: CopyInput::Solid {
                         color,
                         mask,
@@ -527,18 +553,52 @@ impl PreparedBatch {
     fn add_draw(
         &mut self,
         space: &GpuAddressSpace,
-        draw: crate::Draw,
+        mut draw: crate::Draw,
         pins: Vec<GpuMemoryRange>,
         limits: ExecutionLimits,
         spans: &mut usize,
     ) -> Result<(), ExecutionError> {
-        let pixels = draw.raster()?;
+        let mut depth_effect = None;
+        let mut depth_capture = 0;
+        if let Some(depth) = &mut draw.depth {
+            self.snapshot_inputs()?;
+            let source = space
+                .pin(depth.address, 512, Access::Read)
+                .map_err(ExecutionError::Memory)?;
+            let mut raw = vec![0; 512];
+            read_projected(&source, &mut raw, &self.copies)?;
+            for y in 0..draw.surface.height as usize {
+                for x in 0..draw.surface.width as usize {
+                    let at = crate::depth::offset(x, y);
+                    let value = u32::from_le_bytes(raw[at..at + 4].try_into().expect("depth word"));
+                    if !f32::from_bits(value).is_finite()
+                        || !(0.0..=1.0).contains(&f32::from_bits(value))
+                    {
+                        return Err(ExecutionError::UnsupportedDrawState);
+                    }
+                    depth.initial.push(value);
+                }
+            }
+            *spans += source.backing_ranges().count();
+            self.depth_inputs.push(source);
+            depth_capture = 512 + depth.initial.len() * 4;
+            if depth.write {
+                let target = space
+                    .pin(depth.address, 512, Access::Write)
+                    .map_err(ExecutionError::Memory)?;
+                *spans += target.backing_ranges().count();
+                depth_effect = Some((target, raw));
+            }
+        }
+        let (pixels, depth_values) = draw.raster_depth()?;
         let s = draw.surface;
-        let bytes = pixels.iter().filter(|p| p.is_some()).count() * 4;
+        let bytes = pixels.iter().filter(|p| p.is_some()).count() * 4
+            + if depth_effect.is_some() { 512 } else { 0 };
         let snapshots = pins.iter().map(GpuMemoryRange::len).sum::<usize>()
             + draw.texture.as_ref().map_or(0, |t| t.pixels.len())
             + draw.indices.as_ref().map_or(0, |i| i.values.len() * 4)
-            + (draw.vertex_spirv.len() + draw.fragment_spirv.len()) * 4;
+            + (draw.vertex_spirv.len() + draw.fragment_spirv.len()) * 4
+            + depth_capture;
         if self.stats.copy_launches + self.stats.clear_launches + self.stats.draw_launches
             >= limits.launches
             || bytes + snapshots
@@ -580,6 +640,7 @@ impl PreparedBatch {
                     return Err(ExecutionError::Capacity);
                 }
                 self.copies.push(Copy {
+                    depth: false,
                     source: CopyInput::Prepared,
                     target,
                     buffer: (first..x)
@@ -587,6 +648,21 @@ impl PreparedBatch {
                         .collect(),
                 });
             }
+        }
+        if let Some((target, mut raw)) = depth_effect {
+            for y in 0..s.height as usize {
+                for x in 0..s.width as usize {
+                    let at = crate::depth::offset(x, y);
+                    raw[at..at + 4]
+                        .copy_from_slice(&depth_values[y * s.width as usize + x].to_le_bytes());
+                }
+            }
+            self.copies.push(Copy {
+                depth: true,
+                source: CopyInput::Prepared,
+                target,
+                buffer: raw,
+            });
         }
         self.draw_inputs.extend(pins);
         self.snapshot_bytes += snapshots;

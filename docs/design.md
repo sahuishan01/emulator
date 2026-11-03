@@ -205,6 +205,14 @@ draw. Record unsupported operations and pipeline failures with stable IDs.
 
 ## 6. Mali texture and capability policy
 
+The [implemented depth subset](depth-batch.md) resolves preceding effects through
+an ordered backing overlay before reading ZF32, then prepares passing color and
+depth writes without publishing them. It explicitly freezes deferred inputs in
+depth batches, retains their pins and validates alias/budget/reply constraints
+before commit. Native replay uploads the captured initial attachment and compares
+both color and depth readback. This currently covers flat-Z triangles in one GOB;
+general interpolation, depth clears and live display handoff remain separate gates.
+
 Create a `DeviceCapabilities` report from queried features, limits, queue
 families, driver information and format/image support. Use Vulkan 1.1 as the
 initial proposed backend baseline and detect optional features explicitly;

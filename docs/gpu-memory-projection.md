@@ -1,5 +1,10 @@
 # Ordered GPU memory projection
 
+The subsequent [0.24 depth batch](depth-batch.md) now uses this foundation for
+per-operation ZF32 reads and writes. Snapshot resolution tracks the number of
+already resolved effects so newly appended operations can be resolved without
+recapturing earlier inputs. The original source-follow-up contract follows.
+
 This source follow-up to 0.23.0-dev adds an explicit input snapshot and memory
 projection to the original synchronous reference executor. It prepares the
 memory contract needed by depth and other operations that read preceding writes

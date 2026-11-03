@@ -59,6 +59,13 @@ static_assert(offsetof(GuestDrawOp,vertex)==56 && offsetof(GuestDrawOp,fragment)
 static_assert(sizeof(GuestDrawReplay)==50452 && alignof(GuestDrawReplay)==4);
 static_assert(offsetof(GuestDrawReplay,draws)==76 && offsetof(GuestDrawReplay,pixels)==49684 && offsetof(GuestDrawReplay,error)==50196);
 extern "C" GuestDrawReplay emulator_guest_draw_replay_v1(std::uint32_t index);
+struct DepthReplay {
+    GuestDrawReplay color;
+    std::uint32_t initial[128],expected[128],functions[3],writes[3];
+};
+static_assert(sizeof(DepthReplay)==51500 && alignof(DepthReplay)==4);
+static_assert(offsetof(DepthReplay,initial)==50452 && offsetof(DepthReplay,expected)==50964);
+extern "C" DepthReplay emulator_depth_replay_v1(std::uint32_t index);
 
 struct TexturedDraw {
     GuestDrawOp draw;

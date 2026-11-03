@@ -13,7 +13,57 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Source follow-up: ordered memory projection
+## Current implementation: 0.24.0-dev bounded guest depth
+
+The previous physical Mali 0.23 checkpoint is complete (151 checks/12 patterns).
+Next batch implements original B197 ZF32 depth state and transactional depth
+read/compare/write, plus nine Vulkan/window cases. All eight OGL and D3D compare
+encodings and disabled depth writes are covered. Scope: <=16x8, one 512-byte
+generic GOB, aligned40-bit address, flat Z per triangle, finite w=1/unclipped/grid
+positions, no stencil/depth clear/interpolated Z/bounds/bias/layers/MSAA. Unknown
+state fails explicitly. Depth target and size/read-only/select/sparse flags are
+validated. Read pins are mandatory, write pins only with writes enabled.
+
+Each depth operation reads preceding effects through the ordered backing overlay;
+the snapshot implementation now resolves newly appended effects incrementally.
+Raw/padded/decoded bytes and output GOB join 4 MiB/4096-span/64-launch limits.
+Color/DMA destination aliases with depth footprints reject across the complete
+batch. Shader/vertex/texture feedback protection remains. Late errors, budget/
+permission failures, cancellation and unmap/reuse are atomic. Non-depth default
+commit-time DMA semantics remain unchanged. graphics_frame explicitly rejects
+depth because the Catch LiveDraw ABI lacks that state; scene replay uses the
+dedicated depth ABI. General live guest depth/display still needs integration.
+
+Nine authored command pages reuse only our original shaders/draw fixtures; these
+are not new interpreted NROs. generator: tools/generate_depth_fixtures.py.
+New 20th export emulator_depth_replay_v1 returns 51500-byte/alignment4 DepthReplay:
+DrawReplay prefix50452, initial128u32, expected128u32, functions3u32, writes3u32.
+Old exports/layouts and every previous151 named diagnostic record stay stable.
+Vulkan uploads captured D32 data, loads attachment, selects actual compare/write
+state and checks every color/depth byte after completion. Aspect/layout/barriers
+include transfer and early/late fragment stages; image usage is capability queried.
+
+App0.24.0-dev/code27/schema4/workload27/native12:168 checks
+(engine18/NV50/core38suite6/shader25/Vulkan37),21 patterns. Same one-button run and
+automatic JSON export. Physical Mali 168/21 evidence remains pending. No games.
+See docs/depth-batch.md. Next: depth clears, larger GOB layouts and interpolated Z,
+then broader texture/shader/runtime/display work with connected batched tests.
+
+Verification: 227 workspace Rust tests, final targeted GPU/FFI reruns, fmt/Clippy
+warnings denied and 31 unchanged LLVM fixtures pass. All nine new command pages
+reproduce. Host Vulkan37 passes with validation enabled/zero errors. Pinned two-ABI
+Android assembly/lint/signature/20exports/16KiB/strictmanifest pass. APK11132888
+bytes/SHA256 d98b58eaaa295c87d08a87f77f08766f00dfa6627dbe2575377cbc7a3b0299a7.
+Automatic14 flows/two fresh168-check21-pattern runs/2688 displayed samples pass;
+manual29 flows/25captures3200samples pass. Picker export/cold/both present backup
+recoveries are byte-exact; automatic report remains immutable after manual scenes.
+Unrelated Messages startup Wait and a stale151 expected-count harness assertion
+were recorded; final cold168/21 summary/bytes verified separately after fixing
+the harness. All final crash buffers empty/no target-app fatal/ANR. Native display
+settings restored; owned AVD stopped/process awaited. See
+docs/validation/android-depth.md and ignored reports/android-qa/v0.24.0-dev/.
+
+## Previous source follow-up: ordered memory projection
 
 The supplied 0.23.0 report now confirms all 151 checks and twelve patterns on
 physical G720. Four Rust groups match the host exactly except architecture;

@@ -1,5 +1,10 @@
 # One-tap testing and JSON export (0.22.1)
 
+The [0.24 depth extension](depth-batch.md) expands the same workflow to
+21 patterns and 168 diagnostics. Current reports use app 0.24.0-dev/code 27,
+schema 4/workload 27/native 12. The historical baseline below describes the
+original UI/lifecycle contract; current pattern/group lists are dynamic.
+
 The [0.23 storage extension](texture-storage-batch.md) expands the same workflow
 to12 patterns/151 diagnostics. The0.22.1 baseline and lifecycle contract below
 remain applicable; new reports use app0.23/code26/schema4/workload26/native11.

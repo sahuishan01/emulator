@@ -1,5 +1,8 @@
 """Independent screen-pixel formulas; no guest decoder or GPU readback as oracle."""
 def expected_pixel(variant,px,py):
+ if variant>=12:
+  i=variant-12;center=4<=px<12 and 2<=py<6
+  return (0,0,0,255) if i==0 else (255,0,0,255) if center and i in (3,6,7,8) else (0,255,0,255)
  center=4<=px<12 and 2<=py<6 and (variant!=5 or px+2*py<=14)
  if variant<6:
   sx,sy=((6*px-29)//8,(6*py-13)//4) if center else ((6*px-13)//16,(6*py-5)//8)

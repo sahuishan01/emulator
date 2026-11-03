@@ -19,6 +19,9 @@ impl PreparedSubmission {
     pub fn graphics_frame(&self) -> Result<GraphicsFrame, String> {
         let clears = self.color_clears();
         let draws = self.draws();
+        if draws.iter().any(|d| d.depth.is_some()) {
+            return Err("Depth requires the depth replay backend".into());
+        }
         if self.stats().copy_launches != 0
             || clears.len() != 1
             || draws.is_empty()

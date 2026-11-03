@@ -79,7 +79,10 @@ layout cases, ten core rejection/rollback/lifetime/budget groups and an original
 NRO. One-button testing runs 151 checks and twelve visible patterns, now
 [confirmed on physical G720](validation/g720-texture-storage.md).
 [Ordered input snapshots and memory projection](gpu-memory-projection.md) form
-the next source step toward transactional depth planning. Guest depth, broader
+the foundation for the [0.24 depth batch](depth-batch.md): a single-GOB ZF32
+attachment, flat-Z triangle comparisons, depth writes and Vulkan color/depth
+readback. All eight comparisons and disabled writes join one 168-check/21-pattern
+run. Physical confirmation is pending. Depth interpolation/clears, broader
 shaders/runtime and general display services remain open.
 
 ## Milestones and dependency gates

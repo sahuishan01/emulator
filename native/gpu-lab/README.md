@@ -7,7 +7,7 @@ General guest shaders and commercial Switch games remain unsupported. The C++ im
 Vulkan interfaces. The Android package also links the original Rust workspace
 for CPU/kernel/IPC reference checks; the desktop Vulkan runner now links the same Rust replay archive.
 
-Nineteen bounded workloads (native workload version 9). The first nine are:
+37 bounded workloads (native workload version 12). The first nine are:
 
 1. RGBA8 buffer -> image -> buffer transfer with exact byte comparison.
 2. Two overlapping triangles with depth testing. The nearer green triangle
@@ -38,6 +38,8 @@ SM53 translator output: full RGBA draw, transformed red BGRA draw and ordered
 green/red pipeline changes. Cases 13–15 replay decoded guest draws. Case 16 runs
 111 live Catch guest frames without a window, including score/miss/reset. Cases17–19 add actual guest sampled RGBA/BGRA/updated-texture draws; see [the texture batch](../../docs/texture-draw-batch.md).
 General guest display integration remains open.
+Cases 20–28 extend indexed geometry and tiled/compressed textures; cases 29–37
+add all depth comparisons and disabled writes. See the [bounded depth contract](../../docs/depth-batch.md).
 See [the supported shader subset](../../docs/shader-translation-batch.md).
 
 The report includes device/driver/API identity, software-renderer status,

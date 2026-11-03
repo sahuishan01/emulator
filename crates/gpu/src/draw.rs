@@ -4,11 +4,13 @@ use crate::{
 };
 use emulator_memory::Access;
 use emulator_shader::{decode_program, emit, Program, Stage};
+type RasterDepth = (Vec<Option<[u8; 4]>>, Vec<u32>);
 
 /// Owned host-independent draw. Captured inputs precede guest shader execution;
 /// surface color is used only for the uniform fragment fast path.
 #[derive(Clone, Debug)]
 pub struct Draw {
+    pub depth: Option<crate::DepthState>,
     pub surface: ColorClear,
     pub vertices: Vec<[u32; 4]>,
     pub varying_inputs: Vec<[u32; 4]>,
@@ -57,6 +59,7 @@ pub(crate) struct Command {
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Registers {
+    depth: crate::depth::Registers,
     viewport: [Option<u32>; 6],
     clip: [Option<u32>; 4],
     stream: [Option<u32>; 4],
@@ -86,6 +89,9 @@ impl Registers {
     /// None means method belongs to the color engine. A returned draw command
     /// encodes topology/count/first in the public BEGIN_END_INSTANCE_FIRST word.
     pub(crate) fn write(&mut self, offset: u32, data: u32) -> Result<Option<Option<Command>>, E> {
+        if self.depth.write(offset, data) {
+            return Ok(Some(None));
+        }
         match offset {
             0xa00..=0xa14 => self.viewport[((offset - 0xa00) / 4) as usize] = Some(data),
             0xc00..=0xc0c => self.clip[((offset - 0xc00) / 4) as usize] = Some(data),
@@ -154,7 +160,15 @@ impl Registers {
         {
             return Err(invalid());
         }
-        for setting in self.disabled {
+        if required(self.disabled[0])? > 1 {
+            return Err(invalid());
+        }
+        let depth = if required(self.disabled[0])? == 1 {
+            Some(self.depth.plan(surface)?)
+        } else {
+            None
+        };
+        for setting in self.disabled[1..].iter().copied() {
             if required(setting)? != 0 {
                 return Err(invalid());
             }
@@ -350,6 +364,7 @@ impl Registers {
             })
             .collect();
         let draw = Draw {
+            depth,
             surface,
             vertices,
             varying_inputs,
@@ -360,8 +375,7 @@ impl Registers {
             vertex_spirv,
             fragment_spirv,
         };
-        // Validate vertex domain and raster bounds before exposing a plan.
-        draw.raster()?;
+        // The batch captures attachment inputs and validates rasterization before publication.
         Ok((draw, pins))
     }
 }
@@ -388,12 +402,23 @@ impl Draw {
     /// Only finite, unclipped w=1 positions on this grid are accepted. Fragment
     /// attributes interpolate screen-linearly; depth/blending/culling are disabled.
     pub(crate) fn raster(&self) -> Result<Vec<Option<[u8; 4]>>, E> {
+        self.raster_depth().map(|r| r.0)
+    }
+    pub(crate) fn raster_depth(&self) -> Result<RasterDepth, E> {
         let s = self.surface;
         if self.vertices.len() != self.varying_inputs.len() || s.width > 64 || s.height > 64 {
             return Err(invalid());
         }
         let mut points = vec![];
         let mut attributes = vec![];
+        let mut depths = vec![];
+        let mut depth_values = self
+            .depth
+            .as_ref()
+            .map_or_else(Vec::new, |d| d.initial.clone());
+        if self.depth.is_some() && depth_values.len() != (s.width * s.height) as usize {
+            return Err(invalid());
+        }
         let order = if let Some(indices) = &self.indices {
             indices.effective()?
         } else {
@@ -410,6 +435,7 @@ impl Draw {
             if !order.contains(&i) {
                 points.push([0; 2]);
                 attributes.push([0.; 4]);
+                depths.push(0.);
                 continue;
             }
             let invocation = self
@@ -417,6 +443,7 @@ impl Draw {
                 .invoke([*input, *extra], None)
                 .map_err(|e| E::Shader(e.to_string()))?;
             let p = invocation.output.map(f32::from_bits);
+            depths.push(p[2]);
             let varying = invocation.varying.unwrap_or([0; 4]).map(f32::from_bits);
             if varying.iter().any(|x| !x.is_finite()) {
                 return Err(invalid());
@@ -458,6 +485,10 @@ impl Draw {
             None
         };
         for triangle in order.chunks_exact(3) {
+            let z = depths[triangle[0]];
+            if self.depth.is_some() && (depths[triangle[1]] != z || depths[triangle[2]] != z) {
+                return Err(invalid());
+            }
             let [a, mut b, mut c] = [
                 points[triangle[0]],
                 points[triangle[1]],
@@ -484,6 +515,15 @@ impl Draw {
                         e > 0 || e == 0 && (v[1] < u[1] || v[1] == u[1] && v[0] > u[0])
                     });
                     if inside {
+                        let at = (y * s.width + x) as usize;
+                        if let Some(depth) = &self.depth {
+                            if !depth.passes(z, f32::from_bits(depth_values[at])) {
+                                continue;
+                            }
+                            if depth.write {
+                                depth_values[at] = z.to_bits();
+                            }
+                        }
                         let color = if let Some(color) = constant {
                             color
                         } else {
@@ -513,7 +553,7 @@ impl Draw {
                 }
             }
         }
-        Ok(pixels)
+        Ok((pixels, depth_values))
     }
 }
 fn edge(a: [i64; 2], b: [i64; 2], p: [i64; 2]) -> i64 {
