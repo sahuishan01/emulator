@@ -82,7 +82,7 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.27.2-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.27.3-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
 Tap **Test all & export JSON** on the home screen to display all 55 patterns,
@@ -92,13 +92,13 @@ Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.2-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.3-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.3-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.3-dev).
 The existing Android application ID/signing identity is retained for updates.
-The [in-app updater](docs/app-updates.md) now checks private GitHub releases, verifies downloads and opens Android's installer. Connect once under **Settings → App updates** using read-only repository access.
+The [in-app updater](docs/app-updates.md) now checks private GitHub releases, verifies downloads and opens Android's installer. Open **Updates** in the library or **Settings → App updates**. Manual checks stay visible without a saved token; **Test GitHub access** shows the result and last successful check. Connect once using read-only repository access.
 See the [projection profile](docs/projection-batch.md) and
-[0.27 rendering validation](docs/validation/android-projection.md) and [updater validation](docs/validation/android-app-updates.md). See [0.27.2 investigation validation](docs/validation/android-inset-evidence.md).
+[0.27 rendering validation](docs/validation/android-projection.md) and [updater validation](docs/validation/android-app-updates.md). See [0.27.2 investigation validation](docs/validation/android-inset-evidence.md) and [manual update controls validation](docs/validation/android-update-controls.md).
 This is a debug development build, not a production-ready commercial-game emulator.
 See [indexed geometry](docs/indexed-geometry-batch.md) and [storage implementation](docs/texture-storage-batch.md) and [build verification](docs/validation/android-texture-storage.md).
 
@@ -214,12 +214,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.2-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.3-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.2-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.3-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.3-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks

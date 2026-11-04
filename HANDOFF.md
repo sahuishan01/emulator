@@ -13,7 +13,51 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.27.2-dev inset failure evidence
+## Current implementation: 0.27.3-dev visible manual updates/access status
+
+User reported no manual check or way to confirm token access. Found Check hidden
+without vault file and feedback above a distant token form/notes. Library now
+has Updates next to Settings; Settings App updates moved before Player options.
+Updates always shows Check for updates and Test GitHub access; disconnected
+clicks open Verify and save dialog. Access/result/lastVerified/lastSuccessfulCheck
+are at top, connection scrolls there, notes moved below config. New connection
+verifies release access before encrypted save and explicitly confirms success or
+failure. Failed replacement preserves old token and verification. Offline/denied
+saved-token checks keep previous successful time but show failed current result.
+Migration of existing token shows saved/unverified. Disconnect clears history.
+Test access never downloads even if Wi-Fi automatic downloads enabled. Manual
+check bypasses 6h throttle and works with automatic checks disabled. HTTP401,
+403/404 access, primary/Retry-After limits distinguished; no raw response echo.
+
+App0.27.3/code33, same schema4/workload31/native16/252checks/55patterns. Both native
+libraries byte-identical to0.27.2; no Rust/graphics/dependency/permission changes.
+Mali inset failure still open, not fixed by this UI update. See docs/app-updates.md
+and docs/validation/android-update-controls.md.
+
+27 JVM tests, pinned main/test APK assembly/lint/signature/twoABIs/21exports/
+16KiB/strict manifest pass. 14 instrumented actual-UI/manager checks with QA-only
+injected network and synthetic credential pass: disconnected, invalid/valid,
+manual+throttle/automation disabled, no access-test download, busy controls,
+offline/revoked/retry, failed replacement, recreation/timestamps, landscape,
+disconnect/history, legacy saved token. Seven state screenshots; synthetic
+credential + backup erased, prefs cleared, test package uninstalled. Test-only
+reflection injection; no endpoint override or QA class/credential in production.
+
+Seven adb real flows pass, including actual signed32->33, exact library/cache,
+Home/Settings discovery, masked/empty/cancel, landscape and cold restore. First
+attempt hit unrelated SystemUI startup dialog; raw evidence retained, harness
+Wait handles only exact SystemUI dialog and rerun records it. Initial access UI
+helper missed uppercase VERIFY AND SAVE, corrected case comparison/test-only
+rebuild,14 checks repeated; production APK byte-identical. Final crash buffers
+empty/no targetfatal/ANR. OwnAVD98.13%idle/nice10/2cores/2048->2560MiB, inherited
+720x1280/density280 retained, orientation restored, stopped/processawaited0/ADBempty.
+
+Final APK12108988bytes/SHA256
+35cb92b28b54b87f2c5034b09c50335e3e6a96acecc3e45a1cf83001f35b19f8.
+Ignored reports/v0.27.3-* and reports/update-qa/v0.27.3-dev/. Legacy25 download/
+provider/installer device tests are historical, not newly claimed for this patch.
+
+## Previous implementation: 0.27.2-dev inset failure evidence
 
 The physical 0.27.1 report reproduces 239/240 checks and54/55 patterns: only
 native guest-projection-texture-3 and visible42 fail. All71 native records match

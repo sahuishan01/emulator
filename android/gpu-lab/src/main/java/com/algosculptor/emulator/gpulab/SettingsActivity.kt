@@ -12,7 +12,9 @@ class SettingsActivity : Activity() {
         super.onCreate(savedInstanceState)
         val ui = AppUi(this); val root = ui.column(); val prefs = AppSettings.prefs(this)
         root.addView(ui.button("Back to library") { finish() }); ui.space(root, 20)
-        root.addView(ui.text("Settings", 30f, bold = true)); ui.space(root, 24)
+        root.addView(ui.text("Settings", 30f, bold = true)); ui.space(root, 12)
+        root.addView(ui.button("App updates", true) { startActivity(Intent(this, UpdatesActivity::class.java)) })
+        root.addView(ui.text("Check for updates and test GitHub access.", 14f, ui.muted)); ui.space(root, 24)
         root.addView(ui.label("PLAYER")); ui.space(root, 12)
         fun toggle(label: String, key: String, default: Boolean) {
             root.addView(Switch(this).apply { text = label; textSize = 16f; setTextColor(ui.ink); minHeight = ui.dp(56)
@@ -32,8 +34,6 @@ class SettingsActivity : Activity() {
         (application as EmulatorApplication).library.list { entries ->
             if (!isDestroyed) storage.text = "Imported files: ${entries.sumOf { it.bytes } / 1024} KiB / 256 MiB\n${entries.count { !it.included }} of 128 import slots used"
         }
-        ui.space(root, 24); root.addView(ui.label("APP")); ui.space(root, 10)
-        root.addView(ui.button("App updates") { startActivity(Intent(this, UpdatesActivity::class.java)) })
         ui.space(root, 24); root.addView(ui.label("SUPPORT")); ui.space(root, 10)
         root.addView(ui.button("Diagnostics") { startActivity(Intent(this, MainActivity::class.java)) })
         root.addView(ui.text("Run the engine and GPU checks, then export a report when something goes wrong.", 14f, ui.muted))

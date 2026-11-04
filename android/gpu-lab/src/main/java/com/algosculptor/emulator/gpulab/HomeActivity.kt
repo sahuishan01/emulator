@@ -48,6 +48,7 @@ class HomeActivity : Activity() {
         val root = ui.column()
         val top = LinearLayout(this)
         top.addView(ui.label("EMULATOR"), LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(ui.button("Updates") { startActivity(Intent(this, UpdatesActivity::class.java)) })
         top.addView(ui.button("Settings") { startActivity(Intent(this, SettingsActivity::class.java)) })
         root.addView(top); ui.space(root, 22)
         root.addView(ui.text("Your library", 30f, bold = true)); ui.space(root, 6)

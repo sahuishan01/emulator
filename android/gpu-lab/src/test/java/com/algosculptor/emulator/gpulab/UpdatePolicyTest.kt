@@ -40,11 +40,11 @@ class UpdatePolicyTest {
     @Test fun invalidDownloadSizesAndChecksumsAreRejected() { for (size in listOf(-1L,0L,UpdatePolicy.MAX_APK+1)) fails { UpdatePolicy.copyVerified(ByteArrayInputStream(data),ByteArrayOutputStream(),size,sha,{false},{}) };fails { UpdatePolicy.copyVerified(ByteArrayInputStream(data),ByteArrayOutputStream(),1,"invalid",{false},{}) } }
     @Test fun credentialsAreRestrictedToExactRepositoryApiRoutes() { for (url in listOf("http://api.github.com/repos/sahuishan01/emulator/releases?per_page=30","https://api.github.com.evil.invalid/repos/sahuishan01/emulator/releases?per_page=30","https://api.github.com/repos/other/emulator/releases?per_page=30","https://user:password@api.github.com/repos/sahuishan01/emulator/releases?per_page=30","https://api.github.com:8443/repos/sahuishan01/emulator/releases?per_page=30",UpdatePolicy.apiAsset(123)+"#fragment",UpdatePolicy.apiAsset(123)+"?other=1","https://127.0.0.1/a")) fails { UpdatePolicy.checkUrl(url,true) } }
     @Test fun cdnRedirectsRequireHttpsAndApprovedHostWithoutCredentials() { for(url in listOf("https://evil.invalid/a","http://release-assets.githubusercontent.com/a","https://user@release-assets.githubusercontent.com/a","https://release-assets.githubusercontent.com:444/a","https://api.github.com/a","https://release-assets.githubusercontent.com.evil.invalid/a")) fails { UpdatePolicy.checkUrl(url,false) };UpdatePolicy.checkUrl("https://release-assets.githubusercontent.com/a?signature=test",false) }
-    private class Connection(url:URL,val code:Int,val bytes:ByteArray=byteArrayOf(),val location:String?=null):HttpURLConnection(url) {
+    private class Connection(url:URL,val code:Int,val bytes:ByteArray=byteArrayOf(),val location:String?=null,val remaining:String?=null,val retry:String?=null):HttpURLConnection(url) {
         var closed=false
         override fun connect(){};override fun disconnect(){closed=true};override fun usingProxy()=false
         override fun getResponseCode()=code
-        override fun getHeaderField(name:String):String?=if(name=="Location")location else null
+        override fun getHeaderField(name:String):String?=when(name){"Location"->location;"X-RateLimit-Remaining"->remaining;"Retry-After"->retry;else->null}
         override fun getContentLengthLong()=if(code==200)bytes.size.toLong() else -1
         override fun getInputStream()=ByteArrayInputStream(bytes)
     }
@@ -56,6 +56,25 @@ class UpdatePolicyTest {
     @Test fun untrustedRedirectNeverReceivesARequest() { var count=0;val net=GithubUpdateNetwork{url->count++;Connection(url,302,location="https://evil.invalid/asset")};fails{net.asset(parse(release())!!,"QA_DUMMY_ACCESS_TOKEN",UpdateTransfer()) {fail()}};assertEquals(1,count) }
     @Test fun metadataRedirectsAreRejectedAndConnectionCloses() { val c=Connection(URL(UpdatePolicy.API),302,location="https://evil.invalid");fails{GithubUpdateNetwork{c}.releases("QA_DUMMY_ACCESS_TOKEN",UpdateTransfer())};assertTrue(c.closed) }
     @Test fun unauthorizedAndMissingReleasesUseControlledErrors() { for(code in listOf(401,403,404,429,500,206)){val c=Connection(URL(UpdatePolicy.API),code);fails{GithubUpdateNetwork{c}.releases("QA_DUMMY_ACCESS_TOKEN",UpdateTransfer())};assertTrue(c.closed)} }
+    @Test fun deniedCredentialsHaveDistinctActionableErrors() {
+        for(code in listOf(401,403,404)) {
+            val c=Connection(URL(UpdatePolicy.API),code)
+            try { GithubUpdateNetwork{c}.releases("QA_DUMMY_ACCESS_TOKEN",UpdateTransfer());fail() }
+            catch(e:UpdateFailure){assertTrue(e.accessDenied);assertTrue(e.message!!.contains(if(code==401)"expired" else if(code==403)"Contents: read-only" else "repository access"))}
+            assertTrue(c.closed)
+        }
+    }
+    @Test fun rateLimitsDoNotClaimTokenAccessWasDenied() {
+        for(c in listOf(Connection(URL(UpdatePolicy.API),403,remaining="0"),Connection(URL(UpdatePolicy.API),429),Connection(URL(UpdatePolicy.API),403,remaining="10",retry="60"))) {
+            try { GithubUpdateNetwork{c}.releases("QA_DUMMY_ACCESS_TOKEN",UpdateTransfer());fail() }
+            catch(e:UpdateFailure){assertFalse(e.accessDenied);assertTrue(e.message!!.contains("rate limit"))}
+        }
+    }
+    @Test fun accessErrorsNeverEchoResponseBodiesOrCredentials() {
+        val secret="QA_DUMMY_ACCESS_TOKEN";val c=Connection(URL(UpdatePolicy.API),401,secret.toByteArray())
+        try { GithubUpdateNetwork{c}.releases(secret,UpdateTransfer());fail() }
+        catch(e:UpdateFailure){assertFalse(e.message!!.contains(secret));assertTrue(c.closed)}
+    }
     @Test fun oversizedMetadataIsRejected() { val c=Connection(URL(UpdatePolicy.API),200,ByteArray(UpdatePolicy.MAX_METADATA+1));fails{GithubUpdateNetwork{c}.releases("QA_DUMMY_ACCESS_TOKEN",UpdateTransfer())};assertTrue(c.closed) }
     @Test fun cancellingTransferDisconnectsTheActiveSocket() { val transfer=UpdateTransfer();val c=Connection(URL(UpdatePolicy.API),200);transfer.bind(c);transfer.cancel();assertTrue(c.closed);try{transfer.check();fail()}catch (_:CancellationException){} }
 }

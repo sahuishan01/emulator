@@ -1,7 +1,8 @@
-# Private in-app updates (0.27.1)
+# Private in-app updates (0.27.3)
 
-Install this APK once to add the updater. Open **Settings → App updates → Connect
-GitHub**. Create a fine-grained token restricted to **sahuishan01/emulator** with
+Open **Updates** in the library, or **Settings → App updates**. **Check for
+updates** and **Test GitHub access** are always shown; either offers connection
+if no token is saved. Use **Connect GitHub** to enter access. Create a fine-grained token restricted to **sahuishan01/emulator** with
 **Contents: read-only**, then enter it on the phone. The source repository and
 release downloads stay private. No shared GitHub credential is bundled into the
 APK, copied from the build host, or sent in diagnostic JSON.
@@ -58,3 +59,26 @@ The supplied [0.27 Mali report](validation/g720-projection.md) records one
 projected inset-texture mismatch (239/240 and 54/55). This update does not fix or
 hide that rendering issue. See [updater validation](validation/android-app-updates.md)
 for separate JVM, device, installer and regression evidence.
+
+
+The 0.27.3 screen shows **GitHub: Access verified**, **Access denied**, a failed
+connection, or a network-check failure separately from update availability.
+It records the last verified access time and last successful release check.
+Existing saved tokens show **Token saved — test access to verify** until checked.
+The result and successful-check timestamps survive updater recreation. An offline
+or denied request preserves the earlier success time without claiming that the
+new request succeeded. Disconnect removes access and its verification history.
+
+The connection dialog says **Verify and save**. It tests the token against the
+private release list before saving; the screen scrolls to the result when the
+dialog closes. A failed new token is not saved. A failed replacement keeps the
+existing encrypted token and its previous verification state, and says so.
+**Test GitHub access** reads the release list and never downloads an APK, even
+when automatic Wi-Fi downloads are enabled. Manual checks work with automatic
+checks disabled and bypass the six-hour background throttle.
+
+Authentication failures, repository-access failures and rate limits have distinct
+messages. HTTP403 with exhausted quota or Retry-After is treated as a rate limit,
+following [GitHub's REST troubleshooting guidance](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
+Response bodies and credentials are not echoed in errors. See
+[manual controls and access validation](validation/android-update-controls.md).

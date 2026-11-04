@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class UpdateInstrumentation : Instrumentation() {
     private val checks = mutableListOf<String>()
     private val dummy = "QA_ONLY_FAKE_GITHUB_TOKEN_NOT_A_CREDENTIAL"
+    private var accessUi = false
     private fun sha(data: ByteArray) = MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) }
     private fun until(message: String, predicate: () -> Boolean) {
         val end = System.currentTimeMillis() + 30_000
@@ -29,8 +30,9 @@ class UpdateInstrumentation : Instrumentation() {
     }
     private fun check(name: String, action: () -> Unit) { action(); checks.add(name); sendStatus(0, Bundle().apply { putString("stream", "Verified $name\n") }) }
     private fun rejected(action: () -> Unit) { var rejected = false; try { action() } catch (_: Exception) { rejected = true }; require(rejected) }
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); accessUi = arguments?.getString("mode") == "access-ui"; start() }
     override fun onStart() {
+        if (accessUi) { UpdateAccessQa(this).run(); return }
         val app = targetContext.applicationContext as EmulatorApplication
         val folder = File(app.filesDir, "updates").apply { mkdirs() }
         try {

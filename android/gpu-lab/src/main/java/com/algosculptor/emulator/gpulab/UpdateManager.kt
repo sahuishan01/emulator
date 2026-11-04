@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipFile
 
 internal enum class UpdatePhase { DISCONNECTED, IDLE, CHECKING, AVAILABLE, DOWNLOADING, READY, ERROR }
+internal enum class UpdateAccessResult { NONE, SAVED, VERIFIED, DENIED, ERROR }
+internal data class UpdateAccessStatus(val saved: Boolean, val result: UpdateAccessResult, val lastVerifiedAt: Long)
 internal data class UpdateStatus(val phase: UpdatePhase, val message: String, val release: UpdateRelease? = null, val percent: Int = 0) {
     val busy: Boolean get() = phase == UpdatePhase.CHECKING || phase == UpdatePhase.DOWNLOADING
 }
@@ -34,6 +36,20 @@ internal class UpdateManager(private val app: Context, private val network: Upda
     private val metadata = AtomicFile(File(directory, "ready.json"))
     init { worker.execute { restore() } }
     val connected: Boolean get() = vault.exists()
+    val access: UpdateAccessStatus get() {
+        val saved = connected
+        val result = try { UpdateAccessResult.valueOf(prefs.getString("accessResult", "") ?: "") }
+            catch (_: IllegalArgumentException) { if (saved) UpdateAccessResult.SAVED else UpdateAccessResult.NONE }
+        return UpdateAccessStatus(saved, if (!saved && result == UpdateAccessResult.VERIFIED) UpdateAccessResult.NONE else result, prefs.getLong("accessVerifiedAt", 0))
+    }
+    val lastSuccessfulCheck: Long get() = prefs.getLong("lastSuccessfulCheck", 0)
+    private fun accessVerified() {
+        val now = System.currentTimeMillis()
+        prefs.edit().putString("accessResult", UpdateAccessResult.VERIFIED.name).putLong("accessVerifiedAt", now).putLong("lastSuccessfulCheck", now).apply()
+    }
+    private fun accessFailed(error: Exception) {
+        if (error !is CancellationException) prefs.edit().putString("accessResult", if (error is UpdateFailure && error.accessDenied) UpdateAccessResult.DENIED.name else UpdateAccessResult.ERROR.name).apply()
+    }
     val installedVersion: String get() = app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: ""
     fun observe(observer: (UpdateStatus) -> Unit) { observers.add(observer); observer(status) }
     fun unobserve(observer: (UpdateStatus) -> Unit) { observers.remove(observer) }
@@ -52,22 +68,29 @@ internal class UpdateManager(private val app: Context, private val network: Upda
     fun connect(token: String) {
         if (active.get() != null) return
         val transfer = UpdateTransfer(); if (!active.compareAndSet(null, transfer)) return
-        publish(UpdateStatus(UpdatePhase.CHECKING, "Connecting to GitHub…"))
+        val replacing = connected
+        publish(UpdateStatus(UpdatePhase.CHECKING, "Testing GitHub access before saving the token…"))
         worker.execute {
             try {
                 require(token.length in 20..512 && token.all { it.code in 33..126 })
                 val release = UpdateRelease.latest(network.releases(token, transfer), installedVersion); transfer.check(); vault.write(token)
+                accessVerified()
                 prefs.edit().putLong("lastAttempt", System.currentTimeMillis()).apply()
-                publish(if (release == null) UpdateStatus(UpdatePhase.IDLE, "You're up to date.") else UpdateStatus(UpdatePhase.AVAILABLE, "Version ${release.version} is available.", release))
+                publish(if (release == null) UpdateStatus(UpdatePhase.IDLE, "GitHub access verified. You're up to date.") else UpdateStatus(UpdatePhase.AVAILABLE, "GitHub access verified. Version ${release.version} is available.", release))
                 main.post { UpdateSchedule.sync(app) }
-            } catch (e: Exception) { publish(UpdateStatus(UpdatePhase.ERROR, if (e is IllegalArgumentException) "Enter a valid GitHub access token." else errorMessage(e))) }
+            } catch (e: Exception) {
+                if (!replacing) accessFailed(e)
+                val message = if (e is CancellationException) "Access test cancelled." else if (e is IllegalArgumentException) "Enter a valid GitHub access token." else errorMessage(e)
+                publish(UpdateStatus(if (e is CancellationException) if (connected) UpdatePhase.IDLE else UpdatePhase.DISCONNECTED else UpdatePhase.ERROR,
+                    message + if (replacing) " Existing token was kept." else " Token was not saved."))
+            }
             finally { active.compareAndSet(transfer, null) }
         }
     }
     fun disconnect() {
         active.get()?.cancel()
         worker.execute {
-            vault.clear(); clearReady(); partial.delete(); prefs.edit().remove("lastAttempt").apply()
+            vault.clear(); clearReady(); partial.delete(); prefs.edit().remove("lastAttempt").remove("accessResult").remove("accessVerifiedAt").remove("lastSuccessfulCheck").apply()
             publish(UpdateStatus(UpdatePhase.DISCONNECTED, "GitHub disconnected. Downloaded updates were removed.")); main.post { UpdateSchedule.sync(app) }
         }
     }
@@ -77,21 +100,26 @@ internal class UpdateManager(private val app: Context, private val network: Upda
         if (elapsed in 0 until INTERVAL) return false
         return checkForUpdates(true, finished)
     }
-    fun checkForUpdates(background: Boolean = false, finished: () -> Unit = {}): Boolean {
+    fun testAccess(): Boolean = checkForUpdates(accessOnly = true)
+    fun checkForUpdates(background: Boolean = false, finished: () -> Unit = {}, accessOnly: Boolean = false): Boolean {
         if (!connected) { publish(UpdateStatus(UpdatePhase.DISCONNECTED, "Connect GitHub to receive private updates.")); return false }
         val transfer = UpdateTransfer(background); if (!active.compareAndSet(null, transfer)) return false
-        prefs.edit().putLong("lastAttempt", System.currentTimeMillis()).apply(); publish(UpdateStatus(UpdatePhase.CHECKING, "Checking for updates…"))
+        prefs.edit().putLong("lastAttempt", System.currentTimeMillis()).apply(); publish(UpdateStatus(UpdatePhase.CHECKING, if (accessOnly) "Testing GitHub access…" else "Checking for updates…"))
         worker.execute {
+            var releasesVerified = false
             try {
                 val token = vault.read(); val release = UpdateRelease.latest(network.releases(token, transfer), installedVersion); transfer.check()
-                if (release == null) publish(UpdateStatus(UpdatePhase.IDLE, "You're up to date."))
+                accessVerified(); releasesVerified = true
+                val prefix = if (accessOnly) "GitHub access verified. " else ""
+                if (release == null) publish(UpdateStatus(UpdatePhase.IDLE, prefix + "You're up to date."))
                 else if (readMetadata() == release && ready.isFile) {
                     verifyApk(ready, release); publish(UpdateStatus(UpdatePhase.READY, "Version ${release.version} is ready to install.", release, 100))
                 } else {
-                    publish(UpdateStatus(UpdatePhase.AVAILABLE, "Version ${release.version} is available.", release))
-                    if (prefs.getBoolean("downloadWifi", true) && !(app.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered)) downloadNow(release, token, transfer)
+                    publish(UpdateStatus(UpdatePhase.AVAILABLE, prefix + "Version ${release.version} is available.", release))
+                    if (!accessOnly && prefs.getBoolean("downloadWifi", true) && !(app.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered)) downloadNow(release, token, transfer)
                 }
             } catch (e: Exception) {
+                if (!releasesVerified) accessFailed(e)
                 val cached = readMetadata()
                 val preserved = if (cached == null) null else try { verifyApk(ready, cached); UpdateStatus(UpdatePhase.READY, "Version ${cached.version} is ready. " + if (transfer.cancelled.get()) "Check cancelled." else "Could not check for a newer update.", cached, 100) } catch (_: Exception) { null }
                 publish(preserved ?: if (transfer.cancelled.get()) UpdateStatus(UpdatePhase.IDLE, "Update cancelled.") else UpdateStatus(UpdatePhase.ERROR, errorMessage(e)))

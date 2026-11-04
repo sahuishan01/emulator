@@ -55,4 +55,4 @@ internal object UpdatePolicy {
         if (digest.digest().joinToString("") { "%02x".format(it) } != sha) throw UpdateFailure("Update checksum does not match. The file was discarded.")
     }
 }
-internal class UpdateFailure(message: String) : Exception(message)
+internal class UpdateFailure(message: String, val accessDenied: Boolean = false) : Exception(message)

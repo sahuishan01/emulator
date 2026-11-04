@@ -32,10 +32,13 @@ internal class GithubUpdateNetwork(private val open: (URL) -> HttpURLConnection 
         if (token != null) { c.setRequestProperty("Authorization", "Bearer $token"); c.setRequestProperty("X-GitHub-Api-Version", "2022-11-28") }
         transfer.bind(c); return c
     }
-    private fun checkStatus(code: Int) {
-        when (code) {
+    private fun checkStatus(connection: HttpURLConnection) {
+        when (connection.responseCode) {
             200 -> Unit
-            401, 403, 404 -> throw UpdateFailure("Cannot access private releases. Check the token's repository access and Contents read permission.")
+            401 -> throw UpdateFailure("GitHub rejected this token. Check that it is valid and has not expired.", accessDenied = true)
+            403 -> if (connection.getHeaderField("X-RateLimit-Remaining") == "0" || connection.getHeaderField("Retry-After") != null) throw UpdateFailure("GitHub rate limit reached. Try again later.")
+                else throw UpdateFailure("GitHub denied access. Allow sahuishan01/emulator with Contents: read-only in the token.", accessDenied = true)
+            404 -> throw UpdateFailure("Private releases were not found. Allow sahuishan01/emulator in the token's repository access.", accessDenied = true)
             429 -> throw UpdateFailure("GitHub rate limit reached. Try again later.")
             else -> throw UpdateFailure("Update server is unavailable. Try again later.")
         }
@@ -43,7 +46,7 @@ internal class GithubUpdateNetwork(private val open: (URL) -> HttpURLConnection 
     override fun releases(token: String, transfer: UpdateTransfer): String {
         val c = connection("${UpdatePolicy.API}/releases?per_page=30", token, false, transfer)
         try {
-            checkStatus(c.responseCode)
+            checkStatus(c)
             if (c.contentLengthLong > UpdatePolicy.MAX_METADATA) throw UpdateFailure("Update response is too large.")
             val bytes = c.inputStream.use { input ->
                 val output = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
@@ -62,7 +65,7 @@ internal class GithubUpdateNetwork(private val open: (URL) -> HttpURLConnection 
                     val next = c.getHeaderField("Location") ?: throw UpdateFailure("Update redirect is missing.")
                     UpdatePolicy.checkUrl(next, false); url = next; credential = null
                 } else {
-                    checkStatus(status)
+                    checkStatus(c)
                     if (c.contentLengthLong >= 0 && c.contentLengthLong != release.size) throw UpdateFailure("Update download size changed. Check again.")
                     c.inputStream.use(consume); return
                 }
