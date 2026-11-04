@@ -8,7 +8,7 @@ interpreter execution, bounded handles/IPC, session cloning, guest scheduling,
 event/thread waits, cancellation and virtual deadlines in one process. The Android
 application has a private SQLite library, bounded file-picker imports, static NRO
 text execution, settings and the live Catch player. Support diagnostics run eighteen
-guest checks, fifty NV cases, seventy-six GPU-core groups, twenty-five shader cases and seventy-one
+guest checks, fifty NV cases, seventy-six GPU-core groups, twenty-five shader cases and one hundred six
 Vulkan workloads, with report export. Broader synchronization and general guest
 graphics remain planned. See [the implemented app contracts](android-app.md), [kernel-ipc.md](kernel-ipc.md) and
 [android-engine.md](android-engine.md) for the implemented contracts.

@@ -1,5 +1,8 @@
 """Independent screen-pixel formulas; no guest decoder or GPU readback as oracle."""
 def expected_pixel(variant,px,py):
+ if variant>=55:
+  assert variant<66
+  return expected_pixel(variant-55 if variant<58 else variant-19,px,py)
  if variant>=39:
   i=variant-39
   if i>=12:

@@ -10,7 +10,7 @@ def main():
  def call(*args,timeout=35):return subprocess.check_output(adb+list(args),timeout=timeout,stderr=subprocess.PIPE)
  def cache(name='last-report.json'):return json.loads(call('exec-out','run-as',pkg,'cat','files/'+name))
  def download_names():
-  r=subprocess.run(adb+['shell','ls /sdcard/Download/Emulator 2>/dev/null'],capture_output=True)
+  r=subprocess.run(adb+['shell','ls -1 /sdcard/Download/Emulator 2>/dev/null'],capture_output=True)
   return {n for n in r.stdout.decode().splitlines() if n.startswith('emulator-gpu-report-') and n.endswith('.json')}
  def bounds(n):return tuple(map(int,re.findall(r'\d+',n.get('bounds'))))
  def tapnode(n):

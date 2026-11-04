@@ -401,6 +401,31 @@ fn capture(
     Ok(bytes)
 }
 impl Draw {
+    /// Candidate host-only projection policy. Reject anything outside the
+    /// current validated unclipped/linear profile before emitting alternate code.
+    /// Captured guest inputs and the independent reference image never change.
+    pub fn normalized_position_spirv(&self) -> Result<Vec<u32>, E> {
+        self.raster()?;
+        if self.indices.is_some() || self.depth.is_some() {
+            return Err(invalid());
+        }
+        for (input, extra) in self.vertices.iter().zip(&self.varying_inputs) {
+            let p = self
+                .vertex
+                .invoke([*input, *extra], None)
+                .map_err(|e| E::Shader(e.to_string()))?
+                .output
+                .map(f32::from_bits);
+            for component in &p[..2] {
+                let exact = f64::from(*component) / f64::from(p[3]);
+                if f64::from(exact as f32) != exact {
+                    return Err(invalid());
+                }
+            }
+        }
+        emulator_shader::emit_normalized_position(&self.vertex)
+            .map_err(|e| E::Shader(e.to_string()))
+    }
     /// Fixed 1/16-pixel grid, pixel-center sampling and top-left edge ownership.
     /// Finite positive normal W with a normal reciprocal is required. Unclipped
     /// projected XY must lie exactly on this grid. IPA.PASS attributes remain

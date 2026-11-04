@@ -1,5 +1,12 @@
 # One-tap testing and JSON export (0.22.1)
 
+The [0.27.5 projection candidate](normalized-projection.md) expands the batch to
+66 patterns and275 checks: app/code0.27.5-dev/35, schema/workload/native4/32/17.
+It preserves all original checks and adds23 candidate checks/11 visible variants.
+The [GitHub report setting](github-reports.md) can upload completed JSON privately
+and trigger follow-up without a chat attachment. The underlying export and
+strict failure behavior remain unchanged.
+
 The [0.27.2 inset investigation](inset-evidence.md) retains all 55 visible patterns
 and adds twelve native controls, for 252 diagnostics. App/code is 0.27.2-dev/32,
 schema/workload/native is 4/31/16. Failed replays retain full attachment bytes

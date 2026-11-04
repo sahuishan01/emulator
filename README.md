@@ -16,7 +16,7 @@ blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
 The Android app embeds this engine, eighteen guest checks, fifty NV API scenarios,
-seventy-six GPU core cases, twenty-five shader cases and eighty-three Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
+seventy-six GPU core cases, twenty-five shader cases and one hundred six Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
 physical G720 0.3.0-dev report, including converted-texture sampling and updates
 without native BC support. See the
@@ -82,19 +82,19 @@ Git and excluded from the Cargo workspace. Their recorded revisions are in
 
 ## Android app
 
-The **0.27.4-dev** app opens a persistent, searchable homebrew library. It includes
+The **0.27.5-dev** app opens a persistent, searchable homebrew library. It includes
 Catch and a guest texture scene, imports supported static `.nro` files through Android's file picker, runs
 their actual code with visible output/errors, and saves recents and player settings.
-Tap **Test all & export JSON** on the home screen to display all 55 patterns,
-run all 252 checks and automatically save the JSON in **Downloads/Emulator**.
+Tap **Test all & export JSON** on the home screen to display all 66 patterns,
+run all 275 checks and automatically save the JSON in **Downloads/Emulator**.
 The result offers **Share JSON**. See [one-tap testing](docs/one-tap-testing.md).
 Manual diagnostics and report export remain under **Settings → Diagnostics**.
 See [the app architecture, import contract and limits](docs/android-app.md).
 
 Private development downloads (sign into GitHub with repository access):
-[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.4-dev/emulator.apk),
-[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.4-dev/emulator.zip),
-[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.4-dev).
+[APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.5-dev/emulator.apk),
+[ZIP](https://github.com/sahuishan01/emulator/releases/download/v0.27.5-dev/emulator.zip),
+[release page](https://github.com/sahuishan01/emulator/releases/tag/v0.27.5-dev).
 The existing Android application ID/signing identity is retained for updates.
 The [in-app updater](docs/app-updates.md) now checks private GitHub releases, verifies downloads and opens Android's installer. Open **Updates** in the library or **Settings → App updates**. Manual checks stay visible without a saved token; **Test GitHub access** shows the result and last successful check. Connect once using Contents: read-only repository access for updates.
 The new [GitHub report upload](docs/github-reports.md) setting adds opt-in automatic
@@ -103,6 +103,9 @@ Codex thread when idle. Add **Issues: read and write**, test report access and
 enable **Settings → GitHub reports → Upload completed reports automatically**.
 See the [projection profile](docs/projection-batch.md) and
 [0.27 rendering validation](docs/validation/android-projection.md) and [updater validation](docs/validation/android-app-updates.md). See [0.27.2 investigation validation](docs/validation/android-inset-evidence.md) and [manual update controls validation](docs/validation/android-update-controls.md).
+The [projection candidate](docs/normalized-projection.md) adds 23 checks and 11
+visible variants alongside the unchanged original renderer. Its XYZ/W vertex
+lowering is experimental until confirmed on physical Mali hardware.
 This is a debug development build, not a production-ready commercial-game emulator.
 See [indexed geometry](docs/indexed-geometry-batch.md) and [storage implementation](docs/texture-storage-batch.md) and [build verification](docs/validation/android-texture-storage.md).
 
@@ -218,12 +221,12 @@ every part permits the operation; failed writes leave the entire range intact.
 ## Build and diagnose the Android app
 
 The verified development APK, checksum and packaging report are attached to
-the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.4-dev)
+the [development prerelease](https://github.com/sahuishan01/emulator/releases/tag/v0.27.5-dev)
 in this private repository. The APK runs original guest reference programs and host Vulkan diagnostics; it does not
 run commercial Switch games.
 
-- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.4-dev/emulator.apk)
-- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.4-dev/emulator.zip), then extract and install the APK inside.
+- [Download APK](https://github.com/sahuishan01/emulator/releases/download/v0.27.5-dev/emulator.apk)
+- [Download ZIP fallback](https://github.com/sahuishan01/emulator/releases/download/v0.27.5-dev/emulator.zip), then extract and install the APK inside.
 
 Open these links in a browser signed into the GitHub account with access to
 this private repository. A 404 can mean the browser is not signed in or lacks

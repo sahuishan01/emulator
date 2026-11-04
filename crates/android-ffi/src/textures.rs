@@ -117,6 +117,12 @@ pub(crate) fn setup(page: Vec<u8>) -> Result<(AddressSpace, GpuAddressSpace), St
     Ok((mem, gpu))
 }
 pub fn replay(index: u32) -> TextureReplay {
+    replay_policy(index, false)
+}
+pub fn normalized_replay(index: u32) -> TextureReplay {
+    replay_policy(index, true)
+}
+fn replay_policy(index: u32, normalize: bool) -> TextureReplay {
     let mut out = TextureReplay {
         abi_version: 1,
         status: 1,
@@ -127,8 +133,10 @@ pub fn replay(index: u32) -> TextureReplay {
         pixels: [0; 512],
         error: [0; 256],
     };
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fill(index, &mut out)))
-        .unwrap_or_else(|_| Err("Texture replay panic".into()));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fill(index, &mut out, normalize)
+    }))
+    .unwrap_or_else(|_| Err("Texture replay panic".into()));
     if let Err(e) = result {
         for (a, b) in out.error.iter_mut().zip(e.bytes().take(255)) {
             *a = b;
@@ -136,9 +144,9 @@ pub fn replay(index: u32) -> TextureReplay {
     }
     out
 }
-fn fill(index: u32, out: &mut TextureReplay) -> Result<(), String> {
+fn fill(index: u32, out: &mut TextureReplay, normalize: bool) -> Result<(), String> {
     if index >= 3 {
-        return super::projection::fill_texture(index - 3, out);
+        return super::projection::fill_texture(index - 3, out, normalize);
     }
     let mut page = PAGES
         .get(index as usize)
@@ -173,6 +181,9 @@ fn fill(index: u32, out: &mut TextureReplay) -> Result<(), String> {
             return Err("Texture ABI cannot carry indices".into());
         }
         *out = attributes(source)?;
+        if normalize {
+            normalized_vertex(source, &mut out.draw)?;
+        }
     }
     let stats = work.commit().1;
     if stats.draw_launches != 2 || stats.clear_launches != 1 || stats.drawn_bytes != 640 {
@@ -187,6 +198,21 @@ fn fill(index: u32, out: &mut TextureReplay) -> Result<(), String> {
     out.status = 0;
     out.draw_count = 2;
     out.image_bytes = 512;
+    Ok(())
+}
+pub(crate) fn normalized_vertex(
+    source: &emulator_gpu::Draw,
+    out: &mut DrawOp,
+) -> Result<(), String> {
+    let module = source
+        .normalized_position_spirv()
+        .map_err(|e| e.to_string())?;
+    if module.len() > out.vertex.len() {
+        return Err("Normalized vertex module exceeds ABI budget".into());
+    }
+    out.vertex.fill(0);
+    out.vertex[..module.len()].copy_from_slice(&module);
+    out.vertex_words = module.len() as u32;
     Ok(())
 }
 /// Captured shader/vertex/texture fields shared by the separate indexed ABI.
@@ -419,6 +445,96 @@ pub(crate) fn cases() -> Vec<TextureCase> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn candidate_rejects_invalid_projection_and_unimplemented_index_depth_profiles() {
+        let (_m, g) = super::setup(super::PAGES[0].to_vec()).unwrap();
+        let (_, work) = emulator_gpu::ChannelProcessor::default()
+            .prepare(&g, &super::wire(0, 142))
+            .unwrap();
+        let source = work.draws()[0].clone();
+        assert!(source.normalized_position_spirv().is_ok());
+        for w in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::from_bits(1)] {
+            let mut d = source.clone();
+            d.vertices[0][3] = w.to_bits();
+            assert!(d.normalized_position_spirv().is_err());
+        }
+        let mut d = source.clone();
+        d.vertices[0][0] = (-1.0f32 + 0.001).to_bits();
+        assert!(d.normalized_position_spirv().is_err());
+        let mut d = source.clone();
+        d.indices = Some(emulator_gpu::IndexBuffer {
+            element_bytes: 2,
+            base_vertex: 0,
+            values: vec![0, 1, 2, 3, 4, 5],
+        });
+        assert!(d.normalized_position_spirv().is_err());
+        let mut d = source.clone();
+        d.depth = Some(emulator_gpu::DepthState {
+            address: emulator_gpu::GpuVa(0x1000),
+            function: 7,
+            write: false,
+            initial: vec![1.0f32.to_bits(); 128],
+        });
+        assert!(d.normalized_position_spirv().is_err());
+    }
+    #[test]
+    fn candidate_preserves_inputs_fragment_and_oracles_for_every_texture_case() {
+        for i in 0..11 {
+            let base = super::replay(i);
+            let candidate = super::normalized_replay(i);
+            assert_eq!(
+                candidate.status,
+                0,
+                "{i}: {}",
+                String::from_utf8_lossy(&candidate.error)
+            );
+            assert_eq!(candidate.abi_version, base.abi_version);
+            assert_eq!(candidate.draw_count, base.draw_count);
+            assert_eq!(candidate.image_bytes, base.image_bytes);
+            assert_eq!(candidate.pixels, base.pixels);
+            assert_eq!(candidate.background.color, base.background.color);
+            for n in 0..candidate.draw_count as usize {
+                let a = &base.draws[n];
+                let b = &candidate.draws[n];
+                assert_eq!(a.draw.vertices, b.draw.vertices);
+                assert_eq!(a.draw.fragment_words, b.draw.fragment_words);
+                assert_eq!(a.draw.fragment, b.draw.fragment);
+                assert_eq!(a.draw.rect, b.draw.rect);
+                assert_eq!(
+                    (
+                        a.draw.width,
+                        a.draw.height,
+                        a.draw.pitch,
+                        a.draw.format,
+                        a.draw.mask
+                    ),
+                    (
+                        b.draw.width,
+                        b.draw.height,
+                        b.draw.pitch,
+                        b.draw.format,
+                        b.draw.mask
+                    )
+                );
+                assert_eq!(a.varyings, b.varyings);
+                assert_eq!(
+                    (a.texture_width, a.texture_height, a.texture_bytes),
+                    (b.texture_width, b.texture_height, b.texture_bytes)
+                );
+                assert_eq!(a.texture, b.texture);
+                assert_ne!(
+                    a.draw.vertex[..a.draw.vertex_words as usize],
+                    b.draw.vertex[..b.draw.vertex_words as usize]
+                );
+            }
+        }
+        for i in [11, 12, u32::MAX] {
+            let bad = super::normalized_replay(i);
+            assert_ne!(bad.status, 0);
+            assert_eq!(bad.draw_count, 0);
+            assert_eq!(bad.image_bytes, 0);
+        }
+    }
     #[test]
     fn guest_and_descriptor_texture_paths_match_independent_pixels() {
         assert_eq!(std::mem::size_of::<super::TexturedDraw>(), 33028);

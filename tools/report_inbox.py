@@ -102,6 +102,15 @@ def analyze(raw):
                'isPhysicalGpu': root['gpu'].get('isSoftwareRenderer') is False,
                'device': str(root['gpu'].get('deviceName', ''))[:160], 'uvCorrelation': None}
     by_name = {t.get('name'): t for t in root['gpu'].get('tests', [])}
+    candidate = [t for name,t in by_name.items() if isinstance(name,str) and (name.startswith('normalized-position-texture-') or name.startswith('normalized-inset-'))]
+    summary['projectionCandidate'] = None
+    if candidate:
+        summary['projectionCandidate'] = {
+            'baselineInsetPassed': by_name.get('guest-projection-texture-3', {}).get('passed'),
+            'candidateInsetPassed': by_name.get('normalized-position-texture-6', {}).get('passed'),
+            'passed': sum(t['passed'] for t in candidate), 'total': len(candidate),
+            'expectedChecks': 23, 'allCandidateChecksPassed': len(candidate) == 23 and all(t['passed'] for t in candidate),
+            'failed': [str(t.get('name', ''))[:160] for t in candidate if not t['passed']]}
     color = by_name.get('guest-projection-texture-3', {}).get('comparison', {}).get('color', {})
     uv = by_name.get('inset-uv-variable-w', {}).get('comparison', {}).get('interpolation', {})
     if color.get('mismatchedPixels') and color.get('width') == 16 and color.get('height') == 8:

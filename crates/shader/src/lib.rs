@@ -6,7 +6,7 @@ mod header;
 pub mod reference;
 mod spirv;
 pub use header::{decode_program, HEADER_BYTES};
-pub use spirv::emit;
+pub use spirv::{emit, emit_normalized_position};
 
 pub const MAX_CODE_BYTES: usize = 2048;
 pub const MAX_SPIRV_WORDS: usize = 2048;

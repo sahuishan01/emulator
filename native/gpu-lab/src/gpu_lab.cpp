@@ -1314,8 +1314,8 @@ std::array<uint8_t,512> inset_pixels(double du,double dv) {
     }
     return out;
 }
-TextureReplay inset_control(uint32_t mode) {
-    auto replay=emulator_texture_replay_v1(6);
+TextureReplay inset_control(uint32_t mode,bool normalized=false) {
+    auto replay=normalized?emulator_texture_normalized_replay_v1(6):emulator_texture_replay_v1(6);
     const auto baseline=inset_pixels(0,0);
     if(replay.status || !std::equal(baseline.begin(),baseline.end(),replay.pixels))throw std::runtime_error("Inset control source/oracle mismatch");
     constexpr double offset=1./64.;
@@ -1340,8 +1340,8 @@ TextureReplay inset_control(uint32_t mode) {
     const auto expected=inset_pixels(du,dv);std::copy(expected.begin(),expected.end(),replay.pixels);
     return replay;
 }
-bool inset_uv_capture(Context& context,bool unit_w) {
-    auto replay=inset_control(unit_w?0:9);
+bool inset_uv_capture(Context& context,bool unit_w,bool normalized=false) {
+    auto replay=inset_control(unit_w?0:9,normalized);
     std::vector<uint8_t> actual;
     if(!render_guest_commands(context,replay,nullptr,nullptr,nullptr,&actual))throw std::runtime_error("Incomplete float UV readback");
     // A diagnostic interpolation bound, not a tolerance on guest color checks.
@@ -1570,14 +1570,24 @@ GpuReport run_gpu_checks() {
             try {record(unit_w?"inset-uv-unit-w":"inset-uv-variable-w",[&]{return inset_uv_capture(context,unit_w);},"Diagnostic float attachment observes original translated vertex output before sampling; complete UV bit pairs, exact coverage, absolute UV bound 0.0001; original color tests remain strict");}
             catch(const std::exception& e){tests.push_back({unit_w?"inset-uv-unit-w":"inset-uv-variable-w",false,std::string("UV capture unavailable: ")+e.what()});}
         }
+        for(uint32_t i=0;i<11;++i)record("normalized-position-texture-"+std::to_string(i),[&]{return render_guest_commands(context,emulator_texture_normalized_replay_v1(i));},"Candidate post-guest vertex XYZ/W,W=1 lowering; original guest inputs, fragment shader, texture and strict independent pixel oracle unchanged; unclipped screen-linear profile only");
+        for(uint32_t i=0;i<10;++i){
+            const std::array<const char*,10> names{{"unit-w","uniform-w-two","reverse-winding","u-minus","u-plus","v-minus","v-plus","uv-minus","uv-plus","repeat-original"}};
+            record(std::string("normalized-inset-control-")+names[i],[&]{return render_guest_commands(context,inset_control(i,true));},"Candidate vertex-position lowering with strict independent color oracle; no UV bias or comparison relaxation");
+        }
+        for(bool unit_w:{false,true}){
+            const auto name=unit_w?"normalized-inset-uv-unit-w":"normalized-inset-uv-variable-w";
+            try {record(name,[&]{return inset_uv_capture(context,unit_w,true);},"Candidate projection path UV readback before unchanged sampling; same coverage and diagnostic 0.0001 UV bound; color acceptance remains byte-exact");}
+            catch(const std::exception& e){tests.push_back({name,false,std::string("UV capture unavailable: ")+e.what()});}
+        }
     } catch (const std::exception& failure) { error = failure.what(); }
     // Device queries must finish before the instance and physical-device handle are destroyed.
     std::ostringstream capabilities;
     append_capabilities(capabilities, context);
     context.shutdown();
-    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 83 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
+    const bool passed = error.empty() && context.validation_errors == 0 && tests.size() == 106 && std::all_of(tests.begin(), tests.end(), [](const Test& test) { return test.passed; });
     std::ostringstream json;
-    json << "{\"schemaVersion\":1,\"workloadVersion\":16,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
+    json << "{\"schemaVersion\":1,\"workloadVersion\":17,\"scope\":\"host-vulkan-and-owned-guest-draw-replay\",\"deviceName\":" << quoted(context.properties.deviceName)
          << ",\"validationEnabled\":" << (context.validation_enabled ? "true" : "false") << ",\"validationErrors\":" << context.validation_errors.load()
          << ",\"vendorId\":" << context.properties.vendorID << ",\"deviceId\":" << context.properties.deviceID
          << ",\"driverVersionRaw\":" << context.properties.driverVersion << ",\"apiVersionRaw\":" << context.properties.apiVersion
@@ -1652,13 +1662,14 @@ std::string texture_scene_json(bool running,const std::string& error="") {
 std::string start_texture_scene(void* window,unsigned variant) {
     try {
         texture_scene.reset();texture_variant=variant;
-        if(variant>54)throw std::runtime_error("Unknown texture scene variant");
+        if(variant>65)throw std::runtime_error("Unknown texture scene variant");
         texture_scene=std::make_unique<LiveRenderer>();texture_scene->initialize(window);
         const auto render=[&](const auto& replay) {
             if(replay.status)throw std::runtime_error(std::string(replay.error,strnlen(replay.error,sizeof(replay.error))));
             if(texture_scene->render(replay))throw std::runtime_error(texture_scene->error);
         };
-        if(variant<3)render(emulator_texture_replay_v1(variant));else if(variant<6)render(emulator_indexed_replay_v1(variant-3));else if(variant<12)render(emulator_texture_storage_replay_v1(variant-6));else if(variant<23){
+        if(variant>=55)render(emulator_texture_normalized_replay_v1(variant-55));
+        else if(variant<3)render(emulator_texture_replay_v1(variant));else if(variant<6)render(emulator_indexed_replay_v1(variant-3));else if(variant<12)render(emulator_texture_storage_replay_v1(variant-6));else if(variant<23){
             const auto depth=emulator_depth_replay_v1(variant-12);
             if(depth.color.status)throw std::runtime_error(std::string(depth.color.error,strnlen(depth.color.error,sizeof(depth.color.error))));
             if(texture_scene->render(depth.color,&depth))throw std::runtime_error(texture_scene->error);

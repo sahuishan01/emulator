@@ -13,7 +13,63 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.27.4-dev private reports and automatic same-thread follow-up
+## Current implementation: 0.27.5-dev projection candidate after automatic report handoff
+
+The GitHub seed report automatically resumed THIS existing chat. Watch state
+records its queue entry consumed; do not reset/redeliver the same SHA. No new
+agent or daemon restart. Latest physical0.27.3 still246/252 and54/55. All four
+wrong inset colors agree with the nearest texels implied by captured actual UVs.
+VariableW probe60 differing pairs/max4.097819328e-7, unitW72/max3.814697266e-6
+but unitW colors pass. Small error alone does not prove driver nonconformance.
+
+Added an optional original shader lowering: run guest VS unchanged, emit final
+XYZ/W and host W1. Only for validated positiveW/unclipped/NoPerspective profile;
+Draw::normalized_position_spirv also requires float32-exact projectedXY and
+rejects indexed/depth profiles for this milestone. Guest inputs, guestW during
+execution, varying values, fragment code, sampler/texture and independent color
+oracles unchanged. Three OpFDiv/NoContraction outputs; default emit unchanged.
+Separate emulator_texture_normalized_replay_v1 export, same TextureReplay layout;
+all previous APIs preserved,22 total symbols. New path is a CANDIDATE, not default.
+No bias/tolerance/UV offset added to production sampling or original comparisons.
+
+App0.27.5/code35/schema4/workload32/native17,275checks/66patterns: unchanged169
+Rust-group checks plus106Vulkan. First83 native tests remain exactly unchanged.
+New23 cover11 candidate texture replays,10 matching inset controls and2 floatUV
+probes with same diagnostic1e-4 bound. Old visible0..54 unchanged;55..65 candidate
+texture indices0..10; candidate inset61. Overall failure remains if oldpath fails.
+One button tests all; automatic private upload workflow retained. Server analysis
+now reports original/candidate outcomes separately and rejects incomplete candidate
+coverage as all-passed. See docs/normalized-projection.md and validation document.
+
+270 workspaceRusttests plus1 targeted eligibility rejection pass (271 distinct),
+including independent generated-SPIR-V value execution for3 guest vertex programs
+and replay/ABI/input/oracle preservation across11 cases. All22 new modules pass
+spirv-val. Desktopllvmpipe106/106,validationenabled/zeroerrors; first83 records
+exactly match0.27.2. Four fresh host references match0.27 unmodified. Bothnative
+CTest checks pass.39AndroidJVM+14Python tests pass; pinned Android assembly/lint/
+signature/twoABIs/22exports/16KiB/strictmanifest/QA exclusion pass. An initial
+synthetic219-attachment all-failing report fits1MiB at1024898bytes (tight bound;
+retain full images/eight previews, recheck if expanding diagnostics).
+
+Final Android SwiftShader275/275 and66/66 pass;8448 displayed centers match
+independentformulas. One completed273299-byte JSON matches cache/publishedDownload
+exactly;cancel/share/no duplicate/signed34->35 library/cache/cold restore pass.
+Single-run skips rotation/backgroundrestart repeats, not claimed. Actualreport
+all218attachments failing fits1MiB at1021367bytes; initial219template fitsalso.
+Candidate inset/coldsummary images visually inspected. SystemUI startupWait from
+freshXML recorded; no targetfatal/ANR/finalcrashbuffer. AVD started98.57%idle,
+nice10/2cores/2048->2560MiB, inherited720x1280/density280 retained; stopped/
+awaited0,ADBempty. No syntheticcredential/testpackage. FinalAPK12199284bytes/SHA256
+9645d86f92ad2408781ccb7dc7db93329ce252e4362447456fc5d8b2dd9baf26.
+
+Next physical report must test all23 candidatechecks and11 candidatepatterns
+while preserving baseline failures. Do not promote candidate based solely on
+software renderers. If candidatepasses, consider bounded host backend selection;
+ifnot, use newcomparison/UV capture to narrow it. Commercial Switch games remain
+unsupported. Await uploaded phone evidence at completion; no polling loop or
+repeated request for chat attachment. APK installation remains user-driven.
+
+## Previous implementation: 0.27.4-dev private reports and automatic same-thread follow-up
 
 User asked to stop uploading JSON into chat manually. Settings > GitHub reports
 now offers opt-in automatic completed-report upload, manual latest JSON, actual

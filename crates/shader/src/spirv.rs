@@ -34,6 +34,20 @@ fn instruction(out: &mut Vec<u32>, op: u32, args: &[u32]) {
 /// Program is constructed only by checked decoding. All host output is owned;
 /// even a budget failure returns no partial module to the caller.
 pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
+    emit_with_projection(program, false)
+}
+
+/// Optional host lowering for an already validated, unclipped positive-W draw
+/// whose fragment inputs are exclusively screen-linear and never read FragCoord.W.
+/// Guest invocation/IR/varyings remain unchanged. This is not smooth interpolation.
+pub fn emit_normalized_position(program: &Program) -> Result<Vec<u32>, Error> {
+    if program.stage != Stage::Vertex {
+        return Err(Error::Interface { offset: 0 });
+    }
+    emit_with_projection(program, true)
+}
+
+fn emit_with_projection(program: &Program, normalize: bool) -> Result<Vec<u32>, Error> {
     let mut b = Builder {
         next: 1,
         declarations: vec![],
@@ -139,7 +153,17 @@ pub fn emit(program: &Program) -> Result<Vec<u32>, Error> {
         debug_assert!(matches!(value.ty, Type::Bits32 | Type::F32));
         ids.push(id);
     }
-    let outputs = program.outputs.map(|i| b.result(124, float, &[ids[i]]));
+    let mut outputs = program.outputs.map(|i| b.result(124, float, &[ids[i]]));
+    if normalize {
+        let w = outputs[3];
+        for component in &mut outputs[..3] {
+            *component = b.result(136, float, &[*component, w]); // OpFDiv after all guest operations
+            instruction(&mut b.annotations, 71, &[*component, 42]); // NoContraction
+        }
+        let one = b.id();
+        instruction(&mut b.declarations, 43, &[float, one, 1.0f32.to_bits()]);
+        outputs[3] = one;
+    }
     let vector = b.result(80, vec4, &outputs);
     instruction(&mut b.body, 62, &[output, vector]);
     if let (Some(out), Some(values)) = (varying, program.varying) {

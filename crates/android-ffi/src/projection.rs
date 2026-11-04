@@ -170,7 +170,7 @@ fn verify(i: usize, m: &AddressSpace, w: PreparedSubmission) -> Result<[u8; 512]
     }
     Ok(result)
 }
-pub(crate) fn fill_texture(i: u32, out: &mut TextureReplay) -> Result<(), String> {
+pub(crate) fn fill_texture(i: u32, out: &mut TextureReplay, normalize: bool) -> Result<(), String> {
     let i = i as usize;
     if i >= 8 {
         return Err("Unknown projection texture case".into());
@@ -179,6 +179,9 @@ pub(crate) fn fill_texture(i: u32, out: &mut TextureReplay) -> Result<(), String
     out.background = w.color_clears()[0].into();
     for (d, s) in out.draws.iter_mut().zip(w.draws()) {
         *d = textures::attributes(s)?;
+        if normalize {
+            textures::normalized_vertex(s, &mut d.draw)?;
+        }
     }
     out.pixels = verify(i, &m, w)?;
     out.status = 0;

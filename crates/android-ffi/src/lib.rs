@@ -416,6 +416,12 @@ pub extern "C" fn emulator_texture_replay_v1(index: u32) -> TextureReplay {
     textures::replay(index)
 }
 
+/// Separate candidate backend; the original replay and all value layouts stay intact.
+#[no_mangle]
+pub extern "C" fn emulator_texture_normalized_replay_v1(index: u32) -> TextureReplay {
+    textures::normalized_replay(index)
+}
+
 #[no_mangle]
 pub extern "C" fn emulator_indexed_replay_v1(index: u32) -> IndexedReplay {
     indexed::replay(index)

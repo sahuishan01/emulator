@@ -75,6 +75,19 @@ class Control:
 
 
 class TrackingTests(unittest.TestCase):
+    def test_candidate_results_do_not_hide_original_failures(self):
+        root=json.loads(report())
+        names=['normalized-position-texture-'+str(i) for i in range(11)]
+        names+=['normalized-inset-control-'+str(i) for i in range(10)]
+        names+=['normalized-inset-uv-variable-w','normalized-inset-uv-unit-w']
+        root['gpu']['tests']=[{'name':'guest-projection-texture-3','passed':False}]+[{'name':n,'passed':True} for n in names]
+        value=inbox.analyze(json.dumps(root).encode())
+        self.assertFalse(value['projectionCandidate']['baselineInsetPassed'])
+        self.assertTrue(value['projectionCandidate']['candidateInsetPassed'])
+        self.assertTrue(value['projectionCandidate']['allCandidateChecksPassed'])
+        self.assertEqual(value['groups']['gpu']['failed'],['guest-projection-texture-3'])
+        root['gpu']['tests'].pop()
+        self.assertFalse(inbox.analyze(json.dumps(root).encode())['projectionCandidate']['allCandidateChecksPassed'])
     def test_analyze_exact_identity_and_failed_evidence(self):
         raw = report()
         value = inbox.analyze(raw)
