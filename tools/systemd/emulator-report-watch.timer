@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for new private emulator reports every two minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/2:00
+RandomizedDelaySec=10
+AccuracySec=5
+Persistent=true
+Unit=emulator-report-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -1,9 +1,11 @@
-# Private in-app updates (0.27.3)
+# Private in-app updates (0.27.4)
 
 Open **Updates** in the library, or **Settings → App updates**. **Check for
 updates** and **Test GitHub access** are always shown; either offers connection
 if no token is saved. Use **Connect GitHub** to enter access. Create a fine-grained token restricted to **sahuishan01/emulator** with
-**Contents: read-only**, then enter it on the phone. The source repository and
+**Contents: read-only**, then enter it on the phone.
+For opt-in [automatic report uploads](github-reports.md), also grant
+**Issues: read and write**; Deployments access is unnecessary. The source repository and
 release downloads stay private. No shared GitHub credential is bundled into the
 APK, copied from the build host, or sent in diagnostic JSON.
 
@@ -43,7 +45,7 @@ The installer still performs Android's package verification.
 
 The new manifest permissions are INTERNET, ACCESS_NETWORK_STATE,
 RECEIVE_BOOT_COMPLETED (persisted jobs) and REQUEST_INSTALL_PACKAGES. The only
-exported activity remains the library. The updater's JobService requires the
+exported activity remains the library. The updater and report-upload JobServices require the
 system BIND_JOB_SERVICE permission. No test endpoint override, QA APK or test
 credential ships in the application.
 

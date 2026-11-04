@@ -15,6 +15,7 @@ class SettingsActivity : Activity() {
         root.addView(ui.text("Settings", 30f, bold = true)); ui.space(root, 12)
         root.addView(ui.button("App updates", true) { startActivity(Intent(this, UpdatesActivity::class.java)) })
         root.addView(ui.text("Check for updates and test GitHub access.", 14f, ui.muted)); ui.space(root, 24)
+        root.addView(ui.button("GitHub reports") { startActivity(Intent(this, ReportsActivity::class.java)) }); ui.space(root, 16)
         root.addView(ui.label("PLAYER")); ui.space(root, 12)
         fun toggle(label: String, key: String, default: Boolean) {
             root.addView(Switch(this).apply { text = label; textSize = 16f; setTextColor(ui.ink); minHeight = ui.dp(56)

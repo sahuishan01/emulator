@@ -1,0 +1,19 @@
+[Unit]
+Description=Collect private emulator reports and resume the existing Codex thread
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=%h/projects/emulator
+ExecStart=/usr/bin/python3 %h/projects/emulator/tools/report_watch.py --config %h/.config/emulator-reports/watch.json
+UMask=0077
+Nice=10
+CPUQuota=25%
+MemoryMax=256M
+TasksMax=24
+TimeoutStartSec=180
+NoNewPrivileges=true
+ProtectSystem=full
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

@@ -13,7 +13,65 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
-## Current implementation: 0.27.3-dev visible manual updates/access status
+## Current implementation: 0.27.4-dev private reports and automatic same-thread follow-up
+
+User asked to stop uploading JSON into chat manually. Settings > GitHub reports
+now offers opt-in automatic completed-report upload, manual latest JSON, actual
+write-access test, pending/last-upload/last-verified history and cancellation.
+Uses the existing Keystore token. Phone needs repository-only Issues: read and
+write plus existing Contents: read-only; Deployments unnecessary. Off by default,
+verified before enable. Local MediaStore/export/cache published first; networking
+failure never retracts Downloads. Up to32 one-MiB reports, atomic queue/issue ID,
+64 recent receipts, exact remote byte/SHA readback, restart recovery, rate-limit
+waits, permission blocking, constraints/persisted jobs, cancellation/opt-out and
+disconnect. Raw JSON is an issue artifact, outside source Git history. API2026-03-10.
+See docs/github-reports.md and docs/validation/android-github-reports.md.
+
+Private GitHub inbox1 and canonical supplied report issue2/artifact1 already
+published/read back exact. Latest physical0.27.3 report226569bytes/SHA256
+86b35f40b56e027de637dfe2856e53d484761b323b31529950d7100089557255,
+246/252 checks,54/55 patterns. Four Rust groups pass; six related native failures.
+All four wrong inset color pixels match predictions from captured actual UVs;
+exact reference boundaries differ by small float errors. This evidence does not
+prove a driver violation or justify a hidden UV bias/tolerance relaxation. Next
+rendering investigation should distinguish permitted interpolation/sampling
+precision and guest/reference semantics, preserving strict original failures.
+Raw archived reports/physical-g720/v0.27.3-dev-report.json and ignored
+reports/github-inbox/<sha>.json plus .analysis.json.
+
+VPS emulator-report-watch.timer installed, enabled/active, every2min. Config
+~/.config/emulator-reports/watch.json; state~/.local/state/emulator-report-watch/state.json.
+Uses authenticated gh, owner/private/schema/SHA guards, bounded collection and
+analysis, no source commits of reports. Dispatches into SAME existing Codex
+thread 01a18b25-e620-7e90-aa02-b9d86625351e via private Unix socket only when idle
+and respecting queued user work. No separate agent/model process, daemon restart,
+new listener or changed model/effort/approval settings. Persisted queue identity,
+delivery dedup, consumed/deleted queue entries not re-added. Seed issue2 is pending
+until current turn finishes, then this same chat should resume the rendering
+investigation. Do not reset delivery state and repeatedly process old evidence.
+Stop with systemctl disable --now emulator-report-watch.timer. Local control API
+is experimental; retain bounded CPU25%/RAM256MiB/tasks24/180sec. Heavy follow-up
+work remains CPU-idle>=80 gated. If awaiting phone evidence, document/end turn;
+new uploaded SHA triggers a new turn. Cannot operate phone or bypass installer.
+
+App0.27.4/code34, unchangedschema4/workload31/native16/252checks/55patterns.
+Both native libraries byte-identicalto0.27.3. Original engine/Mali issue still
+open; no commercial Switch game supported. 39JVM+13Python+16Android-report checks
+pass; build/lint/signature/ABIs/21exports/16KiB/strictmanifest/QA exclusion pass.
+14 updater instrumented UI/manager checks and6 final adb report flows pass.
+Seven adb updater flows include signed33->34 and immutable library/cache. Final
+history/default/landscape screenshots inspected. A later harness overlap killed
+one updater instrumentation run; retained raw result/empty crash buffer, stopped
+overlap and reran serially with all14+6 passing. Fake credentials/backups removed,
+test package uninstalled, final crash buffer empty/no targetfatal/ANR; owned AVD
+stopped/awaited0 and ADBempty. FinalAPK12497593bytes/SHA256
+11195a81b01bc5077f0df556076cfb6e1f7425e29c24d4fc01b440d9f0f6ad23.
+Private live raw JSON and near1MiB boundary artifact readback pass. Live same-thread
+read/queue add/list/delete probe passed and removed before execution; active-thread
+deferral and duplicate polling verified. Pending real idle execution follows the
+end of this turn; do not claim a separate already-run real model follow-up.
+
+## Previous implementation: 0.27.3-dev visible manual updates/access status
 
 User reported no manual check or way to confirm token access. Found Check hidden
 without vault file and feedback above a distant token form/notes. Library now

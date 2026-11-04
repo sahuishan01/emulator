@@ -24,13 +24,15 @@ def verify_main_app(apk, aapt):
         found[kind].append(body)
     permissions = {re.search(r'android:name[^\n]*="([^"]+)"', block).group(1) for block in found['uses-permission']}
     assert permissions == {'android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE', 'android.permission.RECEIVE_BOOT_COMPLETED', 'android.permission.REQUEST_INSTALL_PACKAGES'}, permissions
-    assert len(found['provider']) == len(found['service']) == 1
-    provider, service = found['provider'][0], found['service'][0]
+    assert len(found['provider']) == 1 and len(found['service']) == 2
+    provider = found['provider'][0]
     assert 'UpdateApkProvider' in provider and 'com.algosculptor.emulator.gpulab.updates' in provider
     assert re.search(r'android:exported[^\n]*0x0\s*$', provider, re.M)
     assert re.search(r'android:grantUriPermissions[^\n]*0xffffffff\s*$', provider, re.M)
-    assert 'UpdateJobService' in service and 'android.permission.BIND_JOB_SERVICE' in service
-    assert re.search(r'android:exported[^\n]*0xffffffff\s*$', service, re.M)
+    for service_name in ('UpdateJobService', 'ReportUploadJobService'):
+        services = [s for s in found['service'] if service_name in s]
+        assert len(services) == 1 and 'android.permission.BIND_JOB_SERVICE' in services[0]
+        assert re.search(r'android:exported[^\n]*0xffffffff\s*$', services[0], re.M)
     assert re.search(r'android:allowBackup[^\n]*0x0\s*$', manifest, re.M)
     assert re.search(r'android:usesCleartextTraffic[^\n]*0x0\s*$', manifest, re.M)
     activities = {}
@@ -38,7 +40,7 @@ def verify_main_app(apk, aapt):
         name = re.search(r'android:name[^\n]*="([^"]+)"', block).group(1)
         exported = re.search(r'android:exported[^\n]*\(type 0x12\)(0x[0-9a-f]+)', block).group(1)
         activities[name.rsplit('.', 1)[-1]] = exported != '0x0'
-    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False, 'TextureActivity': False, 'BatchActivity': False, 'UpdatesActivity': False}, activities
+    assert activities == {'HomeActivity': True, 'MainActivity': False, 'DemoActivity': False, 'ProgramActivity': False, 'SettingsActivity': False, 'TextureActivity': False, 'BatchActivity': False, 'UpdatesActivity': False, 'ReportsActivity': False}, activities
     with zipfile.ZipFile(apk) as archive:
         assert not any(n.startswith('assets/') and n.endswith(('.nro', '.apk')) for n in archive.namelist()), "QA documents leaked into main APK"
     return dict(label='Emulator', launcher='HomeActivity', exportedActivities=['HomeActivity'], permissions=sorted(permissions), updateProviderPrivate=True, updateServicePermission='android.permission.BIND_JOB_SERVICE', qaDocumentsExcluded=True)

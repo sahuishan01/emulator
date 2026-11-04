@@ -29,6 +29,11 @@ object ReportExporter {
             ReportStore.write(context, "last-report.json", text)
             resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: error("Could not write the report")
             check(resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null) == 1) { "Could not publish the report" }
+            // Publication is complete before optional networking is queued. A
+            // report-upload setup failure must never retract a local export.
+            if (context.getSharedPreferences("report-uploads", Context.MODE_PRIVATE).getBoolean("automatic", false)) {
+                try { (context.applicationContext as EmulatorApplication).reportUploads.enqueueAutomatic(bytes) } catch (_: Exception) { }
+            }
             return Saved(uri, filename)
         } catch (error: Exception) {
             try { resolver.delete(uri, null, null) } catch (_: Exception) { }

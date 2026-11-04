@@ -74,6 +74,7 @@ class BatchActivity : Activity(), TextureView.SurfaceTextureListener {
         share = ui.button("Share JSON", true) { shareSaved() }.apply { isEnabled = false }
         buttons.addView(action, LinearLayout.LayoutParams(0, -2, 1f)); buttons.addView(share, LinearLayout.LayoutParams(0, -2, 1f)); root.addView(buttons)
         root.addView(ui.button("Back to library") { if (!publishing) finish() }); ui.install(root)
+        root.addView(ui.button("GitHub reports") { if (!publishing) startActivity(Intent(this, ReportsActivity::class.java)) })
         restoreSaved()
         if (userCancelled && !completed) { status.text = "Test cancelled"; action.text = "Run again" }
     }

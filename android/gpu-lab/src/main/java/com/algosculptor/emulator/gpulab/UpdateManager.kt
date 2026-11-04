@@ -77,7 +77,7 @@ internal class UpdateManager(private val app: Context, private val network: Upda
                 accessVerified()
                 prefs.edit().putLong("lastAttempt", System.currentTimeMillis()).apply()
                 publish(if (release == null) UpdateStatus(UpdatePhase.IDLE, "GitHub access verified. You're up to date.") else UpdateStatus(UpdatePhase.AVAILABLE, "GitHub access verified. Version ${release.version} is available.", release))
-                main.post { UpdateSchedule.sync(app) }
+                main.post { UpdateSchedule.sync(app); ReportUploadSchedule.sync(app) }
             } catch (e: Exception) {
                 if (!replacing) accessFailed(e)
                 val message = if (e is CancellationException) "Access test cancelled." else if (e is IllegalArgumentException) "Enter a valid GitHub access token." else errorMessage(e)
@@ -91,7 +91,10 @@ internal class UpdateManager(private val app: Context, private val network: Upda
         active.get()?.cancel()
         worker.execute {
             vault.clear(); clearReady(); partial.delete(); prefs.edit().remove("lastAttempt").remove("accessResult").remove("accessVerifiedAt").remove("lastSuccessfulCheck").apply()
-            publish(UpdateStatus(UpdatePhase.DISCONNECTED, "GitHub disconnected. Downloaded updates were removed.")); main.post { UpdateSchedule.sync(app) }
+            val reportPrefs = app.getSharedPreferences("report-uploads", Context.MODE_PRIVATE)
+            if (reportPrefs.getBoolean("automatic", false) || reportPrefs.getLong("accessVerifiedAt", 0) > 0)
+                (app.applicationContext as EmulatorApplication).reportUploads.disconnected()
+            publish(UpdateStatus(UpdatePhase.DISCONNECTED, "GitHub disconnected. Downloaded updates were removed.")); main.post { UpdateSchedule.sync(app); ReportUploadSchedule.sync(app) }
         }
     }
     fun automatic(finished: () -> Unit = {}): Boolean {
