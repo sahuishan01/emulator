@@ -16,7 +16,12 @@ def verify_main_app(apk, aapt):
     badging = subprocess.run([str(aapt), "dump", "badging", str(apk)], check=True, capture_output=True, text=True).stdout
     assert "application-label:'Emulator'" in badging
     assert "launchable-activity: name='com.algosculptor.emulator.gpulab.HomeActivity'" in badging
-    assert not re.search(r"E: receiver\b", manifest), "Unexpected receiver"
+    receivers = re.split(r'\s+E: receiver \(line=\d+\)', manifest)[1:]
+    assert len(receivers) == 1
+    receiver = receivers[0].split('\n        E: activity')[0]
+    assert 'UpdateDownloadReceiver' in receiver
+    assert re.search(r'android:exported[^\n]*0x0\s*$', receiver,re.M)
+    assert 'android.intent.action.DOWNLOAD_COMPLETE' in receiver and 'android.intent.action.DOWNLOAD_NOTIFICATION_CLICKED' in receiver
     components = re.split(r'\s+E: (provider|service|uses-permission) \(line=\d+\)', manifest)
     found = {'provider': [], 'service': [], 'uses-permission': []}
     for index in range(1, len(components), 2):

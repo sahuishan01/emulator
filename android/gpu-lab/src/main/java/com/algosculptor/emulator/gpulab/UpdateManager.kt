@@ -22,7 +22,7 @@ internal data class UpdateAccessStatus(val saved: Boolean, val result: UpdateAcc
 internal data class UpdateStatus(val phase: UpdatePhase, val message: String, val release: UpdateRelease? = null, val percent: Int = 0) {
     val busy: Boolean get() = phase == UpdatePhase.CHECKING || phase == UpdatePhase.DOWNLOADING
 }
-internal class UpdateManager(private val app: Context, private val network: UpdateNetwork = GithubUpdateNetwork(), private val vault: UpdateVault = UpdateVault(app)) {
+internal class UpdateManager(private val app: Context, private val network: UpdateNetwork = GithubUpdateNetwork(), private val vault: UpdateVault = UpdateVault(app), private val downloads: UpdateDownloads = AndroidUpdateDownloads(app)) {
     companion object { const val INTERVAL = 6L * 60 * 60 * 1000 }
     val prefs = app.getSharedPreferences("updates", Context.MODE_PRIVATE)
     private val worker = Executors.newSingleThreadExecutor()
@@ -34,6 +34,38 @@ internal class UpdateManager(private val app: Context, private val network: Upda
     private val ready = File(directory, "ready.apk")
     private val partial = File(directory, "download.part")
     private val metadata = AtomicFile(File(directory, "ready.json"))
+    private val pendingFile = AtomicFile(File(directory, "pending.json"))
+    private val generation = java.util.concurrent.atomic.AtomicLong()
+    private data class Pending(val release: UpdateRelease, val nonce: String, val id: Long, val wifiOnly: Boolean)
+    private val polling = java.util.concurrent.atomic.AtomicBoolean()
+    private fun readPending(): Pending? = try {
+        pendingFile.openRead().use { input ->
+            kotlin.check(input.channel.size() <= 12_000)
+            val x = org.json.JSONObject(input.readBytes().toString(Charsets.UTF_8))
+            val nonce=x.getString("nonce"); require(nonce.matches(Regex("[a-f0-9-]{36}")))
+            val id=x.getLong("id"); require(id>=0)
+            Pending(UpdateRelease.restore(x.getJSONObject("release").toString()),nonce,id,x.getBoolean("wifiOnly"))
+        }
+    } catch (_: java.io.FileNotFoundException) { null }
+    private fun savePending(value: Pending) {
+        val data=org.json.JSONObject().put("release",org.json.JSONObject(value.release.json())).put("nonce",value.nonce).put("id",value.id).put("wifiOnly",value.wifiOnly)
+        val out=pendingFile.startWrite()
+        try { out.write(data.toString().toByteArray()); pendingFile.finishWrite(out) } catch(e:Exception){pendingFile.failWrite(out);throw e}
+        prefs.edit().putBoolean("downloadPending",true).commit()
+        main.post { UpdateSchedule.recover(app) }
+    }
+    private fun clearPending() {
+        val saved=try { readPending() } catch (_:Exception) { null }
+        // Recover the enqueue -> journal crash gap without storing signed URLs.
+        val id=saved?.let { if(it.id>0)it.id else downloads.find(it.nonce) }
+        if(id!=null)try { downloads.remove(id) } catch (_:Exception) { }
+        pendingFile.delete(); prefs.edit().putBoolean("downloadPending",false).commit()
+        main.post { UpdateSchedule.recover(app) }
+    }
+    private fun poll() {
+        if (!polling.compareAndSet(false,true)) return
+        main.postDelayed({ polling.set(false); if (observers.isNotEmpty() && prefs.getBoolean("downloadPending",false)) reconcileDownload() },1000)
+    }
     init { worker.execute { restore() } }
     val connected: Boolean get() = vault.exists()
     val access: UpdateAccessStatus get() {
@@ -51,7 +83,7 @@ internal class UpdateManager(private val app: Context, private val network: Upda
         if (error !is CancellationException) prefs.edit().putString("accessResult", if (error is UpdateFailure && error.accessDenied) UpdateAccessResult.DENIED.name else UpdateAccessResult.ERROR.name).apply()
     }
     val installedVersion: String get() = app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: ""
-    fun observe(observer: (UpdateStatus) -> Unit) { observers.add(observer); observer(status) }
+    fun observe(observer: (UpdateStatus) -> Unit) { observers.add(observer); observer(status); if(prefs.getBoolean("downloadPending",false)) reconcileDownload() }
     fun unobserve(observer: (UpdateStatus) -> Unit) { observers.remove(observer) }
     private fun publish(value: UpdateStatus) { main.post { status = value; observers.toList().forEach { it(value) } } }
     private fun errorMessage(e: Exception): String = if (e is UpdateFailure) e.message ?: "Update failed." else "Update could not finish. Check your connection and try again."
@@ -61,8 +93,13 @@ internal class UpdateManager(private val app: Context, private val network: Upda
         partial.delete()
         val release = readMetadata()
         if (release != null && UpdatePolicy.version(release.version)!! > (UpdatePolicy.version(installedVersion) ?: return)) {
-            try { verifyApk(ready, release); publish(UpdateStatus(UpdatePhase.READY, "Version ${release.version} is ready to install.", release)); return } catch (_: Exception) { clearReady() }
+            try { verifyApk(ready, release); clearPending(); publish(UpdateStatus(UpdatePhase.READY, "Version ${release.version} is ready to install.", release)); return } catch (_: Exception) { clearReady() }
         } else clearReady()
+        if (pendingFile.baseFile.exists() || prefs.getBoolean("downloadPending",false)) {
+            try { if(readPending()!=null) { prefs.edit().putBoolean("downloadPending",true).commit(); reconcileNow(); return } }
+            catch (_:Exception) { clearPending(); publish(UpdateStatus(UpdatePhase.ERROR,"Download state could not be restored. Retry the update.")); return }
+            clearPending()
+        }
         publish(if (connected) UpdateStatus(UpdatePhase.IDLE, "Ready to check for updates.") else UpdateStatus(UpdatePhase.DISCONNECTED, "Connect GitHub to receive private updates."))
     }
     fun connect(token: String) {
@@ -88,9 +125,9 @@ internal class UpdateManager(private val app: Context, private val network: Upda
         }
     }
     fun disconnect() {
-        active.get()?.cancel()
+        generation.incrementAndGet(); active.get()?.cancel()
         worker.execute {
-            vault.clear(); clearReady(); partial.delete(); prefs.edit().remove("lastAttempt").remove("accessResult").remove("accessVerifiedAt").remove("lastSuccessfulCheck").apply()
+            clearPending(); vault.clear(); clearReady(); partial.delete(); prefs.edit().remove("lastAttempt").remove("accessResult").remove("accessVerifiedAt").remove("lastSuccessfulCheck").apply()
             val reportPrefs = app.getSharedPreferences("report-uploads", Context.MODE_PRIVATE)
             if (reportPrefs.getBoolean("automatic", false) || reportPrefs.getLong("accessVerifiedAt", 0) > 0)
                 (app.applicationContext as EmulatorApplication).reportUploads.disconnected()
@@ -105,6 +142,7 @@ internal class UpdateManager(private val app: Context, private val network: Upda
     }
     fun testAccess(): Boolean = checkForUpdates(accessOnly = true)
     fun checkForUpdates(background: Boolean = false, finished: () -> Unit = {}, accessOnly: Boolean = false): Boolean {
+        if(prefs.getBoolean("downloadPending",false)) { reconcileDownload(); return false }
         if (!connected) { publish(UpdateStatus(UpdatePhase.DISCONNECTED, "Connect GitHub to receive private updates.")); return false }
         val transfer = UpdateTransfer(background); if (!active.compareAndSet(null, transfer)) return false
         prefs.edit().putLong("lastAttempt", System.currentTimeMillis()).apply(); publish(UpdateStatus(UpdatePhase.CHECKING, if (accessOnly) "Testing GitHub access…" else "Checking for updates…"))
@@ -119,7 +157,7 @@ internal class UpdateManager(private val app: Context, private val network: Upda
                     verifyApk(ready, release); publish(UpdateStatus(UpdatePhase.READY, "Version ${release.version} is ready to install.", release, 100))
                 } else {
                     publish(UpdateStatus(UpdatePhase.AVAILABLE, prefix + "Version ${release.version} is available.", release))
-                    if (!accessOnly && prefs.getBoolean("downloadWifi", true) && !(app.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered)) downloadNow(release, token, transfer)
+                    if (!accessOnly && prefs.getBoolean("downloadWifi", true) && !(app.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered)) queueDownload(release, token, transfer, wifiOnly = true)
                 }
             } catch (e: Exception) {
                 if (!releasesVerified) accessFailed(e)
@@ -131,30 +169,104 @@ internal class UpdateManager(private val app: Context, private val network: Upda
         }; return true
     }
     fun download() {
+        if(prefs.getBoolean("downloadPending",false)) { reconcileDownload(); return }
         val release = status.release ?: return; if (!connected) return
         val transfer = UpdateTransfer(); if (!active.compareAndSet(null, transfer)) return
-        publish(UpdateStatus(UpdatePhase.DOWNLOADING, "Downloading ${release.version}…", release))
+        val epoch=generation.get()
+        publish(UpdateStatus(UpdatePhase.DOWNLOADING,"Preparing GitHub download link…",release,-1))
         worker.execute {
-            try { downloadNow(release, vault.read(), transfer) }
-            catch (e: Exception) { publish(if (transfer.cancelled.get()) UpdateStatus(UpdatePhase.AVAILABLE, "Download cancelled. You can retry.", release) else UpdateStatus(UpdatePhase.ERROR, errorMessage(e), release)) }
-            finally { partial.delete(); active.compareAndSet(transfer, null) }
+            try { transfer.check(); if(epoch!=generation.get())throw CancellationException(); queueDownload(release,vault.read(),transfer,false) }
+            catch(e:Exception) {
+                if(transfer.cancelled.get() || epoch!=generation.get()) { clearPending(); publish(UpdateStatus(UpdatePhase.AVAILABLE,"Download cancelled. You can retry.",release)) }
+                else { clearPending(); publish(UpdateStatus(UpdatePhase.ERROR,errorMessage(e),release)) }
+            }
+            finally { active.compareAndSet(transfer,null) }
         }
     }
-    private fun downloadNow(release: UpdateRelease, token: String, transfer: UpdateTransfer) {
-        publish(UpdateStatus(UpdatePhase.DOWNLOADING, "Downloading ${release.version}…", release)); var last = -1
-        FileOutputStream(partial).use { output -> network.asset(release, token, transfer) { input ->
-            UpdatePolicy.copyVerified(input, output, release.size, release.sha, { transfer.check(); transfer.cancelled.get() }) { bytes ->
-                val p = (bytes * 100 / release.size).toInt(); if (p != last) { last = p; publish(UpdateStatus(UpdatePhase.DOWNLOADING, "Downloading ${release.version}… $p%", release, p)) }
-            }
-        }; output.fd.sync() }
-        transfer.check(); verifyApk(partial, release); transfer.check()
-        if (!partial.renameTo(ready)) throw UpdateFailure("Could not save the verified update.")
-        val output = metadata.startWrite()
-        try { output.write(release.json().toByteArray(Charsets.UTF_8)); metadata.finishWrite(output) }
-        catch (e: Exception) { metadata.failWrite(output); clearReady(); throw e }
-        publish(UpdateStatus(UpdatePhase.READY, "Version ${release.version} is ready to install.", release, 100))
+    private fun queueDownload(release: UpdateRelease, token: String, transfer: UpdateTransfer, wifiOnly: Boolean) {
+        transfer.check()
+        val pending=Pending(release,java.util.UUID.randomUUID().toString(),0,wifiOnly)
+        savePending(pending)
+        prepare(pending,token,transfer)
     }
-    fun cancel(backgroundOnly: Boolean = false) { active.get()?.let { if (!backgroundOnly || it.background) it.cancel() } }
+    private fun prepare(pending: Pending, token: String, transfer: UpdateTransfer) {
+        publish(UpdateStatus(UpdatePhase.DOWNLOADING,"Preparing GitHub download link…",pending.release,-1))
+        var id=downloads.find(pending.nonce)
+        if(id==null) {
+            val url=network.downloadUrl(pending.release,token,transfer)
+            UpdatePolicy.checkUrl(url,false); transfer.check()
+            id=downloads.enqueue(url,pending.release,pending.nonce,pending.wifiOnly)
+            if(id<=0)throw UpdateFailure("Android could not queue the download. Retry.")
+        }
+        savePending(pending.copy(id=id))
+        transfer.check()
+        publish(UpdateStatus(UpdatePhase.DOWNLOADING,"Queued with Android. You can leave the app; downloading continues in the background.",pending.release,-1))
+        main.post { poll() }
+    }
+    fun reconcileDownload(finished: () -> Unit = {}) {
+        worker.execute {
+            try { reconcileNow() }
+            catch(e:Exception) { val r=try { readPending()?.release } catch (_:Exception) { null };clearPending();partial.delete();publish(UpdateStatus(UpdatePhase.ERROR,errorMessage(e),r)) }
+            finally { main.post { UpdateSchedule.recover(app);finished() } }
+        }
+    }
+    private fun reconcileNow() {
+        val pending=readPending() ?: return
+        if(pending.id==0L) {
+            if(!connected) { clearPending();publish(UpdateStatus(UpdatePhase.ERROR,"Reconnect GitHub to resume preparing this update.",pending.release));return }
+            val transfer=UpdateTransfer(true)
+            if(!active.compareAndSet(null,transfer))return
+            val epoch=generation.get()
+            try { prepare(pending,vault.read(),transfer) }
+            catch(e:Exception) {
+                if(transfer.cancelled.get() && epoch==generation.get())publish(UpdateStatus(UpdatePhase.DOWNLOADING,"Download preparation paused. Android will retry.",pending.release,-1))
+                else throw e
+            } finally { active.compareAndSet(transfer,null) }
+            return
+        }
+        val row=downloads.query(pending.id)
+        if(row==null) { clearPending();publish(UpdateStatus(UpdatePhase.AVAILABLE,"Download cancelled or removed. You can retry.",pending.release));return }
+        if(row.bytes>pending.release.size || row.total>0 && row.total!=pending.release.size)throw UpdateFailure("Download size changed. The file was discarded; retry the update.")
+        val p=if(row.bytes>0)(row.bytes*100/pending.release.size).coerceIn(0,100).toInt() else -1
+        when(row.state) {
+            android.app.DownloadManager.STATUS_SUCCESSFUL -> {
+                val epoch=generation.get()
+                publish(UpdateStatus(UpdatePhase.DOWNLOADING,"Verifying downloaded APK…",pending.release,-1))
+                downloads.open(pending.id).use { input -> FileOutputStream(partial).use { output ->
+                    UpdatePolicy.copyVerified(input,output,pending.release.size,pending.release.sha,{epoch!=generation.get()},{})
+                    output.fd.sync()
+                } }
+                if(epoch!=generation.get())throw CancellationException()
+                verifyApk(partial,pending.release)
+                if(epoch!=generation.get())throw CancellationException()
+                if(!partial.renameTo(ready))throw UpdateFailure("Could not save the verified update.")
+                val out=metadata.startWrite()
+                try { out.write(pending.release.json().toByteArray());metadata.finishWrite(out) }
+                catch(e:Exception) { metadata.failWrite(out);clearReady();throw e }
+                clearPending();publish(UpdateStatus(UpdatePhase.READY,"Version ${pending.release.version} is ready to install.",pending.release,100))
+            }
+            android.app.DownloadManager.STATUS_FAILED -> {
+                val message=when(row.reason) {
+                    400,401,403,404,410 -> "GitHub's download link expired or was refused. Retry to get a fresh link."
+                    android.app.DownloadManager.ERROR_INSUFFICIENT_SPACE -> "Not enough storage for the update. Free space and retry."
+                    else -> "Android could not finish the download. Retry on a working connection."
+                };throw UpdateFailure(message)
+            }
+            else -> {
+                val message=when {
+                    row.state==android.app.DownloadManager.STATUS_PAUSED -> if(row.reason==android.app.DownloadManager.PAUSED_QUEUED_FOR_WIFI)"Waiting for unmetered Wi-Fi. Android will continue automatically." else "Waiting for the network. Android will continue automatically."
+                    row.state==android.app.DownloadManager.STATUS_PENDING -> "Queued with Android. Downloading continues when you leave the app."
+                    else -> "Downloading ${pending.release.version}… ${row.bytes/1024} KB of ${pending.release.size/1024} KB" + if(p>=0)" · $p%" else " · waiting for data"
+                }
+                publish(UpdateStatus(UpdatePhase.DOWNLOADING,message,pending.release,p));main.post { poll() }
+            }
+        }
+    }
+    fun cancel(backgroundOnly: Boolean = false) {
+        if(backgroundOnly) { active.get()?.let { if(it.background)it.cancel() }; return }
+        generation.incrementAndGet();active.get()?.cancel()
+        worker.execute { val release=try { readPending()?.release ?: status.release }catch (_:Exception){status.release};clearPending();partial.delete();publish(UpdateStatus(if(release!=null)UpdatePhase.AVAILABLE else UpdatePhase.IDLE,"Download cancelled. You can retry.",release)) }
+    }
     fun verifiedForInstall(complete: (File?, UpdateRelease?, String?) -> Unit) {
         worker.execute {
             val release = readMetadata()

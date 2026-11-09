@@ -77,4 +77,14 @@ class UpdatePolicyTest {
     }
     @Test fun oversizedMetadataIsRejected() { val c=Connection(URL(UpdatePolicy.API),200,ByteArray(UpdatePolicy.MAX_METADATA+1));fails{GithubUpdateNetwork{c}.releases("QA_DUMMY_ACCESS_TOKEN",UpdateTransfer())};assertTrue(c.closed) }
     @Test fun cancellingTransferDisconnectsTheActiveSocket() { val transfer=UpdateTransfer();val c=Connection(URL(UpdatePolicy.API),200);transfer.bind(c);transfer.cancel();assertTrue(c.closed);try{transfer.check();fail()}catch (_:CancellationException){} }
+    @Test fun downloadSnapshotParsesProgressCorrectly() {
+        val running = DownloadSnapshot(android.app.DownloadManager.STATUS_RUNNING, 500, 1000, 0)
+        assertEquals(500, running.bytes)
+        assertEquals(1000, running.total)
+        assertEquals(android.app.DownloadManager.STATUS_RUNNING, running.state)
+        val paused = DownloadSnapshot(android.app.DownloadManager.STATUS_PAUSED, 200, 1000, android.app.DownloadManager.PAUSED_QUEUED_FOR_WIFI)
+        assertEquals(android.app.DownloadManager.PAUSED_QUEUED_FOR_WIFI, paused.reason)
+        val failed = DownloadSnapshot(android.app.DownloadManager.STATUS_FAILED, 0, 1000, 403)
+        assertEquals(403, failed.reason)
+    }
 }

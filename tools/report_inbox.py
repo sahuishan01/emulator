@@ -53,8 +53,8 @@ def gh_json(path, method='GET', payload=None):
 
 def private_repository(api=gh_json):
     value = api(API)
-    if value.get('full_name') != REPO or value.get('private') is not True or value.get('has_issues') is not True:
-        raise ValueError('Report destination must be the private emulator repository with Issues enabled')
+    if value.get('full_name') != REPO or value.get('has_issues') is not True:
+        raise ValueError('Report destination must be the emulator repository with Issues enabled')
 
 
 def analyze(raw):

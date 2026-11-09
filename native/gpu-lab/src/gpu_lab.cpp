@@ -994,7 +994,9 @@ bool translated_shader_draw(Context& context,uint32_t index) {
         info.pViewportState=&viewport_info;info.pRasterizationState=&raster;info.pMultisampleState=&multisample;
         info.pColorBlendState=&blend;info.pDynamicState=&dynamic;info.layout=layout;info.renderPass=pass;
         VkPipeline handle{};const auto result=vkCreateGraphicsPipelines(context.device,VK_NULL_HANDLE,1,&info,nullptr,&handle);
-        if(handle)context.pipelines.push_back(handle);check(result,"create translated shader pipeline");return handle;
+        if(handle) { context.pipelines.push_back(handle); }
+        check(result,"create translated shader pipeline");
+        return handle;
     };
     const auto first_pipeline=pipeline(index==2 ? green : assets);
     const auto second_pipeline=index==2 ? pipeline(alternate) : VK_NULL_HANDLE;
@@ -1117,7 +1119,10 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         uint32_t previous=0;
         for(uint32_t i=0;i<clears->count;++i){const auto& c=clears->clears[i];
             float value{};std::memcpy(&value,&c.value,4);
-            if(c.before_draw<previous || c.before_draw>replay.draw_count || c.rect[0]>c.rect[2] || c.rect[1]>c.rect[3] || c.rect[2]>w || c.rect[3]>h || !std::isfinite(value) || value<0 || value>1)throw std::runtime_error("Depth-clear operation exceeds replay bounds");previous=c.before_draw;
+            if(c.before_draw<previous || c.before_draw>replay.draw_count || c.rect[0]>c.rect[2] || c.rect[1]>c.rect[3] || c.rect[2]>w || c.rect[3]>h || !std::isfinite(value) || value<0 || value>1) {
+                throw std::runtime_error("Depth-clear operation exceeds replay bounds");
+            }
+            previous=c.before_draw;
         }
         auto& d=dependencies[2];d.srcSubpass=0;d.dstSubpass=0;
         d.srcStageMask=d.dstStageMask=VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
@@ -1169,7 +1174,9 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
             depth_state.depthCompareOp=static_cast<VkCompareOp>(depth_data->functions[draw_index]);info.pDepthStencilState=&depth_state;
         }
         VkPipeline handle{};const auto result=vkCreateGraphicsPipelines(context.device,VK_NULL_HANDLE,1,&info,nullptr,&handle);
-        if(handle)context.pipelines.push_back(handle);check(result,"create translated shader pipeline");return handle;
+        if(handle) { context.pipelines.push_back(handle); }
+        check(result,"create translated shader pipeline");
+        return handle;
     };
     std::array<Buffer,3> vertex_buffers{},index_buffers{};
     std::array<TextureBinding,3> textures{};

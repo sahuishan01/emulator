@@ -52,6 +52,7 @@ class UpdatesActivity : Activity() {
         download = ui.button("Download update", true) { updates.download() }; root.addView(download)
         install = ui.button("Install update", true) { beginInstall() }; root.addView(install)
         cancel = ui.button("Cancel download") { updates.cancel() }; root.addView(cancel)
+        root.addView(ui.button("Open release page") { updates.status.release?.let { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(it.page))) } })
         ui.space(root, 20)
         root.addView(ui.label("AUTOMATIC UPDATES"))
         fun toggle(label: String, key: String) {
@@ -70,7 +71,7 @@ class UpdatesActivity : Activity() {
         scroll = ScrollView(this).apply { addView(root) }; ui.install(scroll)
     }
     private fun render(value: UpdateStatus) {
-        status.text = value.message; notes.text = value.release?.notes.orEmpty(); progress.visibility = if (value.phase == UpdatePhase.DOWNLOADING) View.VISIBLE else View.GONE; progress.progress = value.percent
+        status.text = value.message; notes.text = value.release?.notes.orEmpty(); progress.visibility = if (value.phase == UpdatePhase.DOWNLOADING) View.VISIBLE else View.GONE; progress.isIndeterminate = value.percent < 0; progress.progress = value.percent.coerceAtLeast(0)
         val access = updates.access
         fun timestamp(value: Long) = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(value))
         accessStatus.text = when (access.result) {

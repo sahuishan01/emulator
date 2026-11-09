@@ -16,6 +16,12 @@
         <provider android:name=".UpdateApkProvider" android:authorities="com.algosculptor.emulator.gpulab.updates" android:exported="false" android:grantUriPermissions="true" />
         <service android:name=".UpdateJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <service android:name=".ReportUploadJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
+        <receiver android:name=".UpdateDownloadReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+                <action android:name="android.intent.action.DOWNLOAD_NOTIFICATION_CLICKED" />
+            </intent-filter>
+        </receiver>
         <activity android:name=".ReportsActivity" android:exported="false" />
         <activity android:name=".UpdatesActivity" android:exported="false" />
         <activity android:name=".DemoActivity" android:exported="false" />
