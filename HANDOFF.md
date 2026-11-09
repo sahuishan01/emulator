@@ -13,6 +13,91 @@ rejected workloads, rollback and lifecycle coverage in one build. Continue large
 authorized steps without repeatedly asking go-ahead. Default suite runs all groups
 in one tap and exports one report. Do not silently accept unsupported behavior.
 
+## Active goal: finish the updater background-download fix and use new GPU evidence
+
+Overall project goal remains an original Switch 1 emulator for Android; do not
+copy or depend on an existing emulator core. Commercial Switch games, including
+Pokémon Legends: Z-A, are not supported. The immediate user priority is that an
+update download continues after Home/app switching, screen lock, and process
+death. Finish Android verification and an authorized private development APK/ZIP
+release. New physical GPU reports were also supplied in this turn; record their
+result below and keep the baseline failure strict.
+
+### Completed in the current checkpoint
+
+Two newest private GitHub artifacts were checked against their JSON SHA and
+version: issue #3 is0.27.5-dev, #4 is0.27.6-dev. Both report the same RMX5061 /
+MT6989 / Android16 / Mali-G720 result:269/275 total checks,65/66 patterns.
+The normalized-position candidate passes23/23 checks and all11 candidate
+visible variants. The original projected inset baseline and five controls still
+fail; only original pattern42 is visibly failing, with four mismatched pixels
+whose colors agree with captured UVs. Keep `allPassed=false`; no tolerance or
+baseline masking. This validates only the authored positive-W, unclipped,
+screen-linear profile on that device/driver, not a general guest draw path or
+commercial game rendering. Details: `docs/normalized-projection.md` and
+`docs/validation/android-normalized-projection.md`.
+
+Updater implementation landed in commit `26fabfb` (0.27.6-dev): Android
+DownloadManager owns APK transfer; an AtomicFile journal and recovery job restore
+state; signed asset URLs are consumed in memory and never sent to
+DownloadManager; size, SHA, package, version, signer and ABI are checked before
+installer handoff. `UpdateJobService.onStopJob` does not cancel the system-owned
+transfer. The checkout has since advanced to0.27.7-dev/versionCode37 at
+`28da1d4`, including the independently committed NSO loader work at `d974c9e`.
+Do not reset or overwrite those commits.
+
+`UpdateInstrumentation.kt` has uncommitted QA additions. The deterministic
+fake-DownloadManager batch passed28 checks, including signature/content rejects,
+pause/resume, missing/failed rows, cancellation and retry. One real temporary
+GitHub-asset transfer also completed and was verified after the instrumentation
+process ended (`processRestored=true`, matching size/SHA). That run did not prove
+the transfer advanced while the target app process was absent. A stronger test
+was added: enqueue while the AVD is offline, verify a zero-byte pending/paused
+system row, let instrumentation exit, restore connectivity, observe bytes grow
+while the app PID is absent, then relaunch and verify the APK. This test is
+prepared but has NOT yet run.
+
+### Exact resume point
+
+1. Inspect `git status` and the updater diff before editing. Current uncommitted
+   tracked changes: `HANDOFF.md`, `UpdateInstrumentation.kt`,
+   `docs/normalized-projection.md`, and
+   `docs/validation/android-normalized-projection.md`. `.serena/` is a local
+   generated project cache; do not commit it. Earlier build log:
+   `reports/v0.27.6-first-build.log`; old 0.27.6 APK at
+   `reports/v0.27.6-current-apk-download.apk` is not a release candidate for the
+   current0.27.7 checkout.
+2. The owned API35 AVD `gpu-lab-api35` was deliberately offline during QA and
+   has now been stopped; the QEMU process exited. Start it again for the test
+   and recheck networking/device state before use.
+   No signed-URL temp file is present at `/tmp/emulator-update-background-qa-url`;
+   the prior one was consumed. If needed, mint a fresh short-lived GitHub asset
+   redirect into a mode600 temporary file, stage only to the QA app-private file,
+   never print it, then erase it. The private draft release `v0.27.6-qa.1`
+   (release id439348941, `update.apk`, asset id728089900) is a disposable
+   lifecycle fixture; delete it and its tag after the test.
+3. Run instrumentation mode `background-dm-start` offline and inspect only its
+   safe status/journal fields. Ensure the target package PID is absent. Restore
+   AVD connectivity, observe the exact QA APK file size advance to12,221,284
+   while PID remains absent, then invoke `background-dm-verify`. Capture only
+   result JSON/hash/status, never URL/token. Clean up exact QA-generated download
+   files, app-private fixture state, draft release/tag, and restore networking.
+4. Review updater races and failure cleanup: enqueue/journal gap, expired URL,
+   missing DownloadManager row, worker retry, cancel/disconnect and opt-out.
+   Then run the required JVM, Python, Android instrumentation, strict APK
+   verifier, lint, signature, both-ABI, and installer checks. Gate every heavy
+   build/compression operation on a fresh CPU-idle sample >=80%.
+5. Build the release from the current0.27.7 tree, verify signature/hash and
+   private GitHub asset readback, then publish private development APK and ZIP
+   under existing authorization. Provide permanent
+   `/releases/download/<tag>/<asset>` links. Do not use `agent-releases` for this
+   prototype. Stop the owned AVD and await its process before finishing; do not
+   restart the managed Codex daemon. Send the `agent-tasks` notification at
+   completion.
+
+No current0.27.7 release artifact has been verified or published. This handoff
+is a checkpoint, not completion of the updater request.
+
 ## Current implementation: 0.27.5-dev projection candidate after automatic report handoff
 
 The GitHub seed report automatically resumed THIS existing chat. Watch state

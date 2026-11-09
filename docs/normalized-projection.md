@@ -65,8 +65,13 @@ The same-thread automatic handoff was demonstrated by this follow-up from the
 seed GitHub artifact. Its stored queue entry was consumed and is not re-added;
 no manual chat attachment was needed for this investigation.
 
-The next physical report must establish whether all23 new checks and candidate
-visible variants pass while preserving the baseline evidence. Only then consider
-promoting a bounded backend policy, with the existing fallback and regression
-tests. This candidate is not a Mali fix confirmation or commercial Switch game
-support. See [validation](validation/android-normalized-projection.md).
+Two subsequent physical RMX5061 / MT6989 / Mali-G720 reports now confirm all23
+candidate checks and all11 candidate visible variants, while retaining the
+original inset failure (65/66 visible patterns overall). This confirms the
+lowering for this authored, narrowly validated profile on this device/driver.
+It does not yet integrate that policy into a general guest-draw backend, cover
+indexed/depth/clipped/smooth-interpolation draws, or establish Switch-game
+compatibility. Keep baseline failures visible. Any later runtime integration
+must preserve fallback behavior for rejected profiles and pass the same strict
+oracles. Details and evidence links are in
+[physical follow-up validation](validation/android-normalized-projection.md).

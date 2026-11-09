@@ -78,3 +78,35 @@ No test package or synthetic token/backups remain.
 
 Final APK12199284bytes/SHA256
 9645d86f92ad2408781ccb7dc7db93329ce252e4362447456fc5d8b2dd9baf26.
+
+## Physical follow-up — 0.27.5-dev and 0.27.6-dev
+
+Two automatically collected reports from the Realme RMX5061 / MT6989 / Android16
+device record the same result. The 0.27.5-dev report is 292,994 bytes with
+SHA-256 `245277354ee6393a2f0b2b16ae4b8f6c1fac3ac75f0f2204d5e304e37c33e5b8`;
+the 0.27.6-dev report is 292,994 bytes with SHA-256
+`c76f1961cb8e93119ca1584dcbd40efadc7c67fab5040d201f7f079dcf07521d`. The
+private artifacts are [issue 3, artifact 1](https://github.com/sahuishan01/emulator/issues/3/artifacts/1)
+and [issue 4, artifact 1](https://github.com/sahuishan01/emulator/issues/4/artifacts/1).
+
+Each physical run passes269/275 checks. Engine18, NV50, GPU-core76, and shader25
+all pass; Vulkan100/106 pass. The same six strict failures remain: the baseline
+projected texture replay and its five inset controls. The pattern batch is65/66;
+only the original projected inset pattern (variant42) fails, with the same four
+pixel mismatches. The observed colors still match the nearest texels predicted
+from captured actual UVs. Validation layers were disabled, so zero reported
+validation errors are not a validation-layer run.
+
+The separate normalized-position candidate passes23/23 checks, including all11
+authored texture replays, and all11 candidate visible variants pass on physical
+Mali. The app-level result therefore remains `allPassed=false`; the candidate
+does not mask or rewrite the baseline failure. The repeated0.27.6-dev report
+shows this behavior persists in that build. This confirms the bounded unclipped,
+positive-W, screen-linear authored profile on the reported device/driver. It is
+not evidence that commercial Switch games render, nor evidence for indexed,
+depth-enabled, clipped, or perspective smooth-interpolation draws. Promote it
+only as a tested bounded policy when a real guest-draw backend consumes it; keep
+strict baseline and rejected-profile coverage intact.
+
+Raw JSON and analyzer files remain in ignored `reports/github-inbox/`; they are
+not copied into source history.
