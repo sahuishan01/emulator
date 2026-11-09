@@ -11,3 +11,5 @@
 - Keep reports, game files, firmware, keys and private captures out of Git. Never copy secret material from global instructions into this project.
 
 - Batch related implementation steps and positive, rejection, rollback and lifetime tests into one APK. The user explicitly asked to test multiple things in one go; avoid a separate phone/report cycle for every small primitive.
+
+- When the user states that reports are uploaded, immediately fetch the latest uploaded report from GitHub Issues (sorting by newest and verifying against the expected appVersion / versionCode). Analyze the results, apply necessary fixes based on the physical telemetry, and proceed autonomously to the next planned milestone tasks without stopping to ask for user intervention or additional go-aheads.

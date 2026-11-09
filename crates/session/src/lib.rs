@@ -2,7 +2,7 @@
 
 use emulator_a64::{Cpu, ExecutionError, StepEvent};
 use emulator_kernel::{homebrew_config, Kernel, KernelError, KernelEvent, ScheduleOutcome};
-use emulator_loader::{LoadError, LoadedImage, NroImage};
+use emulator_loader::{LoadError, LoadedImage, NroImage, NsoProgram};
 use emulator_memory::{AddressSpace, MemoryError, Permissions};
 use std::fmt;
 
@@ -73,6 +73,60 @@ impl Session {
             bytes,
             emulator_services::ServiceManager::with_graphics(graphics),
         )
+    }
+
+    pub fn from_nso_program(program: &NsoProgram) -> Result<Self, SessionError> {
+        Self::from_nso_program_with_services(program, emulator_services::ServiceManager::default())
+    }
+
+    pub fn from_nso_program_with_services(
+        program: &NsoProgram,
+        service_manager: emulator_services::ServiceManager,
+    ) -> Result<Self, SessionError> {
+        let main_module = program
+            .modules()
+            .iter()
+            .find(|m| m.name == "main")
+            .or_else(|| program.modules().first())
+            .ok_or(SessionError::Load(LoadError::Invalid("NSO program contains no modules")))?;
+        let image = main_module.image;
+        let mut memory = AddressSpace::default();
+        let mut config = homebrew_config();
+        config.resize(4096, 0);
+        memory
+            .map(CONFIG_BASE, config, Permissions::READ)
+            .map_err(SessionError::Memory)?;
+        memory
+            .reserve(STACK_BASE - 4096, 4096)
+            .map_err(SessionError::Memory)?;
+        memory
+            .reserve(STACK_BASE + STACK_SIZE as u64, 4096)
+            .map_err(SessionError::Memory)?;
+        memory
+            .reserve(STACK_BASE, STACK_SIZE)
+            .map_err(SessionError::Memory)?;
+        memory
+            .commit(STACK_BASE, vec![0; STACK_SIZE], Permissions::READ_WRITE)
+            .map_err(SessionError::Memory)?;
+        memory
+            .map(TLS_PAGE, vec![0; 4096], Permissions::READ_WRITE)
+            .map_err(SessionError::Memory)?;
+        let mut cpu = Cpu::new(image.entry, STACK_BASE + STACK_SIZE as u64);
+        cpu.tpidrro_el0 = TLS_BASE;
+        cpu.x[0] = CONFIG_BASE;
+        cpu.x[1] = u64::MAX;
+        let mut kernel = Kernel::default();
+        kernel
+            .register_named_port("sm:", Box::new(service_manager))
+            .map_err(SessionError::Kernel)?;
+        Ok(Self {
+            cpu,
+            memory,
+            kernel,
+            image,
+            state: SessionState::Loaded,
+            instructions: 0,
+        })
     }
     fn load(
         bytes: &[u8],

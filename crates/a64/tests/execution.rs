@@ -42,6 +42,35 @@ fn next_svc(cpu: &mut Cpu, memory: &mut AddressSpace) -> (u16, u64) {
 }
 
 #[test]
+fn load_store_pair_pre_post_index_and_offsets() {
+    let mut memory = AddressSpace::default();
+    // Map code at CODE, and data stack at 0x8000
+    // We will test STP x0, x1, [sp, #-16]! (pre-index)
+    // STP word: 10 101 0 011 0 imm7=1111110(-2) rt2=00001 rn=11111 rt1=00000 -> 0xa9bf07e0
+    // Then LDP x2, x3, [sp], #16 (post-index)
+    // LDP word: 10 101 0 001 1 imm7=0000010(+2) rt2=00011 rn=11111 rt1=00010 -> 0xa8c20fe2
+    // SVC 0x1: 0xd4000021
+    let program = vec![
+        0xe0, 0x07, 0xbf, 0xa9, // stp x0, x1, [sp, #-16]!
+        0xe2, 0x0f, 0xc1, 0xa8, // ldp x2, x3, [sp], #16
+        0x21, 0x00, 0x00, 0xd4, // svc #1
+    ];
+    memory.map(CODE, program, Permissions::READ_EXECUTE).unwrap();
+    memory.map(0x7000, vec![0; 8192], Permissions::READ_WRITE).unwrap();
+    let mut cpu = Cpu::new(CODE, 0x8000);
+    cpu.x[0] = 0x1122334455667788;
+    cpu.x[1] = 0x99aabbccddeeff00;
+
+    assert_eq!(next_svc(&mut cpu, &mut memory), (1, 3));
+    assert_eq!(cpu.sp, 0x8000); // Pre-decremented then post-incremented
+    assert_eq!(cpu.x[2], 0x1122334455667788);
+    assert_eq!(cpu.x[3], 0x99aabbccddeeff00);
+    // Check values stored in memory at 0x7ff0 and 0x7ff8
+    assert_eq!(memory.read_u64(0x7ff0).unwrap(), 0x1122334455667788);
+    assert_eq!(memory.read_u64(0x7ff8).unwrap(), 0x99aabbccddeeff00);
+}
+
+#[test]
 fn assembled_loop_call_return_and_guest_memory() {
     let (mut cpu, mut memory) = machine(include_bytes!("../../../examples/a64/demo.bin"));
     assert_eq!(next_svc(&mut cpu, &mut memory), (0x42, 24));

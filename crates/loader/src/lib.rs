@@ -1,4 +1,7 @@
-//! Original uncompressed NRO0 parsing and mapping. Module relocation is not implemented.
+//! Original uncompressed NRO0 and NSO0 parsing and mapping. Module relocation is not implemented.
+
+mod nso;
+pub use nso::{LoadedNsoModule, NsoImage, NsoProgram};
 
 use emulator_memory::{AddressSpace, Mapping, MemoryError, Permissions};
 use std::fmt;
@@ -6,6 +9,8 @@ use std::fmt;
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_NRO_FILE_SIZE: usize = 64 * 1024 * 1024;
 pub const MAX_NRO_MEMORY: usize = 128 * 1024 * 1024;
+pub const MAX_IMAGE_FILE_SIZE: usize = 64 * 1024 * 1024;
+pub const MAX_IMAGE_MEMORY: usize = 128 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -208,7 +213,7 @@ impl NroImage {
     }
 }
 
-fn word(bytes: &[u8], offset: usize) -> u32 {
+pub(crate) fn word(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(
         bytes[offset..offset + 4]
             .try_into()

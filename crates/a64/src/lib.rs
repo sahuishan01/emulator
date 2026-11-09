@@ -124,6 +124,16 @@ enum Instruction {
         offset: u64,
         load: bool,
     },
+    LoadStorePair {
+        width: Width,
+        rt1: u8,
+        rt2: u8,
+        rn: u8,
+        offset: i64,
+        load: bool,
+        pre_index: bool,
+        post_index: bool,
+    },
     SupervisorCall {
         immediate: u16,
     },
@@ -369,6 +379,54 @@ impl Cpu {
                     }
                 }
             }
+            Instruction::LoadStorePair {
+                width,
+                rt1,
+                rt2,
+                rn,
+                offset,
+                load,
+                pre_index,
+                post_index,
+            } => {
+                let base = self.read_sp(rn);
+                let address = if pre_index {
+                    base.wrapping_add_signed(offset)
+                } else {
+                    base
+                };
+                let second_address = address.wrapping_add(width.bytes());
+                if load {
+                    let v1 = match width {
+                        Width::W32 => memory.read_u32(address)? as u64,
+                        Width::X64 => memory.read_u64(address)?,
+                    };
+                    let v2 = match width {
+                        Width::W32 => memory.read_u32(second_address)? as u64,
+                        Width::X64 => memory.read_u64(second_address)?,
+                    };
+                    self.write_zero(rt1, v1);
+                    self.write_zero(rt2, v2);
+                } else {
+                    let v1 = self.read_zero(rt1);
+                    let v2 = self.read_zero(rt2);
+                    match width {
+                        Width::W32 => {
+                            memory.write_u32(address, v1 as u32)?;
+                            memory.write_u32(second_address, v2 as u32)?;
+                        }
+                        Width::X64 => {
+                            memory.write_u64(address, v1)?;
+                            memory.write_u64(second_address, v2)?;
+                        }
+                    }
+                }
+                if pre_index {
+                    self.write_sp(rn, address);
+                } else if post_index {
+                    self.write_sp(rn, base.wrapping_add_signed(offset));
+                }
+            }
             Instruction::SupervisorCall { immediate } => {
                 event = StepEvent::SupervisorCall { immediate }
             }
@@ -489,6 +547,32 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             offset: u64::from((word >> 10) & 0xfff) * width.bytes(),
             load: word & (1 << 22) != 0,
         });
+    }
+    // LDP / STP (Load/Store Pair)
+    // opc: bits [31:30] (00 = 32-bit, 10 = 64-bit)
+    // V: bit 26 (0 = general-purpose registers)
+    // L: bit 22 (1 = load, 0 = store)
+    // mode: bits [24:23] (01 = post-index, 10 = signed offset, 11 = pre-index)
+    if word & 0x3a00_0000 == 0x2800_0000 && word & (1 << 26) == 0 {
+        let opc = (word >> 30) & 3;
+        let mode = (word >> 23) & 3;
+        if (opc == 0 || opc == 2) && mode != 0 {
+            let width = if opc == 2 { Width::X64 } else { Width::W32 };
+            let imm7 = signed_field((word >> 15) & 0x7f, 7);
+            let offset = imm7 * (width.bytes() as i64);
+            let rt1 = (word & 31) as u8;
+            let rt2 = ((word >> 10) & 31) as u8;
+            return Ok(Instruction::LoadStorePair {
+                width,
+                rt1,
+                rt2,
+                rn,
+                offset,
+                load: word & (1 << 22) != 0,
+                pre_index: mode == 3,
+                post_index: mode == 1,
+            });
+        }
     }
     if word & 0xffe0_001f == 0xd400_0001 {
         return Ok(Instruction::SupervisorCall {
