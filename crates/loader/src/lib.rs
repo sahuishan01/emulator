@@ -1,5 +1,6 @@
 //! Original uncompressed NRO0 and NSO0 parsing and mapping. Module relocation is not implemented.
 
+pub mod exefs;
 mod nso;
 pub mod npdm;
 pub mod pfs0;
