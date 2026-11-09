@@ -49,8 +49,8 @@ internal class GithubReportNetwork(private val open: (URL) -> HttpURLConnection 
     }
     private fun verifyDestination(token: String, transfer: UpdateTransfer) {
         val repo = JSONObject(request("GET", "", token, transfer))
-        if (repo.optString("full_name") != ReportUploadPolicy.REPO || !repo.optBoolean("private") || !repo.optBoolean("has_issues"))
-            throw ReportUploadFailure("Reports are only uploaded to the private emulator repository with Issues enabled.", blocked = true)
+        if (repo.optString("full_name") != ReportUploadPolicy.REPO || !repo.optBoolean("has_issues"))
+            throw ReportUploadFailure("Reports are only uploaded to the emulator repository with Issues enabled.", blocked = true)
         val inbox = JSONObject(request("GET", "/issues/${ReportUploadPolicy.INBOX}", token, transfer))
         if (inbox.optLong("number") != ReportUploadPolicy.INBOX || !inbox.optString("body").contains("<!-- emulator-report-inbox:v1 -->"))
             throw ReportUploadFailure("The report inbox could not be verified.", blocked = true)

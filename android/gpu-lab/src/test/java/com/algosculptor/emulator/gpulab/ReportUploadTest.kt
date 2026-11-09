@@ -75,9 +75,9 @@ class ReportUploadTest {
         assertEquals(listOf("GET", "GET", "POST"), calls.map { it.requestMethod }); assertTrue(calls.all { it.closed })
         assertTrue(calls.all { it.url.host == "api.github.com" && it.getRequestProperty("Authorization") == "Bearer QA_FAKE_TOKEN" })
     }
-    @Test fun publicRepositoryNeverReceivesAReportOrProbe() {
+    @Test fun wrongRepositoryNeverReceivesAReportOrProbe() {
         var count = 0
-        val network = GithubReportNetwork { url -> count++; Connection(url, 200, JSONObject(repo).put("private", false).toString()) }
+        val network = GithubReportNetwork { url -> count++; Connection(url, 200, JSONObject(repo).put("full_name", "other/repo").toString()) }
         rejected { network.verifyAccess("QA_FAKE_TOKEN", UpdateTransfer()) }; assertEquals(1, count)
     }
     @Test fun permissionsLimitsRedirectsAndOversizedResponsesAreControlled() {
