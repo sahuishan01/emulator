@@ -80,3 +80,31 @@ fn counter_overflow_and_invalid_payloads_preserve_previous_value() {
         Err(ServiceError::UnsupportedCommand { .. })
     ));
 }
+
+#[test]
+fn test_system_settings_and_time_services() {
+    let mut sm = ServiceManager::default();
+    sm.dispatch(&request(0, &[0; 8], Some(1))).unwrap();
+
+    let mut setsys = sm
+        .dispatch(&request(1, b"set:sys\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let lang_reply = setsys.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(&lang_reply.data[..5], b"en-US");
+
+    let region_reply = setsys.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(region_reply.data.try_into().unwrap()), 1);
+
+    let mut timesys = sm
+        .dispatch(&request(1, b"time:s\0\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let time_reply = timesys.dispatch(&request(0, &[], None)).unwrap();
+    let seconds = u64::from_le_bytes(time_reply.data.try_into().unwrap());
+    assert!(seconds >= 1700000000);
+}

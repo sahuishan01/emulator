@@ -4,12 +4,15 @@ mod nv;
 mod nvas;
 mod nvchannel;
 mod nvmap;
-/// Bounded original NV protocol regression workloads for host and Android.
 pub mod reference;
+pub mod setsys;
+pub mod timesys;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
 pub use gpu::DiagnosticGpu;
 pub use nv::NvDriver;
+pub use setsys::SetSysService;
+pub use timesys::TimeService;
 
 fn payload(request: &Request, length: usize) -> Result<(), ServiceError> {
     if request.data.len() == length {
@@ -66,6 +69,8 @@ impl Service for ServiceManager {
                     b"emu:test" => Box::new(DiagnosticCounter::default()),
                     b"emu:gpu\0" => Box::new(DiagnosticGpu::default()),
                     b"nvdrv\0\0\0" => Box::new(NvDriver::with_graphics(self.graphics.clone())),
+                    b"set:sys\0" => Box::new(SetSysService::default()),
+                    b"time:s\0\0" | b"time:u\0\0" => Box::new(TimeService::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {
