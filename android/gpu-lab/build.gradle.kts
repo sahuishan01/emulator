@@ -15,8 +15,8 @@ android {
         targetSdk = 35
         testInstrumentationRunner = "com.algosculptor.emulator.gpulab.UpdateInstrumentation"
         testInstrumentationRunnerArguments["qaUpdateVersion"] = providers.gradleProperty("qaUpdateVersion").orElse("0.27.2-dev").get()
-        versionCode = providers.gradleProperty("qaUpdateVersionCode").orNull?.toInt() ?: 38
-        versionName = providers.gradleProperty("qaUpdateVersionName").orNull ?: "0.27.8-dev"
+        versionCode = providers.gradleProperty("qaUpdateVersionCode").orNull?.toInt() ?: 39
+        versionName = providers.gradleProperty("qaUpdateVersionName").orNull ?: "0.27.9-dev"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
             cmake {

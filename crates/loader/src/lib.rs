@@ -2,6 +2,7 @@
 
 mod nso;
 pub mod pfs0;
+pub mod reloc;
 pub use nso::{LoadedNsoModule, NsoImage, NsoProgram};
 
 use emulator_memory::{AddressSpace, Mapping, MemoryError, Permissions};
