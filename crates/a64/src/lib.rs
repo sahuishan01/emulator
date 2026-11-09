@@ -117,6 +117,10 @@ enum Instruction {
     Return {
         rn: u8,
     },
+    AddressPc {
+        rd: u8,
+        target: u64,
+    },
     LoadStore {
         width: Width,
         rt: u8,
@@ -357,6 +361,9 @@ impl Cpu {
                 }
             }
             Instruction::Return { rn } => next_pc = self.read_zero(rn),
+            Instruction::AddressPc { rd, target } => {
+                self.write_zero(rd, target);
+            }
             Instruction::LoadStore {
                 width,
                 rt,
@@ -533,6 +540,21 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
     }
     if word & 0xffff_fc1f == 0xd65f_0000 {
         return Ok(Instruction::Return { rn });
+    }
+    // ADR / ADRP (Form PC-relative address)
+    // 0x1f00_0000 mask: bit 28 = 1, bit 27..24 = 0
+    if word & 0x1f00_0000 == 0x1000_0000 {
+        let is_adrp = word & (1 << 31) != 0;
+        let immlo = (word >> 29) & 3;
+        let immhi = (word >> 5) & 0x7_ffff;
+        let imm21 = (immhi << 2) | immlo;
+        let signed_imm = signed_field(imm21, 21);
+        let target = if is_adrp {
+            (pc & !0xfff).wrapping_add_signed(signed_imm << 12)
+        } else {
+            pc.wrapping_add_signed(signed_imm)
+        };
+        return Ok(Instruction::AddressPc { rd, target });
     }
     if word & 0xbfc0_0000 == 0xb940_0000 || word & 0xbfc0_0000 == 0xb900_0000 {
         let width = if word & (1 << 30) != 0 {

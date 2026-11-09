@@ -299,3 +299,30 @@ fn reserved_shifted_register_forms_preserve_cpu_and_pc() {
         assert_eq!(cpu, saved);
     }
 }
+
+#[test]
+fn test_adr_and_adrp_address_calculation() {
+    let mut cpu = Cpu::default();
+    cpu.pc = 0x8000_1008;
+    let mut mem = AddressSpace::default();
+    // ADR x0, #16 -> offset +16:
+    // immlo = (16 & 3) = 0, immhi = (16 >> 2) = 4 -> 0x1000_0080
+    let adr_word = 0x1000_0080u32;
+    // ADRP x1, #0x2000 -> imm = 2 pages:
+    // immlo = 2 & 3 = 2, immhi = (2 >> 2) = 0 -> bits [30:29] = 2 -> 0x9000_0000 | (2 << 29) | (0 << 5) | 1 = 0xd000_0001
+    let adrp_word = 0xd000_0001u32;
+
+    let mut code_bytes = vec![0u8; 0x2000];
+    code_bytes[8..12].copy_from_slice(&adr_word.to_le_bytes());
+    code_bytes[12..16].copy_from_slice(&adrp_word.to_le_bytes());
+    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE).unwrap();
+
+    let event = cpu.step(&mut mem).unwrap();
+    assert_eq!(event, StepEvent::Continue);
+    assert_eq!(cpu.x[0], 0x8000_1018); // 0x8000_1008 + 16
+
+    let event = cpu.step(&mut mem).unwrap();
+    assert_eq!(event, StepEvent::Continue);
+    // (0x8000_100c & !0xfff) + (2 << 12) = 0x8000_1000 + 0x2000 = 0x8000_3000
+    assert_eq!(cpu.x[1], 0x8000_3000);
+}

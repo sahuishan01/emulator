@@ -28,12 +28,13 @@ class Api:
         self.artifact = {'number': 1, 'name': 'emulator-report-' + self.summary['sha256'] + '.json',
                          'creator': {'login': 'sahuishan01'}, 'body': self.raw.decode()}
         self.private = True
+        self.has_issues = True
         self.calls = []
 
     def __call__(self, path, method='GET', payload=None):
         self.calls.append(path)
         if path == inbox.API:
-            return {'full_name': inbox.REPO, 'private': self.private, 'has_issues': True}
+            return {'full_name': inbox.REPO, 'has_issues': self.has_issues}
         if '/issues?' in path:
             page = int(parse_qs(urlparse(path).query)['page'][0])
             return self.issues[(page-1)*25:page*25]
@@ -113,8 +114,8 @@ class TrackingTests(unittest.TestCase):
             query = parse_qs(urlparse(next(p for p in reversed(api.calls) if '/issues?' in p)).query)
             self.assertEqual(query['since'], ['2026-11-04T00:59:59Z'])
 
-    def test_refuse_public_repository(self):
-        api = Api(); api.private = False
+    def test_refuse_repository_without_issues(self):
+        api = Api(); api.has_issues = False
         with tempfile.TemporaryDirectory() as folder, self.assertRaises(ValueError):
             inbox.collect(folder, {}, api)
         self.assertEqual(api.calls, [inbox.API])
