@@ -108,3 +108,26 @@ fn test_system_settings_and_time_services() {
     let seconds = u64::from_le_bytes(time_reply.data.try_into().unwrap());
     assert!(seconds >= 1700000000);
 }
+
+#[test]
+fn test_fsp_srv_filesystem_service() {
+    let mut sm = ServiceManager::default();
+    sm.dispatch(&request(0, &[0; 8], Some(1))).unwrap();
+
+    let mut fspsrv = sm
+        .dispatch(&request(1, b"fsp-srv\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let init_reply = fspsrv.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(init_reply.result, 0);
+
+    let mut romfs_reply = fspsrv.dispatch(&request(2, &[], None)).unwrap();
+    assert_eq!(romfs_reply.result, 0);
+    assert_eq!(romfs_reply.moved_objects.len(), 1);
+
+    let mut filesystem = romfs_reply.moved_objects.remove(0);
+    let open_reply = filesystem.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(open_reply.result, 0);
+}
