@@ -131,3 +131,35 @@ fn test_fsp_srv_filesystem_service() {
     let open_reply = filesystem.dispatch(&request(0, &[], None)).unwrap();
     assert_eq!(open_reply.result, 0);
 }
+
+#[test]
+fn test_vi_and_applet_services() {
+    let mut sm = ServiceManager::default();
+    sm.dispatch(&request(0, &[0; 8], Some(1))).unwrap();
+
+    let mut vi = sm
+        .dispatch(&request(1, b"vi:m\0\0\0\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let mut display_reply = vi.dispatch(&request(0, &[], None)).unwrap();
+    let mut display = display_reply.moved_objects.remove(0);
+
+    let res_reply = display.dispatch(&request(1020, &[], None)).unwrap();
+    let width = u32::from_le_bytes(res_reply.data[0..4].try_into().unwrap());
+    let height = u32::from_le_bytes(res_reply.data[4..8].try_into().unwrap());
+    assert_eq!((width, height), (1280, 720));
+
+    let mut applet = sm
+        .dispatch(&request(1, b"appletAE", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let mut applet_reply = applet.dispatch(&request(0, &[], None)).unwrap();
+    let mut session = applet_reply.moved_objects.remove(0);
+
+    let mode_reply = session.dispatch(&request(21, &[], None)).unwrap();
+    assert_eq!(mode_reply.data[0], 0); // Handheld mode
+}

@@ -4,17 +4,21 @@ mod nv;
 mod nvas;
 mod nvchannel;
 mod nvmap;
+pub mod applet;
 pub mod fspsrv;
 pub mod reference;
 pub mod setsys;
 pub mod timesys;
+pub mod vi;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
+pub use applet::AppletManagerService;
 pub use fspsrv::FspSrvService;
 pub use gpu::DiagnosticGpu;
 pub use nv::NvDriver;
 pub use setsys::SetSysService;
 pub use timesys::TimeService;
+pub use vi::ViManagerService;
 
 fn payload(request: &Request, length: usize) -> Result<(), ServiceError> {
     if request.data.len() == length {
@@ -74,6 +78,8 @@ impl Service for ServiceManager {
                     b"fsp-srv\0" => Box::new(FspSrvService::default()),
                     b"set:sys\0" => Box::new(SetSysService::default()),
                     b"time:s\0\0" | b"time:u\0\0" => Box::new(TimeService::default()),
+                    b"vi:m\0\0\0\0" => Box::new(ViManagerService::default()),
+                    b"appletAE" | b"appletOE" => Box::new(AppletManagerService::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {
