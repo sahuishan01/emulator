@@ -162,4 +162,17 @@ fn test_vi_and_applet_services() {
 
     let mode_reply = session.dispatch(&request(21, &[], None)).unwrap();
     assert_eq!(mode_reply.data[0], 0); // Handheld mode
+
+    let mut hid = sm
+        .dispatch(&request(1, b"hid\0\0\0\0\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let applet_res_reply = hid.dispatch(&request(0, &[1, 0, 0, 0, 0, 0, 0, 0], None)).unwrap();
+    assert_eq!(applet_res_reply.result, 0);
+    assert_eq!(applet_res_reply.moved_objects.len(), 1);
+
+    let npad_reply = hid.dispatch(&request(100, &[1, 0, 0, 0, 0, 0, 0, 0], None)).unwrap();
+    assert_eq!(npad_reply.result, 0);
 }

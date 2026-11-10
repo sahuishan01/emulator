@@ -115,6 +115,21 @@ enum Instruction {
         amount: u8,
         op: u8, // 0 = AND, 1 = BIC, 2 = ORR, 3 = ORN, 4 = EOR, 5 = EON, 6 = ANDS, 7 = BICS
     },
+    Bitfield {
+        width: Width,
+        rd: u8,
+        rn: u8,
+        immr: u8,
+        imms: u8,
+        signed: bool,
+    },
+    ExclusiveLoadStore {
+        width: Width,
+        rt: u8,
+        rn: u8,
+        rs: u8, // status register for STXR
+        load: bool,
+    },
     Branch {
         displacement: i64,
         link: bool,
@@ -131,10 +146,6 @@ enum Instruction {
     },
     Return {
         rn: u8,
-    },
-    AddressPc {
-        rd: u8,
-        target: u64,
     },
     LoadStore {
         width: Width,
@@ -396,6 +407,66 @@ impl Cpu {
                 }
                 self.write_zero(rd, result);
             }
+            Instruction::Bitfield {
+                width,
+                rd,
+                rn,
+                immr,
+                imms,
+                signed,
+            } => {
+                let n = width.bits();
+                let src = self.read_zero(rn) & width.mask();
+                // ROR(src, immr)
+                let ror = if immr == 0 {
+                    src
+                } else {
+                    let r = immr % n;
+                    (src >> r) | ((src << (n - r)) & width.mask())
+                };
+                let wmask = if imms >= immr {
+                    let len = (imms - immr + 1) as u32;
+                    if len == 64 { u64::MAX } else { (1u64 << len) - 1 }
+                } else {
+                    let len = (imms + 1) as u32;
+                    (1u64 << len) - 1
+                };
+                let mut result = ror & wmask;
+                if signed && (imms >= immr || imms < immr) {
+                    let sign_bit = (imms.wrapping_sub(immr) % n) as u32;
+                    let sign_mask = 1u64 << sign_bit;
+                    if result & sign_mask != 0 {
+                        // Sign extend from sign_bit to top of width
+                        let top_mask = if sign_bit >= 63 { 0 } else { (!0u64) << (sign_bit + 1) };
+                        result |= top_mask & width.mask();
+                    }
+                }
+                self.write_zero(rd, result & width.mask());
+            }
+            Instruction::ExclusiveLoadStore {
+                width,
+                rt,
+                rn,
+                rs,
+                load,
+            } => {
+                let address = self.read_sp(rn);
+                if load {
+                    let value = match width {
+                        Width::W32 => memory.read_u32(address)? as u64,
+                        Width::X64 => memory.read_u64(address)?,
+                    };
+                    self.write_zero(rt, value);
+                } else {
+                    let value = self.read_zero(rt);
+                    match width {
+                        Width::W32 => memory.write_u32(address, value as u32)?,
+                        Width::X64 => memory.write_u64(address, value)?,
+                    }
+                    // In single-threaded guest interpreter model, exclusive store always succeeds (status 0)
+                    self.write_zero(rs, 0);
+                }
+            }
             Instruction::Branch { displacement, link } => {
                 if link {
                     self.x[30] = next_pc;
@@ -421,9 +492,6 @@ impl Cpu {
                 }
             }
             Instruction::Return { rn } => next_pc = self.read_zero(rn),
-            Instruction::AddressPc { rd, target } => {
-                self.write_zero(rd, target);
-            }
             Instruction::LoadStore {
                 width,
                 rt,
@@ -518,12 +586,15 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
         return Ok(Instruction::ReadThreadLocal { rd });
     }
     if word & 0x1f00_0000 == 0x1000_0000 {
-        let immediate = ((word >> 5) & 0x7ffff) << 2 | ((word >> 29) & 3);
-        let page = word & (1 << 31) != 0;
+        let is_adrp = word & (1 << 31) != 0;
+        let immlo = (word >> 29) & 3;
+        let immhi = (word >> 5) & 0x7_ffff;
+        let imm21 = (immhi << 2) | immlo;
+        let displacement = signed_field(imm21, 21) * if is_adrp { 4096 } else { 1 };
         return Ok(Instruction::PcRelative {
             rd,
-            displacement: signed_field(immediate, 21) * if page { 4096 } else { 1 },
-            page,
+            displacement,
+            page: is_adrp,
         });
     }
     if word & 0x7f80_0000 == 0x1280_0000 || word & 0x7f80_0000 == 0x7280_0000 {
@@ -588,6 +659,58 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             op,
         });
     }
+    // Bitfield instructions: SBFM (opc=00), BFM (opc=01), UBFM (opc=10)
+    // 31: sf, 30-29: opc, 28-23: 100110, 22: N, 21-16: immr, 15-10: imms, 9-5: Rn, 4-0: Rd
+    if word & 0x1f80_0000 == 0x1300_0000 {
+        let opc = (word >> 29) & 3;
+        let n_bit = (word >> 22) & 1;
+        // In ARMv8, for 32-bit (sf=0), N must be 0 and immr/imms < 32
+        // For 64-bit (sf=1), N must be 1
+        if (width == Width::W32 && n_bit != 0) || (width == Width::X64 && n_bit == 0) {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        let immr = ((word >> 16) & 63) as u8;
+        let imms = ((word >> 10) & 63) as u8;
+        if width == Width::W32 && (immr >= 32 || imms >= 32) {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        if opc == 0 || opc == 2 {
+            // SBFM (0) or UBFM (2)
+            return Ok(Instruction::Bitfield {
+                width,
+                rd,
+                rn,
+                immr,
+                imms,
+                signed: opc == 0,
+            });
+        }
+    }
+    // Exclusive load/store: LDXR / STXR
+    // LDXR: 31: size[1], 30: size[0], 29-24: 001000, 23: 0, 22: L=1, 21: 0, 20-16: Rs (11111 for ldxr), 15-10: 011111, 9-5: Rn, 4-0: Rt
+    // STXR: 31: size[1], 30: size[0], 29-24: 001000, 23: 0, 22: L=0, 21: 0, 20-16: Rs, 15-10: 011111, 9-5: Rn, 4-0: Rt
+    // In ARMv8 load/store exclusive:
+    // size field is bits [31:30]: 10 is 32-bit word, 11 is 64-bit xword.
+    // bit 22 is L (1 for load, 0 for store), bit 23 is 0, bit 21 is 0.
+    // Mask out bits 31-30 (size) and bit 22 (L):
+    // 0x3fe0_fc00 has bit 22 set (0x400000). To ignore bit 22: 0x3fa0_fc00
+    if word & 0x3fa0_fc00 == 0x0800_7c00 {
+        let size = (word >> 30) & 3;
+        if size == 2 || size == 3 {
+            let width = if size == 3 { Width::X64 } else { Width::W32 };
+            let is_load = (word & (1 << 22)) != 0;
+            let rs = ((word >> 16) & 31) as u8;
+            let rt = (word & 31) as u8;
+            let rn = ((word >> 5) & 31) as u8;
+            return Ok(Instruction::ExclusiveLoadStore {
+                width,
+                rt,
+                rn,
+                rs,
+                load: is_load,
+            });
+        }
+    }
     if word & 0x1f80_0000 == 0x1100_0000 {
         return Ok(Instruction::AddSub {
             width,
@@ -621,21 +744,6 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
     }
     if word & 0xffff_fc1f == 0xd65f_0000 {
         return Ok(Instruction::Return { rn });
-    }
-    // ADR / ADRP (Form PC-relative address)
-    // 0x1f00_0000 mask: bit 28 = 1, bit 27..24 = 0
-    if word & 0x1f00_0000 == 0x1000_0000 {
-        let is_adrp = word & (1 << 31) != 0;
-        let immlo = (word >> 29) & 3;
-        let immhi = (word >> 5) & 0x7_ffff;
-        let imm21 = (immhi << 2) | immlo;
-        let signed_imm = signed_field(imm21, 21);
-        let target = if is_adrp {
-            (pc & !0xfff).wrapping_add_signed(signed_imm << 12)
-        } else {
-            pc.wrapping_add_signed(signed_imm)
-        };
-        return Ok(Instruction::AddressPc { rd, target });
     }
     if word & 0xbfc0_0000 == 0xb940_0000 || word & 0xbfc0_0000 == 0xb900_0000 {
         let width = if word & (1 << 30) != 0 {

@@ -6,6 +6,7 @@ mod nvchannel;
 mod nvmap;
 pub mod applet;
 pub mod fspsrv;
+pub mod hid;
 pub mod reference;
 pub mod setsys;
 pub mod timesys;
@@ -15,6 +16,7 @@ use emulator_kernel::service::{Service, ServiceError, ServiceReply};
 pub use applet::AppletManagerService;
 pub use fspsrv::FspSrvService;
 pub use gpu::DiagnosticGpu;
+pub use hid::HidService;
 pub use nv::NvDriver;
 pub use setsys::SetSysService;
 pub use timesys::TimeService;
@@ -80,6 +82,7 @@ impl Service for ServiceManager {
                     b"time:s\0\0" | b"time:u\0\0" => Box::new(TimeService::default()),
                     b"vi:m\0\0\0\0" => Box::new(ViManagerService::default()),
                     b"appletAE" | b"appletOE" => Box::new(AppletManagerService::default()),
+                    b"hid\0\0\0\0\0" => Box::new(HidService::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {

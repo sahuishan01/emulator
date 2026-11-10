@@ -363,3 +363,59 @@ fn test_logical_shifted_register_and_mov() {
     cpu.step(&mut mem).unwrap();
     assert_eq!(cpu.x[4], 0x1234_5678_6543_210f);
 }
+
+#[test]
+fn test_bitfield_and_exclusive_load_store() {
+    let mut cpu = Cpu::default();
+    cpu.pc = 0x8000_1000;
+    cpu.x[1] = 0x0123_4567_89ab_cdef;
+    cpu.x[2] = 0x8000_2000; // memory address
+
+    let mut mem = AddressSpace::default();
+
+    // UBFX x0, x1, #8, #16 -> UBFM x0, x1, #8, #23 (immr=8, imms=23)
+    // 1(sf) 10(opc) 100110 1(N) 001000(immr=8) 010111(imms=23) 00001(Rn=1) 00000(Rd=0)
+    // (1<<31) | (2<<29) | (0x26<<23) | (1<<22) | (8<<16) | (23<<10) | (1<<5) | 0 = 0xd3485c20
+    let ubfx = 0xd3485c20u32;
+
+    // SBFX x3, x1, #0, #8 -> SBFM x3, x1, #0, #7 (immr=0, imms=7)
+    // 1(sf) 00(opc) 100110 1(N) 000000(immr=0) 000111(imms=7) 00001(Rn=1) 00011(Rd=3)
+    // (1<<31) | (0<<29) | (0x26<<23) | (1<<22) | (0<<16) | (7<<10) | (1<<5) | 3 = 0x93401c23
+    let sbfx = 0x93401c23u32;
+
+    // STXR w4, x1, [x2] -> 32-bit status in w4, 64-bit store of x1 to [x2]
+    // 1(sf) 0001000 0(store) 0 00100(Rs=4) 011111 00010(Rn=2) 00001(Rt=1)
+    // (1<<31) | (0x08<<24) | (0<<22) | (4<<16) | (0x1f<<10) | (2<<5) | 1 = 0xc8047c41
+    let stxr = 0xc8047c41u32;
+
+    // LDXR x5, [x2] -> 64-bit load from [x2] to x5
+    // 1(sf) 0001000 0(load) 1 11111(Rs=31) 011111 00010(Rn=2) 00101(Rt=5)
+    // (1<<31) | (0x08<<24) | (1<<22) | (31<<16) | (0x1f<<10) | (2<<5) | 5 = 0xc85f7c45
+    let ldxr = 0xc85f7c45u32;
+
+    let mut code_bytes = vec![0u8; 0x1000];
+    code_bytes[0..4].copy_from_slice(&ubfx.to_le_bytes());
+    code_bytes[4..8].copy_from_slice(&sbfx.to_le_bytes());
+    code_bytes[8..12].copy_from_slice(&stxr.to_le_bytes());
+    code_bytes[12..16].copy_from_slice(&ldxr.to_le_bytes());
+    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE).unwrap();
+    mem.map(0x8000_2000, vec![0u8; 0x1000], Permissions::READ_WRITE).unwrap();
+
+    // Step 1: UBFX
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[0], 0xabcd); // bits [23:8] of 0x0123_4567_89ab_cdef are 0xabcd
+
+    // Step 2: SBFX
+    cpu.step(&mut mem).unwrap();
+    // bits [7:0] of x1 is 0xef (-17 signed)
+    assert_eq!(cpu.x[3], 0xffff_ffff_ffff_ffef);
+
+    // Step 3: STXR
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[4], 0); // exclusive store status 0 (success)
+    assert_eq!(mem.read_u64(0x8000_2000).unwrap(), 0x0123_4567_89ab_cdef);
+
+    // Step 4: LDXR
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[5], 0x0123_4567_89ab_cdef);
+}
