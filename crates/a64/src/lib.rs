@@ -57,6 +57,12 @@ impl Width {
             Self::X64 => 8,
         }
     }
+    fn bits(self) -> u8 {
+        match self {
+            Self::W32 => 32,
+            Self::X64 => 64,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +105,15 @@ enum Instruction {
         amount: u8,
         subtract: bool,
         flags: bool,
+    },
+    LogicalRegister {
+        width: Width,
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        shift: u8,
+        amount: u8,
+        op: u8, // 0 = AND, 1 = BIC, 2 = ORR, 3 = ORN, 4 = EOR, 5 = EON, 6 = ANDS, 7 = BICS
     },
     Branch {
         displacement: i64,
@@ -336,6 +351,51 @@ impl Cpu {
                     self.write_zero(rd, result);
                 }
             }
+            Instruction::LogicalRegister {
+                width,
+                rd,
+                rn,
+                rm,
+                shift,
+                amount,
+                op,
+            } => {
+                let lhs = self.read_zero(rn) & width.mask();
+                let operand = self.read_zero(rm) & width.mask();
+                let mut rhs = match shift {
+                    0 => operand << amount,
+                    1 => operand >> amount,
+                    2 if width == Width::W32 => ((operand as u32 as i32) >> amount) as u32 as u64,
+                    2 => ((operand as i64) >> amount) as u64,
+                    // ROR
+                    3 => {
+                        let bits = width.bits();
+                        let a = amount % bits;
+                        if a == 0 { operand } else { (operand >> a) | (operand << (bits - a)) }
+                    }
+                    _ => unreachable!("validated shift"),
+                } & width.mask();
+                // Inverted operand for BIC, ORN, EON, BICS
+                if op & 1 != 0 {
+                    rhs = (!rhs) & width.mask();
+                }
+                let result = match op >> 1 {
+                    0 | 3 => lhs & rhs, // AND / ANDS / BIC / BICS
+                    1 => lhs | rhs,     // ORR / ORN
+                    2 => lhs ^ rhs,     // EOR / EON
+                    _ => unreachable!(),
+                } & width.mask();
+                if op >= 6 {
+                    // ANDS / BICS set flags
+                    self.nzcv = Nzcv {
+                        negative: result & width.sign() != 0,
+                        zero: result == 0,
+                        carry: false,
+                        overflow: false,
+                    };
+                }
+                self.write_zero(rd, result);
+            }
             Instruction::Branch { displacement, link } => {
                 if link {
                     self.x[30] = next_pc;
@@ -505,6 +565,27 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             amount,
             subtract: word & (1 << 30) != 0,
             flags: word & (1 << 29) != 0,
+        });
+    }
+    // Logical (shifted register): AND, BIC, ORR, ORN, EOR, EON, ANDS, BICS
+    // bits 28..24 must be 01010
+    if word & 0x1f00_0000 == 0x0a00_0000 {
+        let opc = ((word >> 29) & 3) as u8;
+        let n = ((word >> 21) & 1) as u8;
+        let shift = ((word >> 22) & 3) as u8;
+        let amount = ((word >> 10) & 63) as u8;
+        if width == Width::W32 && amount >= 32 {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        let op = (opc << 1) | n;
+        return Ok(Instruction::LogicalRegister {
+            width,
+            rd,
+            rn,
+            rm: ((word >> 16) & 31) as u8,
+            shift,
+            amount,
+            op,
         });
     }
     if word & 0x1f80_0000 == 0x1100_0000 {

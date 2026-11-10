@@ -326,3 +326,40 @@ fn test_adr_and_adrp_address_calculation() {
     // (0x8000_100c & !0xfff) + (2 << 12) = 0x8000_1000 + 0x2000 = 0x8000_3000
     assert_eq!(cpu.x[1], 0x8000_3000);
 }
+
+#[test]
+fn test_logical_shifted_register_and_mov() {
+    let mut cpu = Cpu::default();
+    cpu.pc = 0x8000_1000;
+    cpu.x[1] = 0x1234_5678_9abc_def0;
+    cpu.x[2] = 0x0000_0000_ffff_ffff;
+
+    let mut mem = AddressSpace::default();
+
+    // MOV x0, x1  -> ORR x0, xzr, x1: 0xaa0103e0
+    let mov_x0_x1 = 0xaa0103e0u32;
+    // AND x3, x1, x2: opc=00, n=0 -> 0x8a020023
+    // sf=1, opc=00, 01010, shift=00, N=0, Rm=2, imm6=0, Rn=1, Rd=3
+    // (1<<31) | (0xa<<24) | (2<<16) | (1<<5) | 3 = 0x8a020023
+    let and_x3_x1_x2 = 0x8a020023u32;
+    // EOR x4, x1, x2: opc=10, n=0 -> 0xca020024
+    let eor_x4_x1_x2 = 0xca020024u32;
+
+    let mut code_bytes = vec![0u8; 0x1000];
+    code_bytes[0..4].copy_from_slice(&mov_x0_x1.to_le_bytes());
+    code_bytes[4..8].copy_from_slice(&and_x3_x1_x2.to_le_bytes());
+    code_bytes[8..12].copy_from_slice(&eor_x4_x1_x2.to_le_bytes());
+    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE).unwrap();
+
+    // Step 1: MOV
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[0], 0x1234_5678_9abc_def0);
+
+    // Step 2: AND
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[3], 0x0000_0000_9abc_def0);
+
+    // Step 3: EOR
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[4], 0x1234_5678_6543_210f);
+}
