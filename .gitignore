@@ -24,6 +24,7 @@ firmware/
 keys/
 captures/
 .codex-attachments/
+dist/
 *.nsp
 *.xci
 *.nca

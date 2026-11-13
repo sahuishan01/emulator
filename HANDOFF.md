@@ -18,12 +18,13 @@
 
 ## Active Status & Latest Releases
 
-- **Current Git HEAD**: `c003c1f` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.6-dev` (versionCode 46).
-- **Physical Device Telemetry (Issue #14)**:
-  - Report: `1794317303643-da92c9f4`, app version `0.28.5-dev` on `Mali-G720-Immortalis MC12`.
+- **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
+- **Latest Release**: `v0.28.7-dev` (versionCode 47).
+- **Physical Device Telemetry (Issue #15)**:
+  - Latest report: `1794318272960-44c3d786`, app version `0.28.6-dev` on `Mali-G720-Immortalis MC12`.
   - Diagnostics: 269/275 checks passed, 65/66 visible patterns passed.
   - Normalized-position candidate path passes all 23 checks (`normalized-position-texture-*` and `normalized-inset-*`) and all 11 candidate visible patterns (Variants 55–65) with 0 mismatched pixels.
+  - Issues #5–#15 (0.27.6-dev through 0.28.6-dev) all have the same strict result. The baseline projected texture and five controls fail; candidate passes. Four baseline pixel mismatches match colors predicted by captured UVs. No new version-specific GPU regression is confirmed.
 
 ---
 
@@ -50,27 +51,34 @@
    - Bitfield extraction and sign extension (`UBFM`, `SBFM`).
    - Atomic exclusive load/store (`LDXR`, `STXR` 32-bit and 64-bit).
 
+4. **NCA3 Metadata Parser**:
+   - Clean-room decrypted main-header parser in `crates/loader/src/nca.rs`.
+   - Parses distribution/content fields, key-generation metadata, program/rights IDs, four indexed section entries, and stored filesystem-header hashes.
+   - Validates alignment, archive-size agreement, reserved fields, section bounds and overlap. Ten NCA tests plus the existing loader suite pass.
+   - NCA3 header-only XTS decryption is now wired to the `header_key` lookup. It does not decrypt section payloads, verify signatures or section hashes, parse section filesystems, or derive keys. Details: [`docs/nca-parser.md`](docs/nca-parser.md).
+
+5. **Crypto foundations (in progress)**:
+   - Added dependency-free `emulator-crypto`: AES-128 block encrypt/decrypt, explicit-counter CTR, full-block XTS, and bounded `name = hex` key-file parsing with redacted debug output.
+   - AES-128 FIPS 197, CTR SP 800-38A and XTS known-answer tests pass. Lookup-table AES is not constant-time and is not production-hardened.
+   - NCA header sectors use the format-specific big-endian sector-index tweak. NCA section CTR counter construction, key hierarchy/derivation and authenticated signature/hash checks are still open. Do not claim full NCA/content decryption works.
+
 ---
 
 ## Next Planned Steps (In Exact Priority Order)
 
-1. **NCA (Nintendo Content Archive) Container Parser**:
-   - Implement clean-room `NCA3` container parser in `crates/loader/src/nca.rs`.
-   - Parse NCA header structures: magic (`NCA3`), distribution type, content type (Program, Meta, Control, Manual, Data), key generation, section entries (up to 4 sections), and section hash tables.
-   - Add test coverage verifying headers, section table bounds, and malformed header rejection.
+1. **NCA crypto integration and key hierarchy**:
+   - Confirm NCA's per-sector XTS tweak and section CTR counter encoding from format evidence before wiring the generic primitives to files.
+   - Implement key derivation and validate header/section metadata without logging or persisting user key material.
+   - Add independent known-answer and invalid-key/malformed-container cases.
 
-2. **Clean-room Cryptography & Key Management**:
-   - Implement AES-128-CTR and AES-128-XTS block operations for header and section decryption.
-   - Implement keyset loader (`prod.keys`) for titlekeys, header keys, and key area encryption keys.
-
-3. **AArch64 Floating Point & NEON Vector Operations**:
+2. **AArch64 Floating Point & NEON Vector Operations**:
    - Implement scalar single/double precision FP arithmetic in `crates/a64/src/lib.rs` (`FADD`, `FSUB`, `FMUL`, `FDIV`, `FCMP`, `FCVT`).
    - Implement 128-bit vector load/store instructions (`LDR`/`STR` Q-registers).
 
-4. **Horizon VI BufferQueue & Presentation Pipeline**:
+3. **Horizon VI BufferQueue & Presentation Pipeline**:
    - Implement clean-room `nvnflinger` BufferQueue state machine (`Connect`, `RequestBuffer`, `QueueBuffer`, `DequeueBuffer`).
    - Connect buffer presentation to the Android Vulkan swapchain / `ANativeWindow`.
 
-5. **NV Channel GPFIFO Submission Pipeline**:
+4. **NV Channel GPFIFO Submission Pipeline**:
    - Support `NVIOC_CHANNEL_SUBMIT_GPFIFO` command buffer submission.
    - Wire guest command stream decoding directly into the host Vulkan command processor.

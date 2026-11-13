@@ -110,3 +110,16 @@ strict baseline and rejected-profile coverage intact.
 
 Raw JSON and analyzer files remain in ignored `reports/github-inbox/`; they are
 not copied into source history.
+
+## Repeated physical confirmation — issues #5–#15
+
+The subsequent private issue reports cover0.27.6-dev through0.28.6-dev. Each
+report hash was checked against its local JSON bytes, and the GitHub issue titles
+confirm the version sequence. All eleven analyses produce the same result:
+269/275 total checks,65/66 visible patterns,23/23 projection-candidate checks,
+and four original inset pixel mismatches. The same six strict GPU checks fail;
+the UV-predicted sampled colors still match actual output. The latest report is
+[issue #15, artifact 1](https://github.com/sahuishan01/emulator/issues/15/artifacts/1)
+for0.28.6-dev. These repeated runs strengthen confidence in the bounded
+physical-device observation but do not broaden its validated draw profile or
+establish commercial-game support. No baseline failure was relaxed.

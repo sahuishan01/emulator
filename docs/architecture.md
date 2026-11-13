@@ -4,9 +4,14 @@ Design baseline: 2026-10-30. This document defines the system boundaries;
 [design.md](design.md) defines the runtime contracts, and
 [implementation-plan.md](implementation-plan.md) defines delivery order and
 acceptance gates. Proposed components below are not claims of implemented
-functionality. Implemented now: bounded static NRO loading, the small A64
-interpreter, handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking
-event/thread waits, virtual timeouts and CLI sessions. Android embeds the same
+functionality. Implemented now: bounded static NRO loading, PFS0/NPDM/NSO
+parsing, decrypted NCA3 main-header metadata parsing, the small A64 interpreter,
+handles, HIPC/CMIF v0, cloned sessions, guest threads, blocking event/thread
+waits, virtual timeouts and CLI sessions. NCA3 header decryption is a bounded
+slice; section-payload decryption and signature verification remain
+unimplemented. A separate dependency-free crate provides AES-128/CTR/XTS and
+bounded key-file parsing, with NCA-specific header integration.
+Android embeds the same
 Rust engine for eighteen original guest checks, fifty NV scenarios, seventy-six GPU
 core groups, twenty-five shader cases and one hundred six Vulkan workloads. The user
 supplied a physical G720 0.3.0-dev report passing all six workloads at that checkpoint,

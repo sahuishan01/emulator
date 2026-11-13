@@ -32,6 +32,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "emulator-crypto"
+version = "0.1.0"
+
+[[package]]
 name = "emulator-gpu"
 version = "0.1.0"
 dependencies = [
@@ -57,6 +61,7 @@ dependencies = [
 name = "emulator-loader"
 version = "0.1.0"
 dependencies = [
+ "emulator-crypto",
  "emulator-memory",
 ]
 

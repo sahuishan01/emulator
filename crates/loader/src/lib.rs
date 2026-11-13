@@ -1,8 +1,9 @@
 //! Original uncompressed NRO0 and NSO0 parsing and mapping. Module relocation is not implemented.
 
 pub mod exefs;
-mod nso;
+pub mod nca;
 pub mod npdm;
+mod nso;
 pub mod pfs0;
 pub mod reloc;
 pub use nso::{LoadedNsoModule, NsoImage, NsoProgram};
@@ -30,14 +31,14 @@ pub enum LoadError {
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invalid(reason) => write!(f, "invalid NRO: {reason}"),
+            Self::Invalid(reason) => write!(f, "invalid loader input: {reason}"),
             Self::UnsupportedVersion(version) => write!(f, "unsupported NRO version {version}"),
             Self::UnsupportedFlags(flags) => write!(f, "unsupported NRO flags {flags:#x}"),
             Self::UnsupportedModuleHeader => {
                 write!(f, "NRO module headers/relocations are not implemented")
             }
-            Self::LimitExceeded => write!(f, "NRO file or memory limit exceeded"),
-            Self::AddressOverflow => write!(f, "NRO guest address overflow"),
+            Self::LimitExceeded => write!(f, "loader limit exceeded"),
+            Self::AddressOverflow => write!(f, "loader address overflow"),
             Self::Memory(error) => error.fmt(f),
         }
     }

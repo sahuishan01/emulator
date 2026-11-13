@@ -15,6 +15,14 @@ discovery/IPC, shared cloned-session lifetimes, events, thread scheduling,
 blocking waits, joins, virtual timeouts, cancellation and guest DMA submissions,
 including normal HIPC input/output buffer grants, transfer-memory lending,
 standard nvdrv Initialize, NVMap metadata/import ioctls NV GPU address-space mapping, channel submission and completion.
+The loader also has clean-room PFS0/NPDM/NSO support and a bounded parser for
+decrypted NCA3 main-header metadata. It decrypts the bounded 0xC00-byte NCA3
+header region when supplied a header key; section payload decryption and
+signature/hash verification are not implemented.
+The dependency-free `emulator-crypto` crate now contains AES-128, CTR/XTS
+primitives and a bounded in-memory key-file parser; it is not yet wired to NCA
+header decryption and is not constant-time or production-hardened. See the
+[crypto limits](docs/crypto-primitives.md).
 The Android app embeds this engine, eighteen guest checks, fifty NV API scenarios,
 seventy-six GPU core cases, twenty-five shader cases and one hundred six Vulkan checks. The first six native checks cover image transfers, depth testing, compute-to-draw visibility,
 BC1 conversion, sampled draws and converted-image updates. All six GPU checks passed in the user's supplied
