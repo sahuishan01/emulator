@@ -126,6 +126,7 @@ struct ProgramChunk { std::uint32_t length; std::uint8_t bytes[4096]; };
 static_assert(sizeof(ProgramChunk)==4100 && alignof(ProgramChunk)==4 && offsetof(ProgramChunk,bytes)==4);
 extern "C" std::uint32_t emulator_program_begin_v1(std::uint32_t bytes);
 extern "C" std::uint32_t emulator_program_append_v1(ProgramChunk chunk);
+extern "C" std::uint32_t emulator_program_open_file_v1(const char* path);
 extern "C" EngineReport emulator_program_inspect_v1();
 extern "C" EngineReport emulator_program_start_v1();
 extern "C" EngineReport emulator_program_step_v1(std::uint32_t budget);

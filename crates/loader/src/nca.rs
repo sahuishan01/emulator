@@ -334,9 +334,14 @@ impl NcaDecryptedHeader {
         keys: &KeyFile,
     ) -> Result<crate::romfs::RomFsArchive, LoadError> {
         for (i, sec_opt) in self.metadata.sections.iter().enumerate() {
-            if sec_opt.is_some() {
+            if let Some(sec) = sec_opt {
                 let fs_header = NcaFsHeader::parse(&self.fs_headers[i])?;
                 if fs_header.fs_type == NcaFsType::RomFs {
+                    let sec_len = sec.end.saturating_sub(sec.start);
+                    // Protect against allocating multi-gigabyte RomFS in memory
+                    if sec_len > 128 * 1024 * 1024 {
+                        return Err(LoadError::Invalid("RomFS exceeds in-memory buffer limit"));
+                    }
                     let decrypted = self.decrypt_section(archive, i, keys)?;
                     return crate::romfs::RomFsArchive::from_section_payload(&decrypted, &fs_header);
                 }

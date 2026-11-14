@@ -6,14 +6,122 @@ use std::cell::RefCell;
 const MAX_FILE: usize = 32 * 1024 * 1024;
 const MAX_INSTRUCTIONS: u64 = 2_000_000;
 const CATCH: &[u8] = include_bytes!("../../../examples/homebrew/catch.nro");
+
 #[repr(C)]
 pub struct ProgramChunk {
     pub length: u32,
     pub bytes: [u8; 4096],
 }
+
+#[cfg(unix)]
+struct MmapFile {
+    ptr: *mut std::ffi::c_void,
+    len: usize,
+}
+
+#[cfg(unix)]
+unsafe impl Send for MmapFile {}
+#[cfg(unix)]
+unsafe impl Sync for MmapFile {}
+
+#[cfg(unix)]
+impl MmapFile {
+    fn open(path: &std::path::Path) -> std::io::Result<Self> {
+        use std::os::unix::io::AsRawFd;
+
+        let file = std::fs::File::open(path)?;
+        let meta = file.metadata()?;
+        let len = meta.len() as usize;
+        if len == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "File is empty",
+            ));
+        }
+
+        extern "C" {
+            fn mmap(
+                addr: *mut std::ffi::c_void,
+                length: usize,
+                prot: i32,
+                flags: i32,
+                fd: i32,
+                offset: i64,
+            ) -> *mut std::ffi::c_void;
+        }
+        const PROT_READ: i32 = 1;
+        const MAP_PRIVATE: i32 = 2;
+        let map_failed = !0usize as *mut std::ffi::c_void;
+
+        let fd = file.as_raw_fd();
+        let ptr = unsafe {
+            mmap(
+                std::ptr::null_mut(),
+                len,
+                PROT_READ,
+                MAP_PRIVATE,
+                fd,
+                0,
+            )
+        };
+        if ptr == map_failed {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Self { ptr, len })
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.len) }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for MmapFile {
+    fn drop(&mut self) {
+        let map_failed = !0usize as *mut std::ffi::c_void;
+        if !self.ptr.is_null() && self.ptr != map_failed {
+            extern "C" {
+                fn munmap(addr: *mut std::ffi::c_void, length: usize) -> i32;
+            }
+            unsafe {
+                munmap(self.ptr, self.len);
+            }
+        }
+    }
+}
+
+enum ProgramBacking {
+    Heap(Vec<u8>),
+    #[cfg(unix)]
+    Mmap(MmapFile),
+}
+
+impl std::ops::Deref for ProgramBacking {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            ProgramBacking::Heap(v) => v.as_slice(),
+            #[cfg(unix)]
+            ProgramBacking::Mmap(m) => m.as_slice(),
+        }
+    }
+}
+
+impl<T: AsRef<[u8]>> PartialEq<T> for ProgramBacking {
+    fn eq(&self, other: &T) -> bool {
+        self.as_slice() == other.as_ref()
+    }
+}
+
+impl ProgramBacking {
+    fn as_slice(&self) -> &[u8] {
+        self
+    }
+}
+
 struct Program {
     expected: usize,
-    bytes: Vec<u8>,
+    bytes: ProgramBacking,
     session: Option<Session>,
     last: String,
 }
@@ -69,7 +177,7 @@ pub extern "C" fn emulator_program_begin_v1(length: u32) -> u32 {
             }
             *state = Some(Program {
                 expected: length as usize,
-                bytes,
+                bytes: ProgramBacking::Heap(bytes),
                 session: None,
                 last: String::new(),
             });
@@ -97,8 +205,67 @@ pub extern "C" fn emulator_program_append_v1(chunk: ProgramChunk) -> u32 {
             {
                 return 1;
             }
-            p.bytes.extend_from_slice(&chunk.bytes[..n]);
-            0
+            if let ProgramBacking::Heap(ref mut b) = p.bytes {
+                b.extend_from_slice(&chunk.bytes[..n]);
+                0
+            } else {
+                1
+            }
+        })
+    })
+    .unwrap_or(1)
+}
+
+#[no_mangle]
+pub extern "C" fn emulator_program_open_file_v1(path: *const std::os::raw::c_char) -> u32 {
+    std::panic::catch_unwind(|| {
+        if path.is_null() {
+            return 1;
+        }
+        let c_str = unsafe { std::ffi::CStr::from_ptr(path) };
+        let Ok(path_str) = c_str.to_str() else {
+            return 1;
+        };
+        let file_path = std::path::Path::new(path_str);
+        let Ok(metadata) = std::fs::metadata(file_path) else {
+            return 1;
+        };
+        let file_len = metadata.len();
+        const MAX_PATH_FILE: u64 = 64 * 1024 * 1024 * 1024; // 64 GiB
+        if file_len < 128 || file_len > MAX_PATH_FILE {
+            return 1;
+        }
+        PROGRAM.with(|cell| {
+            let Ok(mut state) = cell.try_borrow_mut() else {
+                return 1;
+            };
+            if state.is_some() {
+                return 1;
+            }
+            #[cfg(unix)]
+            {
+                if let Ok(mmap) = MmapFile::open(file_path) {
+                    *state = Some(Program {
+                        expected: file_len as usize,
+                        bytes: ProgramBacking::Mmap(mmap),
+                        session: None,
+                        last: String::new(),
+                    });
+                    return 0;
+                }
+            }
+            if file_len <= (64 * 1024 * 1024) {
+                if let Ok(bytes) = std::fs::read(file_path) {
+                    *state = Some(Program {
+                        expected: file_len as usize,
+                        bytes: ProgramBacking::Heap(bytes),
+                        session: None,
+                        last: String::new(),
+                    });
+                    return 0;
+                }
+            }
+            1
         })
     })
     .unwrap_or(1)
@@ -142,7 +309,7 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
         } else {
             p.session = Some(Session::from_nro(&p.bytes).map_err(|e| e.to_string())?);
         }
-        p.bytes = Vec::new();
+        p.bytes = ProgramBacking::Heap(Vec::new());
         Ok(
             "{\"ok\":true,\"state\":\"running\",\"instructions\":0,\"output\":\"\",\"error\":\"\"}"
                 .into(),
@@ -340,5 +507,30 @@ mod tests {
         assert!(text(emulator_program_step_v1(4097)).contains("Invalid execution slice"));
         assert!(text(emulator_program_step_v1(8)).contains("\"instructions\":5"));
         emulator_program_close_v1();
+    }
+    #[test]
+    fn open_file_v1_loads_and_executes_program_from_disk() {
+        emulator_program_close_v1();
+        let path = std::ffi::CString::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/homebrew/hello.nro"
+        ))
+        .unwrap();
+        assert_eq!(emulator_program_open_file_v1(path.as_ptr()), 0);
+        let inspected = text(emulator_program_inspect_v1());
+        assert!(inspected.contains("\"format\":\"NRO0\""), "{inspected}");
+        assert!(inspected.contains("\"ok\":true"), "{inspected}");
+        let started = text(emulator_program_start_v1());
+        assert!(started.contains("\"ok\":true"), "{started}");
+        let mut result = String::new();
+        for _ in 0..10 {
+            result = text(emulator_program_step_v1(1024));
+            if !result.contains("\"state\":\"running\"") {
+                break;
+            }
+        }
+        assert!(result.contains("\"state\":\"exited\""), "{result}");
+        assert!(result.contains("Hello from original Switch homebrew!"), "{result}");
+        assert_eq!(emulator_program_close_v1(), 0);
     }
 }

@@ -32,7 +32,8 @@ and ask the original Rust NRO parser to validate it before publication. A succes
 rename is followed by a catalog insert. Failed inserts delete the copied file;
 process-start cleanup removes partial imports and unindexed digest files.
 
-Limits are 32 MiB/file, 256 MiB/library and 128 imported entries. Display names
+Limits are 32 MiB/file for .nro homebrew, up to 64 GiB for .nsp game packages,
+512 GiB/library and 128 imported entries. Display names
 are normalized/bounded and never used as paths. Private filenames must be 64 lower
 hex digits plus `.nro`. Exact duplicates and the byte-identical included Catch are
 recognized. Bad headers, unsupported module headers/flags, over-limit files and

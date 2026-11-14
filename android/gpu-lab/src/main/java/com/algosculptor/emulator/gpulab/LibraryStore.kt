@@ -42,7 +42,12 @@ data class ImportStatus(val busy: Boolean = false, val message: String = "", val
 
 /** One writer owns import/file/catalog transitions. Activities observe without owning jobs. */
 class LibraryStore(private val app: Context) {
-    companion object { const val MAX_FILE = 32L * 1024 * 1024; const val MAX_LIBRARY = 256L * 1024 * 1024 }
+    companion object {
+        const val MAX_NRO_FILE = 32L * 1024 * 1024
+        const val MAX_PACKAGE_FILE = 64L * 1024 * 1024 * 1024
+        const val MAX_FILE = MAX_PACKAGE_FILE
+        const val MAX_LIBRARY = 512L * 1024 * 1024 * 1024
+    }
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val observers = mutableSetOf<(ImportStatus) -> Unit>()
@@ -103,7 +108,7 @@ class LibraryStore(private val app: Context) {
     fun import(uri: Uri) {
         val job = ImportJob()
         if (!activeImport.compareAndSet(null, job)) return
-        status = ImportStatus(true, "Importing homebrew…")
+        status = ImportStatus(true, "Importing title…")
         observers.toList().forEach { it(status) }
         val cancellation = job.signal
         worker.execute {
@@ -122,12 +127,14 @@ class LibraryStore(private val app: Context) {
                 AppLog.i("LibraryStore", "Importing file $name (extension: $ext)")
                 val digest = MessageDigest.getInstance("SHA-256")
                 var size = 0L
+                val maxFile = if (ext == "nro") MAX_NRO_FILE else MAX_PACKAGE_FILE
                 app.contentResolver.openAssetFileDescriptor(uri, "r", cancellation)?.use { descriptor ->
                     descriptor.createInputStream().use { input ->
                         job.stream.set(input)
                         FileOutputStream(temporary).use { output ->
-                            val buffer = ByteArray(32768)
+                            val buffer = ByteArray(262144)
                             var emptyReads = 0
+                            var lastReport = 0L
                             while (true) {
                                 if (job.cancelled.get()) throw CancellationException()
                                 val count = input.read(buffer)
@@ -135,9 +142,15 @@ class LibraryStore(private val app: Context) {
                                 if (count == 0) { check(++emptyReads <= 16) { "The document provider did not return data." }; continue }
                                 emptyReads = 0
                                 size += count
-                                require(size <= MAX_FILE) { "Files can be up to 32 MiB." }
-                                require(used + size <= MAX_LIBRARY) { "The library storage limit is 256 MiB. Remove a title before importing more." }
+                                require(size <= maxFile) { if (ext == "nro") "NRO files can be up to 32 MiB." else "Packages can be up to 64 GiB." }
+                                require(used + size <= MAX_LIBRARY) { "The library storage limit is 512 GiB. Remove a title before importing more." }
                                 output.write(buffer, 0, count); digest.update(buffer, 0, count)
+                                val now = System.currentTimeMillis()
+                                if (now - lastReport >= 500) {
+                                    lastReport = now
+                                    val mb = size / (1024 * 1024)
+                                    publish(ImportStatus(true, "Importing… ($mb MB)"))
+                                }
                             }
                             output.fd.sync()
                         }
