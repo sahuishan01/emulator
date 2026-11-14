@@ -22,6 +22,7 @@ use std::fmt;
 use std::rc::Rc;
 
 pub const SVC_SET_HEAP_SIZE: u16 = 0x01;
+pub const SVC_SET_MEMORY_PERMISSION: u16 = 0x02;
 pub const SVC_SET_MEMORY_ATTRIBUTE: u16 = 0x03;
 pub const SVC_QUERY_MEMORY: u16 = 0x06;
 pub const SVC_EXIT_PROCESS: u16 = 0x07;
@@ -47,12 +48,14 @@ pub const SVC_ARBITRATE_LOCK: u16 = 0x1a;
 pub const SVC_ARBITRATE_UNLOCK: u16 = 0x1b;
 pub const SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC: u16 = 0x1c;
 pub const SVC_SIGNAL_PROCESS_WIDE_KEY: u16 = 0x1d;
+pub const SVC_GET_SYSTEM_TICK: u16 = 0x1e;
 pub const SVC_CONNECT_TO_NAMED_PORT: u16 = 0x1f;
 pub const SVC_SEND_SYNC_REQUEST: u16 = 0x21;
-pub const SVC_GET_SYSTEM_TICK: u16 = 0x25;
+pub const SVC_GET_PROCESS_ID: u16 = 0x24;
+pub const SVC_GET_THREAD_ID: u16 = 0x25;
+pub const SVC_BREAK: u16 = 0x26;
 pub const SVC_OUTPUT_DEBUG_STRING: u16 = 0x27;
-pub const SVC_GET_THREAD_ID: u16 = 0x29;
-pub const SVC_BREAK: u16 = 0x2c;
+pub const SVC_GET_INFO: u16 = 0x29;
 pub const SVC_CREATE_EVENT: u16 = 0x45;
 pub const CURRENT_PROCESS_HANDLE: u32 = 0xffff_8001;
 pub const MAX_TRANSFER_MEMORY_BYTES: usize = 16 * 1024 * 1024;
@@ -714,6 +717,26 @@ impl Kernel {
                 self.set_heap_size(cpu, memory)?;
                 Ok(KernelEvent::Continue)
             }
+            SVC_SET_MEMORY_PERMISSION => {
+                let addr = cpu.x[0];
+                let size = cpu.x[1] as usize;
+                let perm = cpu.x[2] as u32;
+                let p = match perm {
+                    0 => Permissions::NONE,
+                    1 => Permissions::READ,
+                    2 => Permissions::WRITE,
+                    3 => Permissions::READ_WRITE,
+                    5 => Permissions::READ_EXECUTE,
+                    7 => Permissions::READ_WRITE_EXECUTE,
+                    _ => Permissions::NONE,
+                };
+                if memory.protect(addr, size, p).is_ok() {
+                    cpu.x[0] = 0;
+                } else {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                }
+                Ok(KernelEvent::Continue)
+            }
             SVC_SET_MEMORY_ATTRIBUTE => {
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
@@ -1017,7 +1040,19 @@ impl Kernel {
             }
             SVC_GET_SYSTEM_TICK => {
                 let ns = self.scheduler.stats().virtual_time_ns;
-                cpu.x[0] = (ns.saturating_mul(192) / 10000).max(ns);
+                cpu.x[0] = (ns.saturating_mul(192) / 10000).max(1);
+                Ok(KernelEvent::Continue)
+            }
+            SVC_GET_PROCESS_ID => {
+                let out_ptr = cpu.x[0];
+                let _process_handle = cpu.x[1] as u32;
+                if out_ptr != 0 {
+                    if memory.write_u64(out_ptr, 1).is_err() {
+                        cpu.x[0] = RESULT_INVALID_ADDRESS;
+                        return Ok(KernelEvent::Continue);
+                    }
+                }
+                cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }
             SVC_GET_THREAD_ID => {
@@ -1043,7 +1078,41 @@ impl Kernel {
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }
-            SVC_BREAK => {
+            SVC_GET_INFO => {
+                let out_ptr = cpu.x[0];
+                let info_type = cpu.x[1] as u32;
+                let _handle = cpu.x[2] as u32;
+                let _subtype = cpu.x[3];
+                let val: u64 = match info_type {
+                    0 => 7, // InfoType_CoreMask (cores 0, 1, 2)
+                    1 => !0u64, // InfoType_PriorityMask (all priorities)
+                    2 => 0x20_0000_0000, // InfoType_AliasRegionAddress
+                    3 => 0x10_0000_0000, // InfoType_AliasRegionSize
+                    4 => 0x8000_0000, // InfoType_HeapRegionAddress
+                    5 => 0x4000_0000, // InfoType_HeapRegionSize (1 GB)
+                    6 => 0x1_0000_0000, // InfoType_TotalMemorySize (4 GB)
+                    7 => 0x2000_0000, // InfoType_UsedMemorySize (512 MB)
+                    8 => 0, // InfoType_DebuggerAttached
+                    9 => 0, // InfoType_ResourceLimit
+                    10 => 0, // InfoType_IdleTickCount
+                    11 => 0x0123_4567_89ab_cdef, // InfoType_RandomEntropy
+                    12 => 0x800_0000, // InfoType_AslrRegionAddress
+                    13 => 0x7f_f800_0000, // InfoType_AslrRegionSize
+                    14 => 0x70_0000_0000, // InfoType_StackRegionAddress
+                    15 => 0x1000_0000, // InfoType_StackRegionSize
+                    18 => 0, // InfoType_InitialProcessIdRange
+                    _ => 0,
+                };
+                if out_ptr != 0 {
+                    if memory.write_u64(out_ptr, val).is_err() {
+                        cpu.x[0] = RESULT_INVALID_ADDRESS;
+                        return Ok(KernelEvent::Continue);
+                    }
+                }
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_BREAK | 0x2c => {
                 let reason = cpu.x[0] as u32;
                 let info1 = cpu.x[1];
                 let info2 = cpu.x[2];
@@ -1139,6 +1208,7 @@ pub fn homebrew_config() -> Vec<u8> {
     let mut available = [0_u64; 2];
     for id in [
         SVC_SET_HEAP_SIZE,
+        SVC_SET_MEMORY_PERMISSION,
         SVC_SET_MEMORY_ATTRIBUTE,
         SVC_QUERY_MEMORY,
         SVC_EXIT_PROCESS,
@@ -1159,7 +1229,9 @@ pub fn homebrew_config() -> Vec<u8> {
         SVC_CONNECT_TO_NAMED_PORT,
         SVC_SEND_SYNC_REQUEST,
         SVC_GET_SYSTEM_TICK,
+        SVC_GET_PROCESS_ID,
         SVC_GET_THREAD_ID,
+        SVC_GET_INFO,
         SVC_BREAK,
         SVC_CREATE_EVENT,
         SVC_SIGNAL_EVENT,

@@ -35,6 +35,7 @@ import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -51,6 +52,34 @@ class ProgramActivity : Activity() {
     private val isPaused = AtomicBoolean(false)
     private val isStopped = AtomicBoolean(false)
     private val pauseLock = Object()
+
+    private fun runWorkerTask(task: () -> Unit) {
+        try {
+            if (!worker.isShutdown && !worker.isTerminated) {
+                worker.execute {
+                    try {
+                        task()
+                    } catch (t: Throwable) {
+                        AppLog.w("ProgramActivity", "Worker task failed: ${t.message}")
+                    }
+                }
+            } else {
+                Thread {
+                    try {
+                        task()
+                    } catch (t: Throwable) {
+                        AppLog.w("ProgramActivity", "Detached task failed: ${t.message}")
+                    }
+                }.start()
+            }
+        } catch (_: RejectedExecutionException) {
+            Thread {
+                try {
+                    task()
+                } catch (_: Throwable) {}
+            }.start()
+        }
+    }
 
     private lateinit var ui: AppUi
     private lateinit var statusBadge: TextView
@@ -155,18 +184,21 @@ class ProgramActivity : Activity() {
                 override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                     val s = Surface(surfaceTexture)
                     activeSurface = s
-                    worker.execute { NativePrograms.setSurface(s) }
+                    runWorkerTask { NativePrograms.setSurface(s) }
                 }
                 override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                     val s = Surface(surfaceTexture)
                     activeSurface = s
-                    worker.execute { NativePrograms.setSurface(s) }
+                    runWorkerTask { NativePrograms.setSurface(s) }
                 }
                 override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
                     activeSurface = null
-                    worker.execute {
-                        NativePrograms.setSurface(null)
-                        surfaceTexture.release()
+                    runWorkerTask {
+                        try {
+                            NativePrograms.setSurface(null)
+                        } finally {
+                            surfaceTexture.release()
+                        }
                     }
                     return false
                 }

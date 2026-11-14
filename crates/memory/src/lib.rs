@@ -52,6 +52,11 @@ impl Permissions {
         write: false,
         execute: true,
     };
+    pub const READ_WRITE_EXECUTE: Self = Self {
+        read: true,
+        write: true,
+        execute: true,
+    };
 
     pub fn allows(self, access: Access) -> bool {
         match access {
@@ -282,9 +287,11 @@ impl AddressSpace {
                 } else if region.loaned() {
                     0x0D // Transferred
                 } else if region.effective_permissions().allows(Access::Execute) {
-                    0x02 // Static
+                    0x03 // CodeStatic (0x03 in Horizon OS)
+                } else if region.effective_permissions().allows(Access::Write) {
+                    0x04 // CodeMutable (0x04 in Horizon OS)
                 } else {
-                    0x02 // Static (retail NSO module segment default)
+                    0x03 // CodeStatic (retail NSO .rodata segment default)
                 };
                 let attribute = if region.loaned() { 1 << 1 } else { 0 };
                 return MemoryDescriptor {

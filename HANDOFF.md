@@ -19,7 +19,21 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.30-dev` (versionCode 70).
+- **Latest Release**: `v0.28.31-dev` (versionCode 71).
+  - **Horizon OS NSO Memory Classification Fix for `rtld` Module Discovery**:
+    - Corrected memory state classifications in `crates/memory/src/lib.rs` and `crates/loader/src/nso.rs`: set `.text` and `.rodata` segment memory states to `0x03` (`MemType_CodeStatic`) and `.data` / `.bss` to `0x04` (`MemType_CodeMutable`), matching exact Nintendo Switch Horizon OS kernel definitions.
+    - Resolved critical infinite hang in Nintendo SDK runtime linker (`rtld`): `rtld` scans virtual address space via `svcQueryMemory` specifically filtering for `CodeStatic` (0x03) with `R-X` (5) permissions to discover non-rtld modules (`main.nso`, `subsdk*.nso`, etc.). The prior fallback of `0x02` (`MemType_Normal`) caused `rtld` to find zero modules and spin indefinitely without booting.
+  - **Supervisor Call (SVC) ABI ID Alignments & System Primitives**:
+    - Aligned `SVC_GET_SYSTEM_TICK` to official Horizon OS ID `0x1E` (was previously misplaced at `0x25`). Calculates 19.2 MHz Switch system ticks based on elapsed virtual nanoseconds.
+    - Implemented `SVC_GET_PROCESS_ID` (0x24) returning 64-bit process ID.
+    - Aligned `SVC_GET_THREAD_ID` to official ID `0x25` (was previously `0x29`).
+    - Aligned `SVC_BREAK` to official ID `0x26` with backwards-compatible `0x2C` alias.
+    - Implemented `SVC_SET_MEMORY_PERMISSION` (0x02) supporting memory protection updates for `.rodata` and dynamic code pages.
+    - Implemented `SVC_GET_INFO` (0x29) supporting core masks, priority masks, alias region addresses/sizes, heap region address/size, total and committed memory sizes, ASLR regions, and deterministic entropy queries required by early nnSdk CRT initialization.
+    - Updated `SVC_SLEEP_THREAD` (0x0B) to gracefully handle non-positive timeouts (`ns <= 0`, e.g. `0`, `-1`, `-2`) as thread yields rather than faulting.
+  - **Activity Lifecycle & TextureView Shutdown Crash Guard**:
+    - Fixed fatal uncaught `RejectedExecutionException` in `ProgramActivity.kt` (`onSurfaceTextureDestroyed`) during activity destruction: wrapped surface detachment and release tasks in `runWorkerTask` with `worker.isShutdown` checks and detached fallback execution, guaranteeing that `NativePrograms.setSurface(null)` and `surfaceTexture.release()` are always safely executed without crashing the main UI thread.
+- **Previous Release**: `v0.28.30-dev` (versionCode 70).
   - **Horizon OS Futex Arbitration & Condvar Signaling Fixes**:
     - Fixed critical ABI register mapping in `SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC` (0x1C): aligned X0 (`mutex_addr`), X1 (`key_addr`), X2 (`tag`), and X3 (`timeout_ns`), eliminating inverted queue lookups that previously prevented `SignalProcessWideKey` from matching and waking condition variable waiters.
     - Enhanced `SVC_SIGNAL_PROCESS_WIDE_KEY` (0x1D) with proper mutex requeue semantics: when signaling condition variables, threads waiting on contested mutexes are requeued to the mutex FIFO queue with the contention flag (`0x4000_0000`) set, or granted immediate ownership if the mutex is unheld.

@@ -198,6 +198,13 @@ impl NsoImage {
             });
         }
         memory.map_batch(mappings)?;
+        let segment_states = [0x03u32, 0x03u32, 0x04u32]; // CodeStatic, CodeStatic, CodeMutable
+        for (i, segment) in self.segments.iter().enumerate() {
+            if segment.memory_size > 0 {
+                let address = base.checked_add(segment.offset).ok_or(LoadError::AddressOverflow)?;
+                let _ = memory.set_state(address, segment.memory_size, segment_states[i]);
+            }
+        }
         Ok(LoadedImage {
             base,
             entry: base,

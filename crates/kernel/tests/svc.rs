@@ -124,7 +124,7 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
     assert_eq!(cpu.x[0], 0);
     assert_eq!(memory.read_u64(0x1000).unwrap(), 0x8000_0000);
     assert_eq!(memory.read_u64(0x1008).unwrap(), 0x10000);
-    assert_eq!(memory.read_u32(0x1010).unwrap(), 0x02); // Static code
+    assert_eq!(memory.read_u32(0x1010).unwrap(), 0x03); // CodeStatic
     assert_eq!(memory.read_u32(0x1018).unwrap(), 5); // ReadExecute
 
     // Query 3: address 0x8001_5000 (data segment, RW)
@@ -295,8 +295,9 @@ fn set_heap_size_allocates_and_queries_memory_state() {
 fn system_tick_thread_id_futex_and_processor_primitives() {
     use emulator_kernel::{
         SVC_ARBITRATE_LOCK, SVC_ARBITRATE_UNLOCK, SVC_BREAK,
-        SVC_GET_CURRENT_PROCESSOR_NUMBER, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID,
-        SVC_SET_MEMORY_ATTRIBUTE, SVC_SIGNAL_PROCESS_WIDE_KEY,
+        SVC_GET_CURRENT_PROCESSOR_NUMBER, SVC_GET_INFO, SVC_GET_PROCESS_ID,
+        SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID, SVC_SET_MEMORY_ATTRIBUTE,
+        SVC_SET_MEMORY_PERMISSION, SVC_SIGNAL_PROCESS_WIDE_KEY,
         SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC,
     };
     let mut memory = AddressSpace::default();
@@ -338,6 +339,48 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     );
     assert_eq!(cpu.x[0], 0);
     assert_eq!(memory.read_u64(0x1000).unwrap(), 1);
+
+    // Process ID
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 0xffff_8001;
+    assert_eq!(
+        kernel.dispatch(SVC_GET_PROCESS_ID, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(memory.read_u64(0x1000).unwrap(), 1);
+
+    // GetInfo (CoreMask)
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 0; // InfoType_CoreMask
+    cpu.x[2] = 0xffff_8001;
+    cpu.x[3] = 0;
+    assert_eq!(
+        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(memory.read_u64(0x1000).unwrap(), 7);
+
+    // Set memory permission
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 4096;
+    cpu.x[2] = 1; // Read only
+    assert_eq!(
+        kernel.dispatch(SVC_SET_MEMORY_PERMISSION, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+
+    // Restore Read-Write permission for subsequent tests
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 4096;
+    cpu.x[2] = 3; // ReadWrite
+    assert_eq!(
+        kernel.dispatch(SVC_SET_MEMORY_PERMISSION, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
 
     // Futex lock / unlock
     memory.write_u32(0x1000, 0).unwrap();
