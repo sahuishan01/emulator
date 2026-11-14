@@ -72,6 +72,23 @@ class SettingsActivity : Activity() {
         (application as EmulatorApplication).library.list { entries ->
             if (!isDestroyed) storage.text = "Imported files: ${entries.sumOf { it.bytes } / 1024} KiB / 256 MiB\n${entries.count { !it.included }} of 128 import slots used"
         }
+        ui.space(root, 12)
+        root.addView(ui.button("Clear downloaded APKs") {
+            AlertDialog.Builder(this)
+                .setTitle("Clear Downloaded APKs")
+                .setMessage("Delete downloaded emulator APK updates and release packages from device storage?")
+                .setPositiveButton("Clear") { _, _ ->
+                    val (count, bytes) = (application as EmulatorApplication).updates.clearDownloads()
+                    AlertDialog.Builder(this)
+                        .setTitle("Downloads Cleared")
+                        .setMessage("Removed $count downloaded file(s) (${bytes / 1024} KiB freed).")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        })
+        root.addView(ui.text("Remove earlier downloaded APK updates and release packages from internal and download storage.", 13f, ui.muted))
         ui.space(root, 24); root.addView(ui.label("SUPPORT")); ui.space(root, 10)
         root.addView(ui.button("Diagnostics") { startActivity(Intent(this, MainActivity::class.java)) })
         root.addView(ui.text("Run the engine and GPU checks, then export a report when something goes wrong.", 14f, ui.muted))

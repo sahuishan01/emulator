@@ -19,7 +19,16 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.22-dev` (versionCode 62).
+- **Latest Release**: `v0.28.23-dev` (versionCode 63).
+  - Resolved `unsupported guest SVC 0x6` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #1134).
+  - Implemented 64-bit Horizon kernel supervisor call `SVC_QUERY_MEMORY` (0x06) adhering strictly to Horizon OS calling convention (register X0 = output MemoryInfo buffer in guest memory, register X2 = virtual address to query; returns X0 = 0 Result success, X1 = 0 PageInfo flags).
+  - Added full virtual address space region query mechanism covering static codeset segments (R-X Code/Static, R-- RoData, RW- Data), Stack (0x0B), ThreadLocal (0x0C), Inaccessible (0x10), and unmapped gaps (0x00 Free).
+  - Advertised `SVC_QUERY_MEMORY` capability in homebrew config mask.
+  - Added option to clear earlier downloaded emulator APKs and updates in Settings under Storage.
+  - Added explicit "Clear downloaded update" action in Updates screen when a verified update is ready.
+  - Automatically cleans up staging and external download directory files to prevent APK accumulation.
+  - Maintained strict 16 KiB page alignment across `arm64-v8a` and `x86_64` architectures, verified all 22 native engine exports, and passed all Rust and Android unit tests.
+- **Previous Release**: `v0.28.22-dev` (versionCode 62).
   - Resolved `unsupported A64 instruction 0xf81f0fe1 at 0x101b98` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #1132).
   - Corrected general-purpose load/store unscaled/pre-index/post-index decoding mask from `0x3f20_0800 == 0x3800_0000` to `0x3f20_0000 == 0x3800_0000`, eliminating the bit 11 mask restriction that previously prevented all pre-indexed load/store forms (`mode == 3`, such as `STR Xt, [sp, #simm]!`) from decoding.
   - Implemented SIMD & FP single-register unscaled immediate, pre-indexed, and post-indexed load/store operations under mask `0x3f20_0000 == 0x3c00_0000` across all operand sizes: 8-bit (B), 16-bit (H), 32-bit (S), 64-bit (D), and 128-bit (Q).

@@ -134,6 +134,61 @@ internal class UpdateManager(private val app: Context, private val network: Upda
             publish(UpdateStatus(UpdatePhase.DISCONNECTED, "GitHub disconnected. Downloaded updates were removed.")); main.post { UpdateSchedule.sync(app); ReportUploadSchedule.sync(app) }
         }
     }
+    fun clearDownloads(): Pair<Int, Long> {
+        generation.incrementAndGet(); active.get()?.cancel()
+        var count = 0
+        var bytes = 0L
+        if (ready.exists()) {
+            bytes += ready.length()
+            if (ready.delete()) count++
+        }
+        if (partial.exists()) {
+            bytes += partial.length()
+            if (partial.delete()) count++
+        }
+        metadata.delete()
+        clearPending()
+        val extDownloads = app.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+        if (extDownloads != null && extDownloads.isDirectory) {
+            extDownloads.listFiles()?.forEach { file ->
+                if (file.isFile && (file.name.endsWith(".apk") || file.name.endsWith(".part") || file.name.startsWith("emulator-update-"))) {
+                    bytes += file.length()
+                    if (file.delete()) count++
+                }
+            }
+        }
+        try {
+            val publicDownloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            if (publicDownloads != null && publicDownloads.isDirectory) {
+                val emulatorDir = File(publicDownloads, "Emulator")
+                if (emulatorDir.isDirectory) {
+                    emulatorDir.listFiles()?.forEach { file ->
+                        if (file.isFile && file.name.endsWith(".apk")) {
+                            bytes += file.length()
+                            if (file.delete()) count++
+                        }
+                    }
+                }
+                publicDownloads.listFiles()?.forEach { file ->
+                    if (file.isFile && file.name.endsWith(".apk") &&
+                        (file.name.startsWith("emulator", ignoreCase = true) ||
+                         file.name.startsWith("gpu-lab", ignoreCase = true) ||
+                         file.name.startsWith("app-release", ignoreCase = true) ||
+                         file.name.contains("algosculptor", ignoreCase = true))) {
+                        bytes += file.length()
+                        if (file.delete()) count++
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        val currentRelease = status.release
+        if (currentRelease != null) {
+            publish(UpdateStatus(UpdatePhase.AVAILABLE, "Downloads cleared. Version ${currentRelease.version} is available.", currentRelease))
+        } else {
+            publish(UpdateStatus(if (connected) UpdatePhase.IDLE else UpdatePhase.DISCONNECTED, if (connected) "Downloads cleared. Ready to check for updates." else "Downloads cleared."))
+        }
+        return Pair(count, bytes)
+    }
     fun automatic(finished: () -> Unit = {}): Boolean {
         if (!connected || !prefs.getBoolean("automatic", true)) return false
         val last = prefs.getLong("lastAttempt", 0); val elapsed = System.currentTimeMillis() - last

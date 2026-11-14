@@ -127,9 +127,11 @@ impl Session {
         memory
             .commit(STACK_BASE, vec![0; stack_size], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        let _ = memory.set_state(STACK_BASE, stack_size, 0x0B);
         memory
             .map(TLS_PAGE, vec![0; 4096], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        let _ = memory.set_state(TLS_PAGE, 4096, 0x0C);
         memory
             .write_u32(TLS_BASE + 0x110, emulator_kernel::MAIN_THREAD_HANDLE as u32)
             .map_err(SessionError::Memory)?;
@@ -224,9 +226,11 @@ impl Session {
         memory
             .commit(STACK_BASE, vec![0; STACK_SIZE], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        let _ = memory.set_state(STACK_BASE, STACK_SIZE, 0x0B);
         memory
             .map(TLS_PAGE, vec![0; 4096], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        let _ = memory.set_state(TLS_PAGE, 4096, 0x0C);
         let mut cpu = Cpu::new(image.entry, STACK_BASE + STACK_SIZE as u64);
         cpu.tpidrro_el0 = TLS_BASE;
         cpu.x[0] = CONFIG_BASE;
@@ -270,9 +274,11 @@ impl Session {
         memory
             .commit(STACK_BASE, vec![0; STACK_SIZE], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        let _ = memory.set_state(STACK_BASE, STACK_SIZE, 0x0B);
         memory
             .map(TLS_PAGE, vec![0; 4096], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        let _ = memory.set_state(TLS_PAGE, 4096, 0x0C);
         let mut cpu = Cpu::new(image.entry, STACK_BASE + STACK_SIZE as u64);
         cpu.tpidrro_el0 = TLS_BASE;
         cpu.x[0] = CONFIG_BASE;

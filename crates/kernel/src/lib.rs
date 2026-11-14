@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
+pub const SVC_QUERY_MEMORY: u16 = 0x06;
 pub const SVC_EXIT_PROCESS: u16 = 0x07;
 pub const SVC_CREATE_THREAD: u16 = 0x08;
 pub const SVC_START_THREAD: u16 = 0x09;
@@ -533,6 +534,7 @@ impl Kernel {
             )
             .map_err(KernelError::Memory)?;
         self.scheduler.add(object, context, priority as u8);
+        let _ = memory.set_state(tls_page, 4096, 0x0c);
         cpu.x[0] = 0;
         cpu.x[1] = u64::from(pending.ids[0]);
         self.handles.commit(pending);
@@ -588,6 +590,41 @@ impl Kernel {
         Ok(())
     }
 
+    fn query_memory(
+        &mut self,
+        cpu: &mut Cpu,
+        memory: &mut AddressSpace,
+    ) -> Result<(), KernelError> {
+        let out_meminfo_addr = cpu.x[0];
+        let query_addr = cpu.x[2];
+        if out_meminfo_addr == 0 || out_meminfo_addr % 4 != 0 {
+            cpu.x[0] = RESULT_INVALID_ADDRESS;
+            return Ok(());
+        }
+        if query_addr >= (1_u64 << 39) {
+            cpu.x[0] = RESULT_INVALID_ADDRESS;
+            return Ok(());
+        }
+        let desc = memory.query_memory(query_addr);
+        let mut bytes = [0u8; 40];
+        bytes[0..8].copy_from_slice(&desc.base_address.to_le_bytes());
+        bytes[8..16].copy_from_slice(&desc.size.to_le_bytes());
+        bytes[16..20].copy_from_slice(&desc.state.to_le_bytes());
+        bytes[20..24].copy_from_slice(&desc.attribute.to_le_bytes());
+        bytes[24..28].copy_from_slice(&desc.permission.to_le_bytes());
+        bytes[28..32].copy_from_slice(&desc.ipc_count.to_le_bytes());
+        bytes[32..36].copy_from_slice(&desc.device_count.to_le_bytes());
+        bytes[36..40].copy_from_slice(&0_u32.to_le_bytes());
+
+        if memory.write(out_meminfo_addr, &bytes).is_err() {
+            cpu.x[0] = RESULT_INVALID_ADDRESS;
+            return Ok(());
+        }
+        cpu.x[0] = 0;
+        cpu.x[1] = 0;
+        Ok(())
+    }
+
     pub fn dispatch(
         &mut self,
         id: u16,
@@ -598,6 +635,10 @@ impl Kernel {
             return Err(KernelError::ProcessAlreadyExited);
         }
         match id {
+            SVC_QUERY_MEMORY => {
+                self.query_memory(cpu, memory)?;
+                Ok(KernelEvent::Continue)
+            }
             SVC_EXIT_PROCESS => {
                 self.exited = true;
                 self.scheduler.terminate_all();
@@ -723,6 +764,7 @@ impl Kernel {
 pub fn homebrew_config() -> Vec<u8> {
     let mut available = [0_u64; 2];
     for id in [
+        SVC_QUERY_MEMORY,
         SVC_EXIT_PROCESS,
         SVC_CREATE_THREAD,
         SVC_START_THREAD,

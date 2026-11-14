@@ -32,6 +32,7 @@ class UpdatesActivity : Activity() {
     private lateinit var download: Button
     private lateinit var install: Button
     private lateinit var cancel: Button
+    private lateinit var clearDownloads: Button
     private lateinit var connect: Button
     private lateinit var disconnect: Button
     private var installRequested = false
@@ -51,6 +52,14 @@ class UpdatesActivity : Activity() {
         connect = ui.button("Connect GitHub") { connectDialog() }; root.addView(connect)
         download = ui.button("Download update", true) { updates.download() }; root.addView(download)
         install = ui.button("Install update", true) { beginInstall() }; root.addView(install)
+        clearDownloads = ui.button("Clear downloaded update") {
+            AlertDialog.Builder(this).setTitle("Clear Downloaded Update")
+                .setMessage("Delete the downloaded APK update from this device?")
+                .setPositiveButton("Clear") { _, _ ->
+                    val (count, bytes) = updates.clearDownloads()
+                    android.widget.Toast.makeText(this, "Cleared $count file(s) (${bytes / 1024} KiB freed)", android.widget.Toast.LENGTH_SHORT).show()
+                }.setNegativeButton("Cancel", null).show()
+        }; root.addView(clearDownloads)
         cancel = ui.button("Cancel download") { updates.cancel() }; root.addView(cancel)
         root.addView(ui.button("Open release page") { updates.status.release?.let { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(it.page))) } })
         ui.space(root, 20)
@@ -85,6 +94,7 @@ class UpdatesActivity : Activity() {
         check.isEnabled = !value.busy; testAccess.isEnabled = !value.busy
         download.visibility = if (value.release != null && value.phase in setOf(UpdatePhase.AVAILABLE, UpdatePhase.ERROR)) View.VISIBLE else View.GONE
         install.visibility = if (value.phase == UpdatePhase.READY) View.VISIBLE else View.GONE
+        clearDownloads.visibility = if (value.phase == UpdatePhase.READY) View.VISIBLE else View.GONE
         cancel.visibility = if (value.busy) View.VISIBLE else View.GONE; cancel.text = if (value.phase == UpdatePhase.CHECKING) "Cancel check" else "Cancel download"
         connect.isEnabled = !value.busy; connect.text = if (updates.connected) "Replace GitHub access" else "Connect GitHub"; disconnect.visibility = if (updates.connected) View.VISIBLE else View.GONE
     }

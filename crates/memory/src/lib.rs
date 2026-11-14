@@ -142,6 +142,7 @@ struct Region {
     end: u64,
     bytes: Option<BackingSlice>,
     permissions: Permissions,
+    state: Option<u32>,
     loan: Option<std::rc::Weak<loans::LoanState>>,
 }
 impl Region {
@@ -156,6 +157,17 @@ impl Region {
             .and_then(std::rc::Weak::upgrade)
             .map_or(self.permissions, |loan| loan.permissions)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryDescriptor {
+    pub base_address: u64,
+    pub size: u64,
+    pub state: u32,
+    pub attribute: u32,
+    pub permission: u32,
+    pub ipc_count: u32,
+    pub device_count: u32,
 }
 
 #[derive(Debug)]
@@ -217,6 +229,113 @@ impl AddressSpace {
                 borrowed: region.loaned(),
                 committed: region.bytes.is_some(),
             })
+    }
+
+    pub fn query_memory(&self, address: u64) -> MemoryDescriptor {
+        let max_address: u64 = 1_u64 << 39;
+        if self.regions.is_empty() {
+            return MemoryDescriptor {
+                base_address: 0,
+                size: max_address,
+                state: 0,
+                attribute: 0,
+                permission: 0,
+                ipc_count: 0,
+                device_count: 0,
+            };
+        }
+
+        if address < self.regions[0].start {
+            return MemoryDescriptor {
+                base_address: 0,
+                size: self.regions[0].start,
+                state: 0,
+                attribute: 0,
+                permission: 0,
+                ipc_count: 0,
+                device_count: 0,
+            };
+        }
+
+        for (i, region) in self.regions.iter().enumerate() {
+            if region.start <= address && address < region.end {
+                let permission = if region.bytes.is_none() {
+                    0
+                } else {
+                    let p = region.effective_permissions();
+                    let mut perm = 0u32;
+                    if p.allows(Access::Read) {
+                        perm |= 1;
+                    }
+                    if p.allows(Access::Write) {
+                        perm |= 2;
+                    }
+                    if p.allows(Access::Execute) {
+                        perm |= 4;
+                    }
+                    perm
+                };
+                let state = if let Some(s) = region.state {
+                    s
+                } else if region.bytes.is_none() {
+                    0x10 // Inaccessible
+                } else if region.loaned() {
+                    0x0D // Transferred
+                } else if region.effective_permissions().allows(Access::Execute) {
+                    0x02 // Static
+                } else {
+                    0x02 // Static (retail NSO module segment default)
+                };
+                let attribute = if region.loaned() { 1 << 1 } else { 0 };
+                return MemoryDescriptor {
+                    base_address: region.start,
+                    size: region.end - region.start,
+                    state,
+                    attribute,
+                    permission,
+                    ipc_count: 0,
+                    device_count: 0,
+                };
+            }
+
+            if let Some(next) = self.regions.get(i + 1) {
+                if region.end <= address && address < next.start {
+                    return MemoryDescriptor {
+                        base_address: region.end,
+                        size: next.start - region.end,
+                        state: 0,
+                        attribute: 0,
+                        permission: 0,
+                        ipc_count: 0,
+                        device_count: 0,
+                    };
+                }
+            }
+        }
+
+        let last_end = self.regions.last().unwrap().end;
+        let base_address = last_end;
+        let size = max_address.saturating_sub(base_address);
+        MemoryDescriptor {
+            base_address,
+            size,
+            state: 0,
+            attribute: 0,
+            permission: 0,
+            ipc_count: 0,
+            device_count: 0,
+        }
+    }
+
+    pub fn set_state(&mut self, address: u64, size: usize, state: u32) -> Result<(), MemoryError> {
+        if size == 0 {
+            return Err(MemoryError::EmptyMapping);
+        }
+        let spans = self.covered(address, size, None)?;
+        for &(index, _, _) in &spans {
+            self.regions[index].state = Some(state);
+        }
+        Ok(())
     }
     /// Originating allocations remain charged while any CPU/GPU view owns them.
     pub fn resident_bytes(&self) -> usize {
@@ -284,6 +403,7 @@ impl AddressSpace {
                 end,
                 bytes: Some(span.clone()),
                 permissions,
+                state: None,
                 loan: None,
             });
             next = end;
@@ -319,6 +439,7 @@ impl AddressSpace {
                 end,
                 bytes: Some(BackingSlice::new(mapping.bytes, Rc::clone(&self.budget))?),
                 permissions: mapping.permissions,
+                state: None,
                 loan: None,
             });
         }
@@ -381,6 +502,7 @@ impl AddressSpace {
             end,
             bytes: None,
             permissions: Permissions::NONE,
+            state: Some(0x10), // Inaccessible
             loan: None,
         }])
     }
@@ -417,6 +539,7 @@ impl AddressSpace {
                 end,
                 bytes: Some(BackingSlice::new(bytes, Rc::clone(&self.budget))?),
                 permissions,
+                state: None,
                 loan: None,
             }),
             None,
@@ -682,6 +805,7 @@ fn fragment(
         end,
         bytes,
         permissions,
+        state: region.state,
         loan: region.loan.clone(),
     })
 }
