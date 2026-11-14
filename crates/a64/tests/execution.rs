@@ -593,6 +593,54 @@ fn test_byte_halfword_unscaled_and_register_loads_stores() {
 }
 
 #[test]
+fn test_load_store_single_pre_post_index_retail_za() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // 0: str x1, [sp, #-0x10]! (0xf81f0fe1) - exact instruction from Pokémon Legends: Z-A crash at 0x101b98!
+    let str_x1_pre = 0xf81f0fe1u32;
+    // 4: ldr x2, [sp], #0x10 (0xf84107e2) - post-index pop back to x2
+    let ldr_x2_post = 0xf84107e2u32;
+    // 8: str w3, [sp, #-0x8]! (0xb81f8fe3) - 32-bit pre-index push
+    let str_w3_pre = 0xb81f8fe3u32;
+    // 12: ldr w4, [sp], #0x8 (0xb84087e4) - 32-bit post-index pop
+    let ldr_w4_post = 0xb84087e4u32;
+
+    let mut code = vec![0u8; 0x1000];
+    code[0..4].copy_from_slice(&str_x1_pre.to_le_bytes());
+    code[4..8].copy_from_slice(&ldr_x2_post.to_le_bytes());
+    code[8..12].copy_from_slice(&str_w3_pre.to_le_bytes());
+    code[12..16].copy_from_slice(&ldr_w4_post.to_le_bytes());
+
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+    mem.map(0x7000, vec![0u8; 0x2000], Permissions::READ_WRITE).unwrap();
+
+    cpu.x[1] = 0xdead_beef_cafe_babe;
+    cpu.sp = 0x8000;
+
+    // Step 0: str x1, [sp, #-0x10]!
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.sp, 0x7ff0);
+    assert_eq!(mem.read_u64(0x7ff0).unwrap(), 0xdead_beef_cafe_babe);
+
+    // Step 4: ldr x2, [sp], #0x10
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.sp, 0x8000);
+    assert_eq!(cpu.x[2], 0xdead_beef_cafe_babe);
+
+    // Step 8: str w3, [sp, #-0x8]!
+    cpu.x[3] = 0x1234_5678;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.sp, 0x7ff8);
+    assert_eq!(mem.read_u32(0x7ff8).unwrap(), 0x1234_5678);
+
+    // Step 12: ldr w4, [sp], #0x8
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.sp, 0x8000);
+    assert_eq!(cpu.x[4], 0x1234_5678);
+}
+
+#[test]
 fn test_data_processing_1src_and_retail_rbit() {
     let mut mem = AddressSpace::default();
     let mut cpu = Cpu::new(0x1000, 0x8000);

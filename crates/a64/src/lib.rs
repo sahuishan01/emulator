@@ -311,7 +311,19 @@ enum Instruction {
         size: u8,
         rt: u8,
         rn: u8,
-        offset: u64,
+        offset: i64,
+        load: bool,
+        pre_index: bool,
+        post_index: bool,
+    },
+    FpLoadStoreRegister {
+        size: u8,
+        rt: u8,
+        rn: u8,
+        rm: u8,
+        option: u8,
+        scale: bool,
+        shift_amount: u8,
         load: bool,
     },
     FpLoadStorePair {
@@ -388,6 +400,14 @@ impl Cpu {
         }
     }
 
+    pub fn read_v_u8(&self, index: u8) -> u8 {
+        self.v[usize::from(index)] as u8
+    }
+
+    pub fn read_v_u16(&self, index: u8) -> u16 {
+        self.v[usize::from(index)] as u16
+    }
+
     pub fn read_v_u32(&self, index: u8) -> u32 {
         self.v[usize::from(index)] as u32
     }
@@ -406,6 +426,14 @@ impl Cpu {
 
     pub fn read_v_u128(&self, index: u8) -> u128 {
         self.v[usize::from(index)]
+    }
+
+    pub fn write_v_u8(&mut self, index: u8, value: u8) {
+        self.v[usize::from(index)] = u128::from(value);
+    }
+
+    pub fn write_v_u16(&mut self, index: u8, value: u16) {
+        self.v[usize::from(index)] = u128::from(value);
     }
 
     pub fn write_v_u32(&mut self, index: u8, value: u32) {
@@ -1465,10 +1493,33 @@ impl Cpu {
                     _ => {}
                 }
             }
-            Instruction::FpLoadStore { size, rt, rn, offset, load } => {
-                let address = self.read_sp(rn).wrapping_add(offset);
+            Instruction::FpLoadStore {
+                size,
+                rt,
+                rn,
+                offset,
+                load,
+                pre_index,
+                post_index,
+            } => {
+                let base = self.read_sp(rn);
+                let address = if pre_index {
+                    base.wrapping_add_signed(offset)
+                } else if post_index {
+                    base
+                } else {
+                    base.wrapping_add_signed(offset)
+                };
                 if load {
                     match size {
+                        0 => {
+                            let val = memory.read_u8(address)?;
+                            self.write_v_u8(rt, val);
+                        }
+                        1 => {
+                            let val = memory.read_u16(address)?;
+                            self.write_v_u16(rt, val);
+                        }
                         2 => {
                             let val = memory.read_u32(address)?;
                             self.write_v_u32(rt, val);
@@ -1486,6 +1537,77 @@ impl Cpu {
                     }
                 } else {
                     match size {
+                        0 => memory.write_u8(address, self.read_v_u8(rt))?,
+                        1 => memory.write_u16(address, self.read_v_u16(rt))?,
+                        2 => memory.write_u32(address, self.read_v_u32(rt))?,
+                        3 => memory.write_u64(address, self.read_v_u64(rt))?,
+                        4 => {
+                            let val = self.read_v_u128(rt);
+                            let low = val as u64;
+                            let high = (val >> 64) as u64;
+                            memory.write_u64(address, low)?;
+                            memory.write_u64(address.wrapping_add(8), high)?;
+                        }
+                        _ => {}
+                    }
+                }
+                if pre_index {
+                    self.write_sp(rn, address);
+                } else if post_index {
+                    self.write_sp(rn, base.wrapping_add_signed(offset));
+                }
+            }
+            Instruction::FpLoadStoreRegister {
+                size,
+                rt,
+                rn,
+                rm,
+                option,
+                scale,
+                shift_amount,
+                load,
+            } => {
+                let rm_val = self.read_zero(rm);
+                let ext = match option {
+                    2 => (rm_val as u32) as u64,
+                    3 => rm_val,
+                    6 => (rm_val as u32 as i32 as i64) as u64,
+                    7 => rm_val,
+                    _ => rm_val,
+                };
+                let shift = if scale { shift_amount } else { 0 };
+                let offset = ext << shift;
+                let base = self.read_sp(rn);
+                let address = base.wrapping_add(offset);
+                if load {
+                    match size {
+                        0 => {
+                            let val = memory.read_u8(address)?;
+                            self.write_v_u8(rt, val);
+                        }
+                        1 => {
+                            let val = memory.read_u16(address)?;
+                            self.write_v_u16(rt, val);
+                        }
+                        2 => {
+                            let val = memory.read_u32(address)?;
+                            self.write_v_u32(rt, val);
+                        }
+                        3 => {
+                            let val = memory.read_u64(address)?;
+                            self.write_v_u64(rt, val);
+                        }
+                        4 => {
+                            let low = memory.read_u64(address)?;
+                            let high = memory.read_u64(address.wrapping_add(8))?;
+                            self.write_v_u128(rt, (u128::from(high) << 64) | u128::from(low));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match size {
+                        0 => memory.write_u8(address, self.read_v_u8(rt))?,
+                        1 => memory.write_u16(address, self.read_v_u16(rt))?,
                         2 => memory.write_u32(address, self.read_v_u32(rt))?,
                         3 => memory.write_u64(address, self.read_v_u64(rt))?,
                         4 => {
@@ -1985,8 +2107,8 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
         }
     }
     // Load / Store Single Register (Unscaled immediate / Pre-index / Post-index)
-    // 31:30 size, 29:27 111, 26 V=0, 25:24 00, 23:22 opc, 21:12 imm9, 11:10 mode, 9:5 Rn, 4:0 Rt
-    if word & 0x3f20_0800 == 0x3800_0000 {
+    // 31:30 size, 29:27 111, 26 V=0, 25:24 00, 23:22 opc, 21 0, 20:12 imm9, 11:10 mode, 9:5 Rn, 4:0 Rt
+    if word & 0x3f20_0000 == 0x3800_0000 {
         let size = ((word >> 30) & 3) as u8;
         let opc = ((word >> 22) & 3) as u8;
         let mode = ((word >> 10) & 3) as u8;
@@ -2011,7 +2133,7 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             _ => (false, false, Width::W32),
         };
 
-        if (opc != 3 || size < 2) && mode != 2 {
+        if opc != 3 || size < 2 {
             return Ok(Instruction::LoadStore {
                 size,
                 target_width,
@@ -2211,13 +2333,83 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
         };
         if size != 0 {
             let imm12 = u64::from((word >> 10) & 0xfff);
-            let offset = imm12 * scale;
+            let offset = (imm12 * scale) as i64;
             let load = if size == 4 { opc == 3 } else { opc == 1 };
             return Ok(Instruction::FpLoadStore {
                 size,
                 rt: rd,
                 rn,
                 offset,
+                load,
+                pre_index: false,
+                post_index: false,
+            });
+        }
+    }
+
+    // SIMD & FP Load / Store Single Register (Unscaled immediate / Pre-index / Post-index)
+    // Format: size[31:30] 111 1 00 opc[23:22] 0 imm9[20:12] mode[11:10] Rn[9:5] Rt[4:0]
+    if word & 0x3f20_0000 == 0x3c00_0000 {
+        let size_bits = (word >> 30) & 3;
+        let opc = (word >> 22) & 3;
+        let mode = ((word >> 10) & 3) as u8;
+        let imm9 = signed_field((word >> 12) & 0x1ff, 9);
+        let rt = (word & 31) as u8;
+        let rn = ((word >> 5) & 31) as u8;
+
+        let (size, load, valid) = if opc >= 2 {
+            if size_bits == 0 {
+                (4u8, opc == 3, true) // 128-bit Q register
+            } else {
+                (0u8, false, false)
+            }
+        } else {
+            (size_bits as u8, opc == 1, true) // 0: B, 1: H, 2: S, 3: D
+        };
+
+        if valid {
+            return Ok(Instruction::FpLoadStore {
+                size,
+                rt,
+                rn,
+                offset: imm9,
+                load,
+                pre_index: mode == 3,
+                post_index: mode == 1,
+            });
+        }
+    }
+
+    // SIMD & FP Load / Store Single Register (Register offset)
+    // Format: size[31:30] 111 1 00 opc[23:22] 1 Rm[20:16] option[15:13] S[12] 10 Rn[9:5] Rt[4:0]
+    if word & 0x3f20_0c00 == 0x3c20_0800 {
+        let size_bits = (word >> 30) & 3;
+        let opc = (word >> 22) & 3;
+        let rm = ((word >> 16) & 31) as u8;
+        let option = ((word >> 13) & 7) as u8;
+        let scale = (word & (1 << 12)) != 0;
+        let rt = (word & 31) as u8;
+        let rn = ((word >> 5) & 31) as u8;
+
+        let (size, load, shift_amount, valid) = if opc >= 2 {
+            if size_bits == 0 {
+                (4u8, opc == 3, 4u8, true)
+            } else {
+                (0u8, false, 0u8, false)
+            }
+        } else {
+            (size_bits as u8, opc == 1, size_bits as u8, true)
+        };
+
+        if valid {
+            return Ok(Instruction::FpLoadStoreRegister {
+                size,
+                rt,
+                rn,
+                rm,
+                option,
+                scale,
+                shift_amount,
                 load,
             });
         }

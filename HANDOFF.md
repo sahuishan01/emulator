@@ -19,7 +19,14 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.21-dev` (versionCode 61).
+- **Latest Release**: `v0.28.22-dev` (versionCode 62).
+  - Resolved `unsupported A64 instruction 0xf81f0fe1 at 0x101b98` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #1132).
+  - Corrected general-purpose load/store unscaled/pre-index/post-index decoding mask from `0x3f20_0800 == 0x3800_0000` to `0x3f20_0000 == 0x3800_0000`, eliminating the bit 11 mask restriction that previously prevented all pre-indexed load/store forms (`mode == 3`, such as `STR Xt, [sp, #simm]!`) from decoding.
+  - Implemented SIMD & FP single-register unscaled immediate, pre-indexed, and post-indexed load/store operations under mask `0x3f20_0000 == 0x3c00_0000` across all operand sizes: 8-bit (B), 16-bit (H), 32-bit (S), 64-bit (D), and 128-bit (Q).
+  - Implemented SIMD & FP single-register register-offset load/store operations under mask `0x3f20_0c00 == 0x3c20_0800` (`LDR / STR [Xn, Xm]`).
+  - Added vector register accessors (`read_v_u8`, `write_v_u8`, `read_v_u16`, `write_v_u16`) with scalar zero-extension semantics adhering strictly to ARMv8 specification.
+  - Maintained strict 16 KiB page alignment across `arm64-v8a` and `x86_64` architectures, verified all 22 native engine exports, and passed all 37 A64 unit tests.
+- **Previous Release**: `v0.28.21-dev` (versionCode 61).
   - Resolved `unsupported A64 instruction 0x1a9f17e8 at 0x100338` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #944).
   - Corrected conditional select decoding mask from `0x7fe0_0c00 == 0x1a80_0000` to `0x3fe0_0800 == 0x1a80_0000`, enabling full support for `CSINC`, `CSINV`, `CSNEG` and compiler aliases `CSET`, `CSETM`, `CINC`, `CINV`, `CNEG`.
   - Implemented A64 add/subtract with extended register `ADD`, `ADDS`, `SUB`, `SUBS` (`0x0b20_0000`) supporting all extend types (`UXTB`, `UXTH`, `UXTW`, `UXTX`, `SXTB`, `SXTH`, `SXTW`, `SXTX`), immediate shifts 0..=4, SP destination/source handling, and compiler aliases `CMP` / `CMN` with extended register.

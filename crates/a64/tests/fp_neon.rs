@@ -250,3 +250,53 @@ fn test_simd_fp_load_store_and_vector_ops() {
     assert_eq!(cpu.read_v_u128(2), 0);
     assert_eq!(cpu.read_v_u128(3), 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128);
 }
+
+#[test]
+fn test_simd_fp_single_pre_post_index_and_register_offset() {
+    let mut cpu = Cpu::new(0x10_0000, 0x8001_0000);
+    let q_val = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128;
+    cpu.write_v_u128(0, q_val);
+    cpu.write_v_u64(1, 0xbeef_cafe_face_feed);
+    cpu.write_v_u32(2, 0x1234_5678);
+
+    let code = [
+        // 0: str q0, [sp, #-16]! (0x3c9f0fe0)
+        0x3c9f0fe0,
+        // 4: ldr q3, [sp], #16 (0x3cc107e3)
+        0x3cc107e3,
+        // 8: str d1, [sp, #-8]! (0xfc1f8fe1)
+        0xfc1f8fe1,
+        // 12: ldr d4, [sp], #8 (0xfc4087e4)
+        0xfc4087e4,
+        // 16: str s2, [sp, #-4]! (0xbc1fcfe2)
+        0xbc1fcfe2,
+        // 20: ldr s5, [sp], #4 (0xbc4047e5)
+        0xbc4047e5,
+        // 24: ldr q6, [x0, x1] (0x3ce16806)
+        0x3ce16806,
+        // 28: SVC #99
+        0xd4000c61,
+    ];
+
+    let (_, mut memory) = setup_cpu_with_code(&code);
+    let sp_init = 0x8001_0000u64;
+    cpu.sp = sp_init;
+    cpu.x[0] = 0x2000;
+    cpu.x[1] = 0x10;
+    memory.write_u64(0x2010, 0x1111_2222_3333_4444).unwrap();
+    memory.write_u64(0x2018, 0x5555_6666_7777_8888).unwrap();
+    cpu.pc = 0x10_0000;
+
+    for _ in 0..10 {
+        if let StepEvent::SupervisorCall { immediate } = cpu.step(&mut memory).unwrap() {
+            assert_eq!(immediate, 99);
+            break;
+        }
+    }
+
+    assert_eq!(cpu.sp, sp_init);
+    assert_eq!(cpu.read_v_u128(3), q_val);
+    assert_eq!(cpu.read_v_u64(4), 0xbeef_cafe_face_feed);
+    assert_eq!(cpu.read_v_u32(5), 0x1234_5678);
+    assert_eq!(cpu.read_v_u128(6), (u128::from(0x5555_6666_7777_8888u64) << 64) | u128::from(0x1111_2222_3333_4444u64));
+}
