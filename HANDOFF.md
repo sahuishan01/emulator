@@ -19,7 +19,27 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.24-dev` (versionCode 64).
+- **Latest Release**: `v0.28.25-dev` (versionCode 65).
+  - Implemented monotonic ticket futex arbitration in `crates/kernel/src/sync.rs` (`FutexArbitrator`) guaranteeing strict FIFO waiter order and immunity to spurious wakeups:
+    - `SVC_ARBITRATE_LOCK` (0x1A): Atomic compare-and-swap lock acquisition with contention waiter tagging (`0x4000_0000`).
+    - `SVC_ARBITRATE_UNLOCK` (0x1B): Wakes next queued waiter with ownership transfer.
+    - `SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC` (0x1C): Atomically releases mutex and queues calling thread with monotonic ticket; re-acquires mutex upon wake.
+    - `SVC_SIGNAL_PROCESS_WIDE_KEY` (0x1D): Wakes condition variable waiters in ticket FIFO order.
+  - Implemented clean-room `nvnflinger` BufferQueue state machine in `crates/services/src/vi.rs`:
+    - Full slot lifecycle (`Free`, `Dequeued`, `Queued`, `Acquired`) across `CONNECT`, `SET_BUFFER_COUNT`, `DEQUEUE_BUFFER`, `REQUEST_BUFFER`, `QUEUE_BUFFER`, `CANCEL_BUFFER`, `DISCONNECT`.
+    - Android native window queries: `NATIVE_WINDOW_WIDTH` (1280), `NATIVE_WINDOW_HEIGHT` (720), `NATIVE_WINDOW_FORMAT` (1 RGBA_8888), `NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS` (1), pending queued buffers count.
+    - Extended `DisplayService` with layer commands (crop, alpha, position, size, indirect layers) and `GetDisplayVsyncEvent` (8225).
+  - Enhanced NVIDIA Driver & GPFIFO Pipeline in `crates/services/src/nvchannel.rs` and `crates/services/src/nv.rs`:
+    - Supported `NVIOC_CHANNEL_SUBMIT_GPFIFO_3` (`0xc000481b`) alongside `NVIOC_CHANNEL_SUBMIT_GPFIFO` (`0xc0004808`).
+    - Added pointer-based `gpfifo` buffer resolution from GPU address space in addition to inline pushbuffers.
+    - Added GPU Control ioctls (`/dev/nvhost-ctrl-gpu`): `GET_CHARACTERISTICS` (`0x80044705`) returning GM20B / Maxwell architecture metadata (arch `0x120`, impl `0x0b`, rev `0xa1`, 64 KiB big pages), ZCULL and ZBC stubs.
+    - Supported read-only ioctls with receive-only buffers.
+  - Added new Horizon System Services in `crates/services/`:
+    - Account Service `acc:u0` / `acc:u1` / `acc:e` (`GetUserCount`, `GetUserExistence`, `ListAllUsers`, `OpenUser`, `GetLastOpenedUser`, `IProfile` with username "Player").
+    - Performance Management `apm` / `apm:p` (`OpenSession`, `GetPerformanceMode` Handheld).
+    - Audio Renderer and Output `audren:u` (`OpenAudioRenderer`, `GetAudioRendererWorkBufferSize`) & `audout:u` (`ListAudioOuts`, `OpenAudioOut` 48 kHz stereo 16-bit PCM).
+  - Maintained strict 16 KiB page alignment across `arm64-v8a` and `x86_64` architectures, verified all 22 native engine exports, and passed all Rust and Android unit tests.
+- **Previous Release**: `v0.28.24-dev` (versionCode 64).
   - Lifted the artificial 2,000,000 instruction limit for packages in `emulator-android-ffi`, allowing retail games (including Pokémon Legends: Z-A) and NSP packages to run continuously.
   - Optimized step slice to 4096 instructions in `ProgramActivity.kt`, reducing JNI and serialization roundtrip overhead by 4x while maintaining smooth UI updates.
   - Implemented Phase 3 Horizon supervisor calls:

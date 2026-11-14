@@ -1,11 +1,14 @@
 //! Original synchronous NV channel state. No host Vulkan or asynchronous queue.
 use crate::nvmap::{BAD_PARAMETER, NOT_SUPPORTED, NO_MEMORY};
 use emulator_gpu::{ChannelProcessor, GpuAddressSpace, PreparedSubmission, MAXWELL_DMA_COPY_A};
+use emulator_memory::Access;
 pub(crate) const SET_NVMAP: u32 = 0x40044801;
 pub(crate) const ALLOC_CONTEXT: u32 = 0xc0104809;
 pub(crate) const ALLOC_FIFO: u32 = 0xc020481a;
 pub(crate) const SYNC_READ: u32 = 0xc0080014;
 pub(crate) const SYNC_WAIT: u32 = 0xc0100019;
+pub(crate) const SUBMIT_GPFIFO_3: u32 = 0xc000481b;
+
 pub(crate) fn word(input: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(
         input[at..at + 4]
@@ -14,7 +17,7 @@ pub(crate) fn word(input: &[u8], at: usize) -> u32 {
     )
 }
 pub(crate) fn submit_size(code: u32) -> Option<usize> {
-    if code & 0xc000ffff == 0xc0004808 {
+    if (code & 0xc000ffff == 0xc0004808) || (code & 0xc000ffff == SUBMIT_GPFIFO_3) {
         Some(((code >> 16) & 0x3fff) as usize)
     } else {
         None
@@ -103,7 +106,7 @@ impl Channel {
             return Err(BAD_PARAMETER);
         }
         let count = word(input, 8) as usize;
-        if count == 0 || count > capacity || input.len() != 24 + count * 8 {
+        if count == 0 || count > capacity {
             return Err(BAD_PARAMETER);
         }
         // Only fence_get and already-satisfied fence_wait are modeled by caller.
@@ -111,9 +114,25 @@ impl Channel {
             return Err(NOT_SUPPORTED);
         }
         let next_value = completed.checked_add(1).ok_or(NO_MEMORY)?;
+
+        let entries_bytes: Vec<u8> = if input.len() >= 24 + count * 8 {
+            input[24..24 + count * 8].to_vec()
+        } else {
+            let gpfifo_ptr = u64::from_le_bytes(input[0..8].try_into().map_err(|_| BAD_PARAMETER)?);
+            if gpfifo_ptr == 0 {
+                return Err(BAD_PARAMETER);
+            }
+            let view = space
+                .pin(emulator_gpu::GpuVa(gpfifo_ptr), count * 8, Access::Read)
+                .map_err(|_| BAD_PARAMETER)?;
+            let mut buf = vec![0u8; count * 8];
+            view.read(&mut buf).map_err(|_| BAD_PARAMETER)?;
+            buf
+        };
+
         let (processor, work) = self
             .processor
-            .prepare_for_class(space, &input[24..], self.context)
+            .prepare_for_class(space, &entries_bytes, self.context)
             .map_err(|_| BAD_PARAMETER)?;
         let mut next = self.clone();
         next.processor = processor;

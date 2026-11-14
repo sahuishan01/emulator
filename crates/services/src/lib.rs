@@ -4,7 +4,10 @@ mod nv;
 mod nvas;
 mod nvchannel;
 mod nvmap;
+pub mod acc;
+pub mod apm;
 pub mod applet;
+pub mod aud;
 pub mod fspsrv;
 pub mod hid;
 pub mod reference;
@@ -13,7 +16,10 @@ pub mod timesys;
 pub mod vi;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
+pub use acc::AccountService;
+pub use apm::ApmService;
 pub use applet::AppletManagerService;
+pub use aud::{AudioOutManager, AudioRendererManager};
 pub use fspsrv::FspSrvService;
 pub use gpu::DiagnosticGpu;
 pub use hid::HidService;
@@ -101,6 +107,12 @@ impl Service for ServiceManager {
                     }
                     b"appletAE" | b"appletOE" => Box::new(AppletManagerService::default()),
                     b"hid\0\0\0\0\0" => Box::new(HidService::default()),
+                    b"acc:u0\0\0" | b"acc:u1\0\0" | b"acc:e\0\0\0" => {
+                        Box::new(AccountService::default())
+                    }
+                    b"apm\0\0\0\0\0" | b"apm:p\0\0\0" => Box::new(ApmService::default()),
+                    b"audren:u" => Box::new(AudioRendererManager::default()),
+                    b"audout:u" => Box::new(AudioOutManager::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {

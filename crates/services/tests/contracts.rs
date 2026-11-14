@@ -167,10 +167,84 @@ fn test_vi_and_applet_services() {
     let dequeue_reply = binder.dispatch(&request(0, &dequeue_data, None)).unwrap();
     assert_eq!(dequeue_reply.result, 0);
 
+    // Binder RequestBuffer (code 1)
+    let req_buf_data = [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+    let req_buf_reply = binder.dispatch(&request(0, &req_buf_data, None)).unwrap();
+    assert_eq!(req_buf_reply.result, 0);
+    assert_eq!(req_buf_reply.data.len(), 28);
+    let buf_width = u32::from_le_bytes(req_buf_reply.data[8..12].try_into().unwrap());
+    let buf_height = u32::from_le_bytes(req_buf_reply.data[12..16].try_into().unwrap());
+    assert_eq!((buf_width, buf_height), (1280, 720));
+
     // Binder QueueBuffer (code 7)
-    let queue_data = [1, 0, 0, 0, 7, 0, 0, 0];
+    let queue_data = [1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0];
     let queue_reply = binder.dispatch(&request(0, &queue_data, None)).unwrap();
     assert_eq!(queue_reply.result, 0);
+
+    // Binder Query (code 9)
+    let query_width = [1, 0, 0, 0, 9, 0, 0, 0, 1, 0, 0, 0];
+    let q_w_reply = binder.dispatch(&request(0, &query_width, None)).unwrap();
+    assert_eq!(u32::from_le_bytes(q_w_reply.data[4..8].try_into().unwrap()), 1280);
+
+    let query_height = [1, 0, 0, 0, 9, 0, 0, 0, 2, 0, 0, 0];
+    let q_h_reply = binder.dispatch(&request(0, &query_height, None)).unwrap();
+    assert_eq!(u32::from_le_bytes(q_h_reply.data[4..8].try_into().unwrap()), 720);
+
+    let query_fmt = [1, 0, 0, 0, 9, 0, 0, 0, 3, 0, 0, 0];
+    let q_f_reply = binder.dispatch(&request(0, &query_fmt, None)).unwrap();
+    assert_eq!(u32::from_le_bytes(q_f_reply.data[4..8].try_into().unwrap()), 1);
+
+    // Binder CancelBuffer (code 8) & Disconnect (code 11)
+    let cancel_data = [1, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0];
+    assert_eq!(binder.dispatch(&request(0, &cancel_data, None)).unwrap().result, 0);
+    let disconn_data = [1, 0, 0, 0, 11, 0, 0, 0];
+    assert_eq!(binder.dispatch(&request(0, &disconn_data, None)).unwrap().result, 0);
+
+    // DisplayService layer and vsync commands
+    assert_eq!(display.dispatch(&request(2201, &[], None)).unwrap().result, 0);
+    assert_eq!(display.dispatch(&request(2203, &[], None)).unwrap().result, 0);
+    assert_eq!(display.dispatch(&request(8225, &[], None)).unwrap().result, 0);
+
+    // Account Service (acc:u0)
+    let mut acc = sm
+        .dispatch(&request(1, b"acc:u0\0\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    let user_count_reply = acc.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(i32::from_le_bytes(user_count_reply.data.try_into().unwrap()), 1);
+    let mut open_user_reply = acc.dispatch(&request(3, &[1, 0, 0, 0], None)).unwrap();
+    assert_eq!(open_user_reply.moved_objects.len(), 1);
+    let mut profile = open_user_reply.moved_objects.remove(0);
+    let profile_base = profile.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(&profile_base.data[0x18..0x18 + 6], b"Player");
+
+    // Performance Management Service (apm)
+    let mut apm = sm
+        .dispatch(&request(1, b"apm\0\0\0\0\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    let perf_mode_reply = apm.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(perf_mode_reply.data.try_into().unwrap()), 0); // Handheld
+
+    // Audio Renderer Service (audren:u)
+    let mut audren = sm
+        .dispatch(&request(1, b"audren:u", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    let buf_size_reply = audren.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(u64::from_le_bytes(buf_size_reply.data.try_into().unwrap()), 0x40000);
+
+    // Audio Output Service (audout:u)
+    let mut audout = sm
+        .dispatch(&request(1, b"audout:u", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    let list_outs = audout.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(&list_outs.data[..9], b"Headphone");
 
     // Verify port aliases
     assert!(sm.dispatch(&request(1, b"vi:u\0\0\0\0", None)).is_ok());

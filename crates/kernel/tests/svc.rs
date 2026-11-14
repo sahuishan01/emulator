@@ -1,6 +1,6 @@
 use emulator_a64::Cpu;
 use emulator_kernel::{
-    Kernel, KernelError, KernelEvent, RESULT_INVALID_ADDRESS, SVC_EXIT_PROCESS,
+    Kernel, KernelError, KernelEvent, RESULT_INVALID_ADDRESS, RESULT_TIMEOUT, SVC_EXIT_PROCESS,
     SVC_OUTPUT_DEBUG_STRING, SVC_QUERY_MEMORY,
 };
 use emulator_memory::{AddressSpace, Permissions};
@@ -340,26 +340,38 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     assert_eq!(memory.read_u64(0x1000).unwrap(), 1);
 
     // Futex lock / unlock
-    cpu.x[0] = 1;
-    cpu.x[1] = 0x1000;
-    cpu.x[2] = 0;
+    memory.write_u32(0x1000, 0).unwrap();
+    cpu.x[0] = 1; // thread_handle
+    cpu.x[1] = 0x1000; // mutex_addr
+    cpu.x[2] = 0; // expected tag
     assert_eq!(
         kernel.dispatch(SVC_ARBITRATE_LOCK, &mut cpu, &mut memory).unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
+    assert_eq!(memory.read_u32(0x1000).unwrap(), 1); // mutex tag set to owner handle
+
+    cpu.x[0] = 0x1000;
     assert_eq!(
         kernel.dispatch(SVC_ARBITRATE_UNLOCK, &mut cpu, &mut memory).unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
+    assert_eq!(memory.read_u32(0x1000).unwrap(), 0); // unlocked
 
-    // Condition variable wait / signal
+    // Condition variable wait (timeout 0) / signal
+    cpu.x[0] = 0x2000; // key_addr
+    cpu.x[1] = 0x1000; // mutex_addr
+    cpu.x[2] = 1;      // thread_handle
+    cpu.x[3] = 0;      // timeout_ns = 0 -> immediate timeout
     assert_eq!(
         kernel.dispatch(SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC, &mut cpu, &mut memory).unwrap(),
         KernelEvent::Continue
     );
-    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[0], RESULT_TIMEOUT);
+
+    cpu.x[0] = 0x2000; // key_addr
+    cpu.x[1] = 1;      // count
     assert_eq!(
         kernel.dispatch(SVC_SIGNAL_PROCESS_WIDE_KEY, &mut cpu, &mut memory).unwrap(),
         KernelEvent::Continue

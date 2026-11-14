@@ -3,6 +3,7 @@
 mod handles;
 mod scheduler;
 pub mod service;
+mod sync;
 
 use emulator_a64::Cpu;
 use emulator_ipc::{encode_reply, parse_request, CommandType, IpcError, IPC_BUFFER_SIZE};
@@ -14,6 +15,7 @@ pub use scheduler::{
 };
 use scheduler::{Scheduler, WaitTarget};
 use service::{Service, ServiceContext, ServiceError};
+pub use sync::{FutexArbitrator, Waiter};
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -172,6 +174,7 @@ pub struct Kernel {
     transfer_quota: Rc<Cell<usize>>,
     heap_base: u64,
     heap_size: usize,
+    sync: FutexArbitrator,
 }
 
 impl Default for Kernel {
@@ -189,6 +192,7 @@ impl Default for Kernel {
             transfer_quota: Rc::new(Cell::new(0)),
             heap_base: DEFAULT_HEAP_BASE,
             heap_size: 0,
+            sync: FutexArbitrator::default(),
         }
     }
 }
@@ -754,18 +758,94 @@ impl Kernel {
                 Ok(KernelEvent::Continue)
             }
             SVC_ARBITRATE_LOCK => {
-                cpu.x[0] = 0;
+                let thread_handle = cpu.x[0] as u32;
+                let mutex_addr = cpu.x[1];
+                let tag = cpu.x[2] as u32;
+                if mutex_addr & 3 != 0 {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                let current_val = match memory.read_u32(mutex_addr) {
+                    Ok(val) => val,
+                    Err(_) => {
+                        cpu.x[0] = RESULT_INVALID_ADDRESS;
+                        return Ok(KernelEvent::Continue);
+                    }
+                };
+                if current_val == 0 {
+                    let _ = memory.write_u32(mutex_addr, thread_handle);
+                    cpu.x[0] = 0;
+                } else if current_val == tag {
+                    let _ = memory.write_u32(mutex_addr, current_val | 0x4000_0000);
+                    let (signal, _) = self.sync.lock_mutex(self.scheduler.current(), mutex_addr);
+                    if self.scheduler.wait(vec![WaitTarget(signal)], -1).is_err() {
+                        cpu.x[0] = RESULT_INVALID_STATE;
+                    }
+                } else {
+                    cpu.x[0] = 0;
+                }
                 Ok(KernelEvent::Continue)
             }
             SVC_ARBITRATE_UNLOCK => {
+                let mutex_addr = cpu.x[0];
+                if mutex_addr & 3 != 0 {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                if let Some(waiter) = self.sync.unlock_mutex(mutex_addr) {
+                    let new_tag = if self.sync.has_mutex_waiters(mutex_addr) {
+                        (waiter.thread_index as u32 + 1) | 0x4000_0000
+                    } else {
+                        waiter.thread_index as u32 + 1
+                    };
+                    let _ = memory.write_u32(mutex_addr, new_tag);
+                } else {
+                    let _ = memory.write_u32(mutex_addr, 0);
+                }
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }
             SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC => {
-                cpu.x[0] = 0;
+                let key_addr = cpu.x[0];
+                let mutex_addr = cpu.x[1];
+                let _thread_handle = cpu.x[2] as u32;
+                let timeout_ns = cpu.x[3] as i64;
+                if (key_addr & 3 != 0) || (mutex_addr & 3 != 0) {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                if memory.read_u32(mutex_addr).is_err() {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                if let Some(waiter) = self.sync.unlock_mutex(mutex_addr) {
+                    let new_tag = if self.sync.has_mutex_waiters(mutex_addr) {
+                        (waiter.thread_index as u32 + 1) | 0x4000_0000
+                    } else {
+                        waiter.thread_index as u32 + 1
+                    };
+                    let _ = memory.write_u32(mutex_addr, new_tag);
+                } else {
+                    let _ = memory.write_u32(mutex_addr, 0);
+                }
+                if timeout_ns == 0 {
+                    cpu.x[0] = RESULT_TIMEOUT;
+                    return Ok(KernelEvent::Continue);
+                }
+                let (signal, _) = self.sync.wait_condition(self.scheduler.current(), key_addr, mutex_addr);
+                if self.scheduler.wait(vec![WaitTarget(signal)], timeout_ns).is_err() {
+                    cpu.x[0] = RESULT_INVALID_STATE;
+                }
                 Ok(KernelEvent::Continue)
             }
             SVC_SIGNAL_PROCESS_WIDE_KEY => {
+                let key_addr = cpu.x[0];
+                let count = cpu.x[1] as i32;
+                if key_addr & 3 != 0 {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                self.sync.signal_condition(key_addr, count);
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }

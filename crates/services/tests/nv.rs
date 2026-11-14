@@ -782,3 +782,27 @@ fn nv_address_space_initialization_requires_input_only_and_rejects_extra_receive
     assert_eq!(r.initialize_as(asfd, 1).unwrap(), 0);
     assert_eq!(r.ioctl(asfd, 0xc0080101, &[4096, 0], 1), 2);
 }
+
+#[test]
+fn test_nv_ctrl_gpu_and_characteristics() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let (ctrl_fd, res) = r.open_device(b"/dev/nvhost-ctrl-gpu", 0);
+    assert_eq!(res, 0);
+    assert!(ctrl_fd > 0);
+
+    let char_code = 0x80044705u32;
+    r.m.write(0x6000, &[0u8; 160]).unwrap();
+    let reply = r.call(&message(
+        1,
+        &[ctrl_fd, char_code],
+        None,
+        Some((0x6000, 160)),
+    ));
+    assert!(reply.is_ok());
+    let mut out = [0u8; 40];
+    r.m.read(0x6000, &mut out).unwrap();
+    let arch = u32::from_le_bytes(out[0..4].try_into().unwrap());
+    let impl_id = u32::from_le_bytes(out[4..8].try_into().unwrap());
+    assert_eq!(arch, 0x120);
+    assert_eq!(impl_id, 0x0b);
+}

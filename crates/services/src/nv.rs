@@ -12,6 +12,13 @@ use emulator_kernel::{
 };
 use emulator_memory::{BackingRange, MemoryView, Permissions};
 use std::rc::Rc;
+
+pub(crate) const ZCULL_GET_CTX_SIZE: u32 = 0x80044701;
+pub(crate) const ZCULL_GET_INFO: u32 = 0x80044702;
+pub(crate) const ZBC_SET_TABLE: u32 = 0x80044703;
+pub(crate) const ZBC_QUERY_TABLE: u32 = 0x80044704;
+pub(crate) const GET_CHARACTERISTICS: u32 = 0x80044705;
+pub(crate) const GET_TPC_MASKS: u32 = 0x80044706;
 #[derive(Clone, Debug)]
 pub struct NvDriver {
     arena: Option<Rc<TransferMemory>>,
@@ -159,8 +166,8 @@ impl NvDriver {
         let kind = match bytes.as_slice() {
             b"/dev/nvmap" => 0,
             b"/dev/nvhost-as-gpu" => 1,
-            b"/dev/nvhost-gpu" => 2,
-            b"/dev/nvhost-ctrl" => 3,
+            b"/dev/nvhost-gpu" | b"/dev/nvhost-channel" => 2,
+            b"/dev/nvhost-ctrl" | b"/dev/nvhost-ctrl-gpu" => 3,
             _ => return Ok(reply(&[0, NOT_SUPPORTED])),
         };
         if self.devices.len() >= 16 || (kind == 2 && self.syncpoints.len() >= 32) {
@@ -207,15 +214,22 @@ impl NvDriver {
         Ok(reply(&[0]))
     }
     fn control(&self, code: u32, input: &[u8]) -> Result<Vec<u8>, u32> {
-        let id = nvchannel::word(input, 0);
-        let value = *self
-            .syncpoints
-            .get(id.checked_sub(1).ok_or(BAD_PARAMETER)? as usize)
-            .ok_or(BAD_PARAMETER)?;
         let mut output = input.to_vec();
         match code {
-            SYNC_READ => output[4..8].copy_from_slice(&value.to_le_bytes()),
+            SYNC_READ => {
+                let id = nvchannel::word(input, 0);
+                let value = *self
+                    .syncpoints
+                    .get(id.checked_sub(1).ok_or(BAD_PARAMETER)? as usize)
+                    .ok_or(BAD_PARAMETER)?;
+                output[4..8].copy_from_slice(&value.to_le_bytes());
+            }
             SYNC_WAIT => {
+                let id = nvchannel::word(input, 0);
+                let value = *self
+                    .syncpoints
+                    .get(id.checked_sub(1).ok_or(BAD_PARAMETER)? as usize)
+                    .ok_or(BAD_PARAMETER)?;
                 if nvchannel::word(input, 8) != 0 {
                     return Err(NOT_SUPPORTED);
                 }
@@ -224,6 +238,26 @@ impl NvDriver {
                 }
                 output[12..16].copy_from_slice(&value.to_le_bytes());
             }
+            GET_CHARACTERISTICS => {
+                if output.len() >= 40 {
+                    output[0..4].copy_from_slice(&0x120u32.to_le_bytes()); // NVGPU_GPU_ARCH_GM200
+                    output[4..8].copy_from_slice(&0x0bu32.to_le_bytes());  // NVGPU_GPU_IMPL_GM20B
+                    output[8..12].copy_from_slice(&0xa1u32.to_le_bytes()); // rev
+                    output[12..16].copy_from_slice(&1u32.to_le_bytes());  // num_gpc
+                    output[16..20].copy_from_slice(&2u32.to_le_bytes());  // num_tpc_per_gpc
+                    output[20..24].copy_from_slice(&1u32.to_le_bytes());  // num_sm_per_tpc
+                    output[24..28].copy_from_slice(&0u32.to_le_bytes());  // bus_type
+                    output[28..32].copy_from_slice(&0x1_0000u32.to_le_bytes()); // big_page_size
+                    output[32..36].copy_from_slice(&0x1_0000u32.to_le_bytes()); // compression_page_size
+                    output[36..40].copy_from_slice(&27u32.to_le_bytes()); // pde_coverage_bit_count
+                }
+            }
+            ZCULL_GET_CTX_SIZE => {
+                if output.len() >= 4 {
+                    output[0..4].copy_from_slice(&1u32.to_le_bytes());
+                }
+            }
+            ZCULL_GET_INFO | ZBC_SET_TABLE | ZBC_QUERY_TABLE | GET_TPC_MASKS => {}
             _ => return Err(NOT_SUPPORTED),
         }
         Ok(output)
@@ -302,10 +336,7 @@ impl NvDriver {
         let mut writes = gpu_writes;
         writes.extend(out_ranges.iter().copied());
         let host = if let Some(backend) = &self.graphics {
-            Some((
-                Rc::clone(backend),
-                work.graphics_frame().map_err(|_| NOT_SUPPORTED)?,
-            ))
+            work.graphics_frame().ok().map(|f| (Rc::clone(backend), f))
         } else {
             None
         };
@@ -345,6 +376,12 @@ impl NvDriver {
             DeviceObject::Control => match code {
                 SYNC_READ => Some(8),
                 SYNC_WAIT => Some(16),
+                ZCULL_GET_CTX_SIZE => Some(4),
+                ZCULL_GET_INFO => Some(40),
+                ZBC_SET_TABLE => Some(44),
+                ZBC_QUERY_TABLE => Some(44),
+                GET_CHARACTERISTICS => Some(160),
+                GET_TPC_MASKS => Some(12),
                 _ => None,
             },
         };
@@ -354,17 +391,23 @@ impl NvDriver {
         if size > 2072 {
             return Ok(reply(&[BAD_PARAMETER]));
         }
-        let input = c.send_buffer(0)?;
+        let mut bytes = vec![0; size];
+        if send == 1 {
+            let input = c.send_buffer(0)?;
+            if input.len() != size {
+                return Ok(reply(&[BAD_PARAMETER]));
+            }
+            input.read(0, &mut bytes).map_err(ServiceError::Memory)?;
+        }
         let output = if receive == 1 {
-            Some(c.receive_buffer(0)?)
+            let out = c.receive_buffer(0)?;
+            if out.len() != size {
+                return Ok(reply(&[BAD_PARAMETER]));
+            }
+            Some(out)
         } else {
             None
         };
-        if input.len() != size || output.as_ref().is_some_and(|v| v.len() != size) {
-            return Ok(reply(&[BAD_PARAMETER]));
-        }
-        let mut bytes = vec![0; size];
-        input.read(0, &mut bytes).map_err(ServiceError::Memory)?;
         if matches!(&self.devices[at].object, DeviceObject::Channel(_))
             && nvchannel::submit_size(code).is_some()
         {
