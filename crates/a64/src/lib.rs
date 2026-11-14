@@ -167,6 +167,64 @@ enum Instruction {
     SupervisorCall {
         immediate: u16,
     },
+    FpData2 {
+        double: bool,
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        op: u8,
+    },
+    FpData1 {
+        double: bool,
+        rd: u8,
+        rn: u8,
+        op: u8,
+    },
+    FpCompare {
+        double: bool,
+        rn: u8,
+        rm: u8,
+        compare_zero: bool,
+    },
+    FpMultiplyAdd {
+        double: bool,
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        ra: u8,
+        sub: bool,
+        neg: bool,
+    },
+    FpConvertInt {
+        sf: bool,
+        double: bool,
+        rd: u8,
+        rn: u8,
+        op: u8,
+    },
+    FpLoadStore {
+        size: u8,
+        rt: u8,
+        rn: u8,
+        offset: u64,
+        load: bool,
+    },
+    FpLoadStorePair {
+        size: u8,
+        rt1: u8,
+        rt2: u8,
+        rn: u8,
+        offset: i64,
+        load: bool,
+        pre_index: bool,
+        post_index: bool,
+    },
+    VectorBitwise {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        op: u8,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,6 +269,9 @@ pub struct Cpu {
     pub pc: u64,
     pub nzcv: Nzcv,
     pub tpidrro_el0: u64,
+    pub v: [u128; 32],
+    pub fpcr: u32,
+    pub fpsr: u32,
 }
 
 impl Cpu {
@@ -220,6 +281,46 @@ impl Cpu {
             sp: stack_pointer,
             ..Self::default()
         }
+    }
+
+    pub fn read_v_u32(&self, index: u8) -> u32 {
+        self.v[usize::from(index)] as u32
+    }
+
+    pub fn read_v_f32(&self, index: u8) -> f32 {
+        f32::from_bits(self.read_v_u32(index))
+    }
+
+    pub fn read_v_u64(&self, index: u8) -> u64 {
+        self.v[usize::from(index)] as u64
+    }
+
+    pub fn read_v_f64(&self, index: u8) -> f64 {
+        f64::from_bits(self.read_v_u64(index))
+    }
+
+    pub fn read_v_u128(&self, index: u8) -> u128 {
+        self.v[usize::from(index)]
+    }
+
+    pub fn write_v_u32(&mut self, index: u8, value: u32) {
+        self.v[usize::from(index)] = u128::from(value);
+    }
+
+    pub fn write_v_f32(&mut self, index: u8, value: f32) {
+        self.write_v_u32(index, value.to_bits());
+    }
+
+    pub fn write_v_u64(&mut self, index: u8, value: u64) {
+        self.v[usize::from(index)] = u128::from(value);
+    }
+
+    pub fn write_v_f64(&mut self, index: u8, value: f64) {
+        self.write_v_u64(index, value.to_bits());
+    }
+
+    pub fn write_v_u128(&mut self, index: u8, value: u128) {
+        self.v[usize::from(index)] = value;
     }
 
     fn read_zero(&self, index: u8) -> u64 {
@@ -565,6 +666,287 @@ impl Cpu {
             Instruction::SupervisorCall { immediate } => {
                 event = StepEvent::SupervisorCall { immediate }
             }
+            Instruction::FpData2 { double, rd, rn, rm, op } => {
+                if double {
+                    let a = self.read_v_f64(rn);
+                    let b = self.read_v_f64(rm);
+                    let res = match op {
+                        0 => a * b,
+                        1 => a / b,
+                        2 => a + b,
+                        3 => a - b,
+                        4 => a.max(b),
+                        5 => a.min(b),
+                        6 => if a.is_nan() { b } else if b.is_nan() { a } else { a.max(b) },
+                        7 => if a.is_nan() { b } else if b.is_nan() { a } else { a.min(b) },
+                        8 => -(a * b),
+                        _ => 0.0,
+                    };
+                    self.write_v_f64(rd, res);
+                } else {
+                    let a = self.read_v_f32(rn);
+                    let b = self.read_v_f32(rm);
+                    let res = match op {
+                        0 => a * b,
+                        1 => a / b,
+                        2 => a + b,
+                        3 => a - b,
+                        4 => a.max(b),
+                        5 => a.min(b),
+                        6 => if a.is_nan() { b } else if b.is_nan() { a } else { a.max(b) },
+                        7 => if a.is_nan() { b } else if b.is_nan() { a } else { a.min(b) },
+                        8 => -(a * b),
+                        _ => 0.0,
+                    };
+                    self.write_v_f32(rd, res);
+                }
+            }
+            Instruction::FpData1 { double, rd, rn, op } => {
+                if double {
+                    let a = self.read_v_f64(rn);
+                    match op {
+                        0 => self.write_v_f64(rd, a),
+                        1 => self.write_v_f64(rd, a.abs()),
+                        2 => self.write_v_f64(rd, -a),
+                        3 => self.write_v_f64(rd, a.sqrt()),
+                        4 | 5 => self.write_v_f32(rd, a as f32),
+                        _ => {}
+                    }
+                } else {
+                    let a = self.read_v_f32(rn);
+                    match op {
+                        0 => self.write_v_f32(rd, a),
+                        1 => self.write_v_f32(rd, a.abs()),
+                        2 => self.write_v_f32(rd, -a),
+                        3 => self.write_v_f32(rd, a.sqrt()),
+                        4 | 5 => self.write_v_f64(rd, f64::from(a)),
+                        _ => {}
+                    }
+                }
+            }
+            Instruction::FpCompare { double, rn, rm, compare_zero } => {
+                if double {
+                    let a = self.read_v_f64(rn);
+                    let b = if compare_zero { 0.0 } else { self.read_v_f64(rm) };
+                    if a.is_nan() || b.is_nan() {
+                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: true };
+                    } else if a == b {
+                        self.nzcv = Nzcv { negative: false, zero: true, carry: true, overflow: false };
+                    } else if a < b {
+                        self.nzcv = Nzcv { negative: true, zero: false, carry: false, overflow: false };
+                    } else {
+                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: false };
+                    }
+                } else {
+                    let a = self.read_v_f32(rn);
+                    let b = if compare_zero { 0.0 } else { self.read_v_f32(rm) };
+                    if a.is_nan() || b.is_nan() {
+                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: true };
+                    } else if a == b {
+                        self.nzcv = Nzcv { negative: false, zero: true, carry: true, overflow: false };
+                    } else if a < b {
+                        self.nzcv = Nzcv { negative: true, zero: false, carry: false, overflow: false };
+                    } else {
+                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: false };
+                    }
+                }
+            }
+            Instruction::FpMultiplyAdd { double, rd, rn, rm, ra, sub, neg } => {
+                if double {
+                    let a = self.read_v_f64(ra);
+                    let n = self.read_v_f64(rn);
+                    let m = self.read_v_f64(rm);
+                    let prod = n * m;
+                    let res = match (sub, neg) {
+                        (false, false) => a + prod,
+                        (true, false) => a - prod,
+                        (false, true) => -a - prod,
+                        (true, true) => -a + prod,
+                    };
+                    self.write_v_f64(rd, res);
+                } else {
+                    let a = self.read_v_f32(ra);
+                    let n = self.read_v_f32(rn);
+                    let m = self.read_v_f32(rm);
+                    let prod = n * m;
+                    let res = match (sub, neg) {
+                        (false, false) => a + prod,
+                        (true, false) => a - prod,
+                        (false, true) => -a - prod,
+                        (true, true) => -a + prod,
+                    };
+                    self.write_v_f32(rd, res);
+                }
+            }
+            Instruction::FpConvertInt { sf, double, rd, rn, op } => {
+                match op {
+                    0 => {
+                        let val: i64 = if double {
+                            self.read_v_f64(rn) as i64
+                        } else {
+                            self.read_v_f32(rn) as i64
+                        };
+                        let res = if sf { val as u64 } else { (val as u32) as u64 };
+                        self.write_zero(rd, res);
+                    }
+                    1 => {
+                        let val: u64 = if double {
+                            self.read_v_f64(rn) as u64
+                        } else {
+                            self.read_v_f32(rn) as u64
+                        };
+                        let res = if sf { val } else { (val as u32) as u64 };
+                        self.write_zero(rd, res);
+                    }
+                    2 => {
+                        let int_val: i64 = if sf {
+                            self.read_zero(rn) as i64
+                        } else {
+                            (self.read_zero(rn) as i32) as i64
+                        };
+                        if double {
+                            self.write_v_f64(rd, int_val as f64);
+                        } else {
+                            self.write_v_f32(rd, int_val as f32);
+                        }
+                    }
+                    3 => {
+                        let uint_val: u64 = if sf {
+                            self.read_zero(rn)
+                        } else {
+                            self.read_zero(rn) as u32 as u64
+                        };
+                        if double {
+                            self.write_v_f64(rd, uint_val as f64);
+                        } else {
+                            self.write_v_f32(rd, uint_val as f32);
+                        }
+                    }
+                    6 => {
+                        if sf && double {
+                            self.write_v_u64(rd, self.read_zero(rn));
+                        } else if !sf && !double {
+                            self.write_v_u32(rd, self.read_zero(rn) as u32);
+                        }
+                    }
+                    7 => {
+                        if sf && double {
+                            self.write_zero(rd, self.read_v_u64(rn));
+                        } else if !sf && !double {
+                            self.write_zero(rd, self.read_v_u32(rn) as u64);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Instruction::FpLoadStore { size, rt, rn, offset, load } => {
+                let address = self.read_sp(rn).wrapping_add(offset);
+                if load {
+                    match size {
+                        2 => {
+                            let val = memory.read_u32(address)?;
+                            self.write_v_u32(rt, val);
+                        }
+                        3 => {
+                            let val = memory.read_u64(address)?;
+                            self.write_v_u64(rt, val);
+                        }
+                        4 => {
+                            let low = memory.read_u64(address)?;
+                            let high = memory.read_u64(address.wrapping_add(8))?;
+                            self.write_v_u128(rt, (u128::from(high) << 64) | u128::from(low));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match size {
+                        2 => memory.write_u32(address, self.read_v_u32(rt))?,
+                        3 => memory.write_u64(address, self.read_v_u64(rt))?,
+                        4 => {
+                            let val = self.read_v_u128(rt);
+                            let low = val as u64;
+                            let high = (val >> 64) as u64;
+                            memory.write_u64(address, low)?;
+                            memory.write_u64(address.wrapping_add(8), high)?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Instruction::FpLoadStorePair { size, rt1, rt2, rn, offset, load, pre_index, post_index } => {
+                let base = self.read_sp(rn);
+                let address = if pre_index { base.wrapping_add_signed(offset) } else { base };
+                let elem_bytes: u64 = match size {
+                    2 => 4,
+                    3 => 8,
+                    4 => 16,
+                    _ => 0,
+                };
+                let second_address = address.wrapping_add(elem_bytes);
+                if load {
+                    match size {
+                        2 => {
+                            let v1 = memory.read_u32(address)?;
+                            let v2 = memory.read_u32(second_address)?;
+                            self.write_v_u32(rt1, v1);
+                            self.write_v_u32(rt2, v2);
+                        }
+                        3 => {
+                            let v1 = memory.read_u64(address)?;
+                            let v2 = memory.read_u64(second_address)?;
+                            self.write_v_u64(rt1, v1);
+                            self.write_v_u64(rt2, v2);
+                        }
+                        4 => {
+                            let low1 = memory.read_u64(address)?;
+                            let high1 = memory.read_u64(address.wrapping_add(8))?;
+                            let low2 = memory.read_u64(second_address)?;
+                            let high2 = memory.read_u64(second_address.wrapping_add(8))?;
+                            self.write_v_u128(rt1, (u128::from(high1) << 64) | u128::from(low1));
+                            self.write_v_u128(rt2, (u128::from(high2) << 64) | u128::from(low2));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match size {
+                        2 => {
+                            memory.write_u32(address, self.read_v_u32(rt1))?;
+                            memory.write_u32(second_address, self.read_v_u32(rt2))?;
+                        }
+                        3 => {
+                            memory.write_u64(address, self.read_v_u64(rt1))?;
+                            memory.write_u64(second_address, self.read_v_u64(rt2))?;
+                        }
+                        4 => {
+                            let v1 = self.read_v_u128(rt1);
+                            let v2 = self.read_v_u128(rt2);
+                            memory.write_u64(address, v1 as u64)?;
+                            memory.write_u64(address.wrapping_add(8), (v1 >> 64) as u64)?;
+                            memory.write_u64(second_address, v2 as u64)?;
+                            memory.write_u64(second_address.wrapping_add(8), (v2 >> 64) as u64)?;
+                        }
+                        _ => {}
+                    }
+                }
+                if pre_index {
+                    self.write_sp(rn, address);
+                } else if post_index {
+                    self.write_sp(rn, base.wrapping_add_signed(offset));
+                }
+            }
+            Instruction::VectorBitwise { rd, rn, rm, op } => {
+                let a = self.read_v_u128(rn);
+                let b = self.read_v_u128(rm);
+                let res = match op {
+                    0 => a & b,
+                    1 => a & (!b),
+                    2 => a | b,
+                    3 => a | (!b),
+                    4 => a ^ b,
+                    _ => 0,
+                };
+                self.write_v_u128(rd, res);
+            }
         }
         self.pc = next_pc;
         Ok(event)
@@ -785,6 +1167,188 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             });
         }
     }
+    // Floating-Point Data-Processing (2 source): FADD, FSUB, FMUL, FDIV, FMAX, FMIN, FMAXNM, FMINNM, FNMUL
+    if word & 0x5f20_0c00 == 0x1e20_0800 {
+        let fptype = (word >> 22) & 3;
+        if fptype <= 1 {
+            let double = fptype == 1;
+            let rm = ((word >> 16) & 31) as u8;
+            let op = ((word >> 12) & 0xF) as u8;
+            let rn = ((word >> 5) & 31) as u8;
+            let rd = (word & 31) as u8;
+            if op <= 8 {
+                return Ok(Instruction::FpData2 {
+                    double,
+                    rd,
+                    rn,
+                    rm,
+                    op,
+                });
+            }
+        }
+    }
+
+    // Floating-Point Compare: FCMP / FCMPE
+    if word & 0x5f20_fc17 == 0x1e20_2000 {
+        let fptype = (word >> 22) & 3;
+        if fptype <= 1 {
+            let double = fptype == 1;
+            let compare_zero = (word & (1 << 3)) != 0;
+            let rm = ((word >> 16) & 31) as u8;
+            let rn = ((word >> 5) & 31) as u8;
+            return Ok(Instruction::FpCompare {
+                double,
+                rn,
+                rm,
+                compare_zero,
+            });
+        }
+    }
+
+    // Floating-Point Data-Processing (1 source): FMOV, FABS, FNEG, FSQRT, FCVT
+    if word & 0x5f20_7c00 == 0x1e20_4000 {
+        let fptype = (word >> 22) & 3;
+        if fptype <= 1 {
+            let double = fptype == 1;
+            let op = ((word >> 15) & 0x3F) as u8;
+            let rn = ((word >> 5) & 31) as u8;
+            let rd = (word & 31) as u8;
+            if op <= 5 {
+                return Ok(Instruction::FpData1 {
+                    double,
+                    rd,
+                    rn,
+                    op,
+                });
+            }
+        }
+    }
+
+    // Floating-Point Multiply-Add: FMADD, FMSUB, FNMADD, FNMSUB
+    if word & 0x5f00_0000 == 0x1f00_0000 {
+        let fptype = (word >> 22) & 3;
+        if fptype <= 1 {
+            let double = fptype == 1;
+            let sub = (word & (1 << 21)) != 0;
+            let rm = ((word >> 16) & 31) as u8;
+            let neg = (word & (1 << 15)) != 0;
+            let ra = ((word >> 10) & 31) as u8;
+            let rn = ((word >> 5) & 31) as u8;
+            let rd = (word & 31) as u8;
+            return Ok(Instruction::FpMultiplyAdd {
+                double,
+                rd,
+                rn,
+                rm,
+                ra,
+                sub,
+                neg,
+            });
+        }
+    }
+
+    // Conversion between FP and Integer / FMOV
+    if word & 0x5f20_fc00 == 0x1e20_0000 {
+        let sf = (word >> 31) & 1 != 0;
+        let fptype = (word >> 22) & 3;
+        if fptype <= 1 {
+            let double = fptype == 1;
+            let op = ((word >> 16) & 7) as u8;
+            let rn = ((word >> 5) & 31) as u8;
+            let rd = (word & 31) as u8;
+            return Ok(Instruction::FpConvertInt {
+                sf,
+                double,
+                rd,
+                rn,
+                op,
+            });
+        }
+    }
+
+    // SIMD & FP Load / Store (unsigned immediate offset)
+    // S: size=2, D: size=3, Q: size=0 with opc=10/11
+    if word & 0x3f00_0000 == 0x3d00_0000 {
+        let size_bits = (word >> 30) & 3;
+        let opc = (word >> 22) & 3;
+        let (size, scale) = if size_bits == 0 && (opc == 2 || opc == 3) {
+            (4u8, 16u64)
+        } else if size_bits == 2 {
+            (2u8, 4u64)
+        } else if size_bits == 3 {
+            (3u8, 8u64)
+        } else {
+            (0u8, 0u64)
+        };
+        if size != 0 {
+            let imm12 = u64::from((word >> 10) & 0xfff);
+            let offset = imm12 * scale;
+            let load = if size == 4 { opc == 3 } else { opc == 1 };
+            return Ok(Instruction::FpLoadStore {
+                size,
+                rt: rd,
+                rn,
+                offset,
+                load,
+            });
+        }
+    }
+
+    // SIMD & FP Load / Store Pair (LDP / STP)
+    if word & 0x3a00_0000 == 0x2800_0000 && word & (1 << 26) != 0 {
+        let opc = (word >> 30) & 3;
+        let mode = (word >> 23) & 3;
+        let (size, scale) = match opc {
+            0 => (2u8, 4i64),
+            1 => (3u8, 8i64),
+            2 => (4u8, 16i64),
+            _ => (0u8, 0i64),
+        };
+        if size != 0 && mode != 0 {
+            let imm7 = signed_field((word >> 15) & 0x7f, 7);
+            let offset = imm7 * scale;
+            let rt1 = (word & 31) as u8;
+            let rt2 = ((word >> 10) & 31) as u8;
+            return Ok(Instruction::FpLoadStorePair {
+                size,
+                rt1,
+                rt2,
+                rn,
+                offset,
+                load: (word & (1 << 22)) != 0,
+                pre_index: mode == 3,
+                post_index: mode == 1,
+            });
+        }
+    }
+
+    // Vector Bitwise (128-bit NEON: AND, BIC, ORR, ORN, EOR)
+    if word & 0xbf20_fc00 == 0x0ea0_1c00
+        || word & 0xbf20_fc00 == 0x2ea0_1c00
+        || word & 0xbf20_fc00 == 0x0e20_1c00
+        || word & 0xbf20_fc00 == 0x0e60_1c00
+        || word & 0xbf20_fc00 == 0x0ee0_1c00
+        || word & 0xbf20_fc00 == 0x2e20_1c00
+    {
+        let op = if word & 0xbf20_fc00 == 0x0e20_1c00 {
+            0
+        } else if word & 0xbf20_fc00 == 0x0e60_1c00 {
+            1
+        } else if word & 0xbf20_fc00 == 0x0ea0_1c00 || word & 0xbf20_fc00 == 0x2ea0_1c00 {
+            2
+        } else if word & 0xbf20_fc00 == 0x0ee0_1c00 {
+            3
+        } else {
+            4
+        };
+        return Ok(Instruction::VectorBitwise {
+            rd,
+            rn,
+            rm: ((word >> 16) & 31) as u8,
+            op,
+        });
+    }
+
     if word & 0xffe0_001f == 0xd400_0001 {
         return Ok(Instruction::SupervisorCall {
             immediate: ((word >> 5) & 0xffff) as u16,

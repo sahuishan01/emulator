@@ -63,6 +63,25 @@
    - Clean-room dependency-free `emulator-crypto`: AES-128 block encrypt/decrypt, ECB decrypt, explicit-counter CTR, full-block XTS, FIPS 180-4 SHA-256 digest engine, and bounded `name = hex` key-file parsing with redacted debug output.
    - AES-128 FIPS 197, CTR SP 800-38A, XTS known-answer, and SHA-256 NIST test vectors pass. Lookup-table AES is not constant-time and is not production-hardened.
 
+6. **Phase 1 (M5A) Delivered - NCA3 Decryption, RomFS & ExeFS Integration**:
+   - Clean-room RomFS parser supporting hierarchical directories, file tables, and IVFC (Hierarchical Integrity) level extraction in `crates/loader/src/romfs.rs`.
+   - Clean-room LZ4 block decompression in `crates/loader/src/lz4.rs` for retail compressed NSO modules.
+   - NSO loader now handles compressed `.text`, `.rodata`, `.data` sections and verifies SHA-256 digests.
+   - Multi-module ExeFS program loading and dynamic relocation support integrated with NPDM stack sizing in `Session::from_exefs`.
+   - Full NCA3 container execution in `Session::from_nca`: header XTS decryption, integrity verification, ExeFS module loading, and RomFS mounting into `fsp-srv`.
+   - CLI command `run-nca` in `crates/cli` for running decrypted/encrypted NCA game programs directly.
+
+7. **Phase 2 (M5B) Delivered - AArch64 Floating Point & NEON Vector Engine**:
+   - Extended `Cpu` with 32 128-bit vector registers `v: [u128; 32]`, `fpcr`, and `fpsr`.
+   - Scalar FP arithmetic: `FADD`, `FSUB`, `FMUL`, `FDIV`, `FMAX`, `FMIN`, `FMAXNM`, `FMINNM`, `FNMUL`.
+   - Scalar FP unary ops: `FMOV`, `FABS`, `FNEG`, `FSQRT`.
+   - Fused multiply-add/sub: `FMADD`, `FMSUB`, `FNMADD`, `FNMSUB`.
+   - Float comparison: `FCMP` (register and zero), updating architectural NZCV condition flags.
+   - Conversions: `FCVT` (f32 <-> f64), integer conversions (`FCVTZS`, `FCVTZU`, `SCVTF`, `UCVTF`), and general/FP moves (`FMOV`).
+   - SIMD & FP memory operations: `LDR` / `STR` for S (32-bit), D (64-bit), and Q (128-bit) registers with immediate scaling.
+   - SIMD & FP pair operations: `LDP` / `STP` for S, D, and Q registers with pre/post-indexing.
+   - NEON 128-bit vector bitwise logic: `AND`, `BIC`, `ORR`, `ORN`, and `EOR`.
+
 ---
 
 ## Canonical Pokémon Legends: Z-A Execution Roadmap
@@ -70,8 +89,8 @@
 The complete clean-room master plan for booting and running Pokémon Legends: Z-A on the Realme GT 7 Dream Edition (Arm Immortalis-G720) is documented in [`docs/pokemon-legends-za-plan.md`](file:///root/projects/emulator/docs/pokemon-legends-za-plan.md).
 
 The implementation roadmap is structured into eight concrete milestones:
-1. **Phase 1 (M5A) - NCA3 Decryption, Key Hierarchy & RomFS**: Section CTR decryption, Switch key derivation (`header_key`, `key_area_key`, `titlekeys`), RomFS IVFC level 4 directory/file stream reader, and multi-module ExeFS loader.
-2. **Phase 2 (M5B) - AArch64 Floating Point & NEON Vectors**: Complete scalar FP arithmetic (`FADD`, `FSUB`, `FMUL`, `FDIV`, `FMADD`, `FCMP`, `FCVT`), 128-bit vector load/store (`LDR`/`STR` Q-registers, `LD1`–`LD4`), vector math/logic/permutations, and FPCR/FPSR status control.
+1. **Phase 1 (M5A) - NCA3 Decryption, Key Hierarchy & RomFS**: [DELIVERED]
+2. **Phase 2 (M5B) - AArch64 Floating Point & NEON Vectors**: [DELIVERED]
 3. **Phase 3 (M6A) - Horizon OS Multi-Core Kernel & Services**: 3-core guest scheduler simulation, user-space futex arbitration (`svcWaitProcessWideKeyAtomic`), full `fsp-srv`, `vi:m`/`nvnflinger` BufferQueue presentation, `hid` controller ring buffers, `audren:u` audio mixing, and `nvdrv` GPFIFO submission.
 4. **Phase 4 (M6B) - Maxwell 3D GPFIFO Engine & State**: GPFIFO pushbuffer parsing (methods, gather buffers, call/return), full B197 3D state machine (16 VBs, 32 attrs, two-sided stencil, MRTs, independent blend), TIC/TSC samplers, and syncpoint semaphores.
 5. **Phase 5 (M6C) - Maxwell SM53 Shader Translator & Compute**: Full SM53 opcodes, typed SSA IR, compute workgroup shared memory (`LDS`/`STS`), `BAR.SYNC`, perspective-correct fragment interpolation (`IPA`), and SPIR-V 1.3 emission.
@@ -83,19 +102,13 @@ The implementation roadmap is structured into eight concrete milestones:
 
 ## Next Planned Steps (In Exact Priority Order)
 
-1. **NCA crypto integration and key hierarchy (Phase 1 / M5A)**:
-   - Confirm NCA's per-sector XTS tweak and section CTR counter encoding from format evidence before wiring the generic primitives to files.
-   - Implement key derivation (`header_key`, `key_area_key`, titlekeys) and validate header/section metadata without logging or persisting user key material.
-   - Add independent known-answer and invalid-key/malformed-container cases.
-
-2. **AArch64 Floating Point & NEON Vector Operations (Phase 2 / M5B)**:
-   - Implement scalar single/double precision FP arithmetic in `crates/a64/src/lib.rs` (`FADD`, `FSUB`, `FMUL`, `FDIV`, `FMADD`, `FCMP`, `FCVT`).
-   - Implement 128-bit vector load/store instructions (`LDR`/`STR` Q-registers).
-
-3. **Horizon VI BufferQueue & Presentation Pipeline (Phase 3 / M6A)**:
+1. **Horizon VI BufferQueue & Presentation Pipeline (Phase 3 / M6A)**:
    - Implement clean-room `nvnflinger` BufferQueue state machine (`Connect`, `RequestBuffer`, `QueueBuffer`, `DequeueBuffer`).
    - Connect buffer presentation to the Android Vulkan swapchain / `ANativeWindow`.
 
-4. **NV Channel GPFIFO Submission Pipeline (Phase 4 / M6B)**:
+2. **NV Channel GPFIFO Submission Pipeline (Phase 4 / M6B)**:
    - Support `NVIOC_CHANNEL_SUBMIT_GPFIFO` command buffer submission.
    - Wire guest command stream decoding directly into the host Vulkan command processor.
+
+3. **Multi-Thread Futex Synchronization (Phase 3 / M6A)**:
+   - Implement monotonic ticket arbitration for `svcWaitProcessWideKeyAtomic` and `svcSignalProcessWideKey` preventing post-menu deadlock in Trinity Engine.

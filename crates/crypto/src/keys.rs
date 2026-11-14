@@ -22,6 +22,31 @@ pub enum KeyFileError {
     DuplicateName(usize),
 }
 
+impl fmt::Display for KeyFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge => write!(f, "key file exceeds size limit"),
+            Self::InvalidUtf8 => write!(f, "key file contains invalid UTF-8"),
+            Self::TooManyEntries => write!(f, "key file contains too many entries"),
+            Self::InvalidLine(line) => write!(f, "invalid line at {line}"),
+            Self::InvalidName(line) => write!(f, "invalid key name at {line}"),
+            Self::InvalidHex(line) => write!(f, "invalid hex at {line}"),
+            Self::UnsupportedKeyLength(line) => write!(f, "unsupported key length at {line}"),
+            Self::DuplicateName(line) => write!(f, "duplicate key name at {line}"),
+        }
+    }
+}
+
+impl std::error::Error for KeyFileError {}
+
+impl Default for KeyFile {
+    fn default() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+}
+
 struct SecretKey(Vec<u8>);
 
 impl Drop for SecretKey {

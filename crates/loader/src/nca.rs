@@ -308,6 +308,42 @@ impl NcaDecryptedHeader {
             _ => Err(LoadError::Invalid("NCA3 section encryption type unsupported")),
         }
     }
+
+    /// Open the ExeFS program contained in the NCA archive (typically Section 0, PartitionFs).
+    pub fn open_exefs(
+        &self,
+        archive: &[u8],
+        keys: &KeyFile,
+    ) -> Result<crate::exefs::ExeFsProgram, LoadError> {
+        for (i, sec_opt) in self.metadata.sections.iter().enumerate() {
+            if sec_opt.is_some() {
+                let fs_header = NcaFsHeader::parse(&self.fs_headers[i])?;
+                if fs_header.fs_type == NcaFsType::PartitionFs {
+                    let decrypted = self.decrypt_section(archive, i, keys)?;
+                    return crate::exefs::ExeFsProgram::parse(&decrypted);
+                }
+            }
+        }
+        Err(LoadError::Invalid("NCA3 archive does not contain an active PartitionFS section"))
+    }
+
+    /// Open the RomFS filesystem contained in the NCA archive (typically Section 1, RomFs).
+    pub fn open_romfs(
+        &self,
+        archive: &[u8],
+        keys: &KeyFile,
+    ) -> Result<crate::romfs::RomFsArchive, LoadError> {
+        for (i, sec_opt) in self.metadata.sections.iter().enumerate() {
+            if sec_opt.is_some() {
+                let fs_header = NcaFsHeader::parse(&self.fs_headers[i])?;
+                if fs_header.fs_type == NcaFsType::RomFs {
+                    let decrypted = self.decrypt_section(archive, i, keys)?;
+                    return crate::romfs::RomFsArchive::from_section_payload(&decrypted, &fs_header);
+                }
+            }
+        }
+        Err(LoadError::Invalid("NCA3 archive does not contain an active RomFS section"))
+    }
 }
 
 /// Decrypt the NCA3 0xC00-byte header using six independent 0x200-byte XTS

@@ -19,6 +19,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         return run_nro(&arguments);
     }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "run-nca")
+    {
+        return run_nca(&arguments);
+    }
     let (program, max_steps, demo) = match arguments.as_slice() {
         [command] if command == "demo" => (DEMO.to_vec(), DEFAULT_STEPS, true),
         [command, file] if command == "run-raw" => (read_image(file)?, DEFAULT_STEPS, false),
@@ -29,7 +35,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             (read_image(file)?, max_steps, false)
         }
-        _ => return Err("usage: emulator-cli demo | run-raw FILE [--max-steps N] | run-nro FILE [--max-steps N]".into()),
+        _ => return Err("usage: emulator-cli demo | run-raw FILE [--max-steps N] | run-nro FILE [--max-steps N] | run-nca FILE [--keys KEYFILE] [--max-steps N]".into()),
     };
     let mut memory = AddressSpace::default();
     memory.map(CODE_BASE, program, Permissions::READ_EXECUTE)?;
@@ -100,6 +106,103 @@ fn run_nro(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
         RunOutcome::Blocked => {
             Err("guest process is blocked with no runnable thread or scheduled timeout".into())
+        }
+    }
+}
+
+fn run_nca(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut file: Option<&str> = None;
+    let mut keys_path: Option<&str> = None;
+    let mut budget = DEFAULT_STEPS;
+
+    let mut i = 1;
+    while i < arguments.len() {
+        match arguments[i].as_str() {
+            "--keys" => {
+                i += 1;
+                if i >= arguments.len() {
+                    return Err("--keys requires a file path".into());
+                }
+                keys_path = Some(&arguments[i]);
+            }
+            "--max-steps" => {
+                i += 1;
+                if i >= arguments.len() {
+                    return Err("--max-steps requires an integer argument".into());
+                }
+                budget = arguments[i].parse::<u64>()?;
+            }
+            arg if !arg.starts_with("--") && file.is_none() => {
+                file = Some(arg);
+            }
+            arg => return Err(format!("unexpected argument: {arg}").into()),
+        }
+        i += 1;
+    }
+
+    let file = file.ok_or("usage: emulator-cli run-nca FILE [--keys KEYFILE] [--max-steps N]")?;
+    if budget == 0 || budget > 10_000_000 {
+        return Err("step limit must be between 1 and 10000000".into());
+    }
+
+    let keys = if let Some(path) = keys_path {
+        let content = std::fs::read(path)?;
+        emulator_crypto::keys::KeyFile::parse(&content)?
+    } else {
+        let default_paths = ["prod.keys", "keys.dat", "/root/.switch/prod.keys"];
+        let mut loaded = None;
+        for p in default_paths {
+            if let Ok(content) = std::fs::read(p) {
+                if let Ok(kf) = emulator_crypto::keys::KeyFile::parse(&content) {
+                    loaded = Some(kf);
+                    break;
+                }
+            }
+        }
+        loaded.unwrap_or_default()
+    };
+
+    let mut nca_bytes = Vec::new();
+    File::open(file)?.read_to_end(&mut nca_bytes)?;
+
+    println!("Loading NCA3 archive: {file} ({} bytes)", nca_bytes.len());
+    let mut session = Session::from_nca(&nca_bytes, &keys)?;
+    println!(
+        "Program successfully mapped into guest address space. Initial PC={:#x}, SP={:#x}",
+        session.cpu().pc,
+        session.cpu().sp
+    );
+
+    let outcome = session.run(budget);
+    for record in session.debug_records() {
+        let text = String::from_utf8_lossy(record);
+        for character in text.chars() {
+            if character.is_control() && !matches!(character, '\n' | '\r' | '\t') {
+                print!("{}", character.escape_default());
+            } else {
+                print!("{character}");
+            }
+        }
+    }
+
+    match outcome? {
+        RunOutcome::Exited => {
+            println!(
+                "Guest process exited successfully after {} instructions.",
+                session.instructions()
+            );
+            Ok(())
+        }
+        RunOutcome::BudgetExhausted => {
+            println!(
+                "NCA prototype reached instruction step budget ({}) at PC={:#x}",
+                session.instructions(),
+                session.cpu().pc
+            );
+            Ok(())
+        }
+        RunOutcome::Blocked => {
+            Err("guest process is blocked waiting for kernel resources".into())
         }
     }
 }

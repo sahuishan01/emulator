@@ -37,13 +37,27 @@ fn payload(request: &Request, length: usize) -> Result<(), ServiceError> {
 pub struct ServiceManager {
     initialized: bool,
     graphics: Option<std::rc::Rc<dyn emulator_gpu::GraphicsBackend>>,
+    romfs: Option<emulator_loader::RomFsArchive>,
 }
 impl ServiceManager {
     pub fn with_graphics(graphics: std::rc::Rc<dyn emulator_gpu::GraphicsBackend>) -> Self {
         Self {
             initialized: false,
             graphics: Some(graphics),
+            romfs: None,
         }
+    }
+
+    pub fn with_romfs(romfs: emulator_loader::RomFsArchive) -> Self {
+        Self {
+            initialized: false,
+            graphics: None,
+            romfs: Some(romfs),
+        }
+    }
+
+    pub fn set_romfs(&mut self, romfs: emulator_loader::RomFsArchive) {
+        self.romfs = Some(romfs);
     }
 }
 impl Service for ServiceManager {
@@ -77,7 +91,7 @@ impl Service for ServiceManager {
                     b"emu:test" => Box::new(DiagnosticCounter::default()),
                     b"emu:gpu\0" => Box::new(DiagnosticGpu::default()),
                     b"nvdrv\0\0\0" => Box::new(NvDriver::with_graphics(self.graphics.clone())),
-                    b"fsp-srv\0" => Box::new(FspSrvService::default()),
+                    b"fsp-srv\0" => Box::new(FspSrvService::with_romfs(self.romfs.clone())),
                     b"set:sys\0" => Box::new(SetSysService::default()),
                     b"time:s\0\0" | b"time:u\0\0" => Box::new(TimeService::default()),
                     b"vi:m\0\0\0\0" => Box::new(ViManagerService::default()),

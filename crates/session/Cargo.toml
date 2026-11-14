@@ -12,6 +12,7 @@ emulator-memory = { path = "../memory" }
 emulator-loader = { path = "../loader" }
 emulator-kernel = { path = "../kernel" }
 emulator-services = { path = "../services" }
+emulator-crypto = { path = "../crypto" }
 
 [lints]
 workspace = true

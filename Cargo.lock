@@ -26,6 +26,7 @@ name = "emulator-cli"
 version = "0.1.0"
 dependencies = [
  "emulator-a64",
+ "emulator-crypto",
  "emulator-loader",
  "emulator-memory",
  "emulator-session",
@@ -77,6 +78,7 @@ dependencies = [
  "emulator-gpu",
  "emulator-ipc",
  "emulator-kernel",
+ "emulator-loader",
  "emulator-memory",
 ]
 
@@ -85,6 +87,7 @@ name = "emulator-session"
 version = "0.1.0"
 dependencies = [
  "emulator-a64",
+ "emulator-crypto",
  "emulator-gpu",
  "emulator-kernel",
  "emulator-loader",

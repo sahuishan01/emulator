@@ -40,9 +40,6 @@ impl NsoImage {
         let flags = word(input, 8);
         // Bit 0: Text compressed, Bit 1: Ro compressed, Bit 2: Data compressed
         // Bit 3: Text hash check, Bit 4: Ro hash check, Bit 5: Data hash check
-        if flags & 0x7 != 0 {
-            return Err(LoadError::Invalid("compressed NSO sections are not yet implemented"));
-        }
 
         let mut section_headers = [NsoSectionHeader {
             file_offset: 0,
@@ -94,9 +91,34 @@ impl NsoImage {
             }
 
             let file_start = hdr.file_offset as usize;
-            let file_end = file_start.checked_add(size).ok_or(LoadError::LimitExceeded)?;
-            if file_end > input.len() {
-                return Err(LoadError::Invalid("NSO section data extends beyond file bounds"));
+            let is_compressed = flags & (1 << i) != 0;
+            let check_hash = flags & (1 << (i + 3)) != 0;
+
+            let decompressed_data = if is_compressed {
+                let comp_size = word(input, 0x60 + i * 4) as usize;
+                let file_end = file_start.checked_add(comp_size).ok_or(LoadError::LimitExceeded)?;
+                if file_end > input.len() {
+                    return Err(LoadError::Invalid("compressed NSO section extends beyond file bounds"));
+                }
+                let raw_compressed = &input[file_start..file_end];
+                crate::lz4::lz4_decompress(raw_compressed, size)?
+            } else {
+                let file_end = file_start.checked_add(size).ok_or(LoadError::LimitExceeded)?;
+                if file_end > input.len() {
+                    return Err(LoadError::Invalid("NSO section data extends beyond file bounds"));
+                }
+                input[file_start..file_end].to_vec()
+            };
+
+            if check_hash {
+                let hash_offset = 0x70 + i * 0x20;
+                if hash_offset + 32 <= input.len() {
+                    let expected_hash = &input[hash_offset..hash_offset + 32];
+                    let digest = emulator_crypto::sha256::Sha256::digest(&decompressed_data);
+                    if digest != expected_hash {
+                        return Err(LoadError::Invalid("NSO section SHA-256 hash mismatch"));
+                    }
+                }
             }
 
             let memory_size = if i == 2 {
@@ -119,7 +141,7 @@ impl NsoImage {
 
             let mut section_bytes = Vec::new();
             section_bytes.try_reserve_exact(memory_size).map_err(|_| LoadError::LimitExceeded)?;
-            section_bytes.extend_from_slice(&input[file_start..file_end]);
+            section_bytes.extend_from_slice(&decompressed_data);
             section_bytes.resize(memory_size, 0);
             payloads[i] = section_bytes;
 

@@ -1,12 +1,15 @@
 //! Original uncompressed NRO0 and NSO0 parsing and mapping. Module relocation is not implemented.
 
 pub mod exefs;
+pub mod lz4;
 pub mod nca;
 pub mod npdm;
 mod nso;
 pub mod pfs0;
 pub mod reloc;
+pub mod romfs;
 pub use nso::{LoadedNsoModule, NsoImage, NsoProgram};
+pub use romfs::RomFsArchive;
 
 use emulator_memory::{AddressSpace, Mapping, MemoryError, Permissions};
 use std::fmt;

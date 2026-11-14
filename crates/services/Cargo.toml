@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 emulator-ipc = { path = "../ipc" }
 emulator-kernel = { path = "../kernel" }
+emulator-loader = { path = "../loader" }
 
 emulator-gpu = { path = "../gpu" }
 emulator-memory = { path = "../memory" }
