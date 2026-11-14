@@ -130,10 +130,13 @@ impl Session {
         memory
             .map(TLS_PAGE, vec![0; 4096], Permissions::READ_WRITE)
             .map_err(SessionError::Memory)?;
+        memory
+            .write_u32(TLS_BASE + 0x110, emulator_kernel::MAIN_THREAD_HANDLE as u32)
+            .map_err(SessionError::Memory)?;
         let mut cpu = Cpu::new(image.entry, STACK_BASE + stack_size as u64);
         cpu.tpidrro_el0 = TLS_BASE;
-        cpu.x[0] = CONFIG_BASE;
-        cpu.x[1] = u64::MAX;
+        cpu.x[0] = 0;
+        cpu.x[1] = u64::from(emulator_kernel::MAIN_THREAD_HANDLE);
         let mut kernel = Kernel::default();
         kernel
             .register_named_port("sm:", Box::new(service_manager))

@@ -19,7 +19,16 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.18-dev` (versionCode 58).
+- **Latest Release**: `v0.28.19-dev` (versionCode 59).
+  - Resolved `unsupported A64 instruction 0xd63f0020 at 0x1000bc` encountered during retail NSO execution (Pokémon Legends: Z-A).
+  - Implemented A64 unconditional register branch instructions: `BLR Xn` (`0xd63f0000 | (rn << 5)`), `BR Xn` (`0xd61f0000 | (rn << 5)`), and `RET Xn` (`0xd65f0000 | (rn << 5)`).
+  - Implemented test bit and branch instructions `TBZ` / `TBNZ` (`0x3600_0000` / `0x3700_0000`) for conditional branching based on tested bit values.
+  - Implemented conditional select instructions `CSEL`, `CSINC`, `CSINV`, `CSNEG` (unlocking compiler aliases `CSET`, `CSETM`, `CINC`, `CINV`, `CNEG`).
+  - Implemented integer multiply instructions `MADD`, `MSUB` (including `MUL`, `MNEG`), integer divide `UDIV`, `SDIV`, and register variable shifts `LSLV`, `LSRV`, `ASRV`, `RORV`.
+  - Implemented logical immediate instructions with bitmask decoding `AND`, `ORR`, `EOR`, `ANDS`.
+  - Expanded memory load/store operations to support 8-bit (`STRB`, `LDRB`, `LDRSB`), 16-bit (`STRH`, `LDRH`, `LDRSH`), 32-bit (`STR`, `LDR`, `LDRSW`), 64-bit (`STR`, `LDR`), unscaled `LDUR` / `STUR`, pre/post-indexed addressing, and register offset addressing `[Xn, Xm]`.
+  - Corrected retail NSO startup registers in `Session::from_exefs_with_services` to initialize `x0 = 0`, `x1 = MAIN_THREAD_HANDLE` (0x100), and write `MAIN_THREAD_HANDLE` to `TLS_PAGE + 0x110` according to Nintendo Horizon OS process launch conventions.
+- **Previous Release**: `v0.28.18-dev` (versionCode 58).
   - Resolved `invalid loader input: failed to parse NSO module 'rtld': invalid loader input: NSO section SHA-256 hash mismatch` when loading commercial Switch NSP packages (including Pokémon Legends: Z-A).
   - Corrected NSO0 section SHA-256 hash offsets in the header from `0x70 + i * 0x20` to `0xA0 + i * 0x20` (Text hash at 0xA0..0xC0, RoData hash at 0xC0..0xE0, Data hash at 0xE0..0x100) per Nintendo Horizon NSO0 header specifications.
   - Properly authenticated decompressed section digests against header digests when hash checking flags (bits 3, 4, 5) are active.

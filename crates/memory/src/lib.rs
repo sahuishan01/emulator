@@ -623,6 +623,18 @@ impl AddressSpace {
         Ok(u32::from_le_bytes(bytes))
     }
 
+    pub fn read_u8(&self, address: u64) -> Result<u8, MemoryError> {
+        let mut bytes = [0; 1];
+        self.read(address, &mut bytes)?;
+        Ok(bytes[0])
+    }
+
+    pub fn read_u16(&self, address: u64) -> Result<u16, MemoryError> {
+        let mut bytes = [0; 2];
+        self.read(address, &mut bytes)?;
+        Ok(u16::from_le_bytes(bytes))
+    }
+
     pub fn read_u32(&self, address: u64) -> Result<u32, MemoryError> {
         let mut bytes = [0; 4];
         self.read(address, &mut bytes)?;
@@ -633,6 +645,14 @@ impl AddressSpace {
         let mut bytes = [0; 8];
         self.read(address, &mut bytes)?;
         Ok(u64::from_le_bytes(bytes))
+    }
+
+    pub fn write_u8(&mut self, address: u64, value: u8) -> Result<(), MemoryError> {
+        self.write(address, &[value])
+    }
+
+    pub fn write_u16(&mut self, address: u64, value: u16) -> Result<(), MemoryError> {
+        self.write(address, &value.to_le_bytes())
     }
 
     pub fn write_u32(&mut self, address: u64, value: u32) -> Result<(), MemoryError> {

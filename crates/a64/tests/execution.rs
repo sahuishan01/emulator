@@ -419,3 +419,175 @@ fn test_bitfield_and_exclusive_load_store() {
     cpu.step(&mut mem).unwrap();
     assert_eq!(cpu.x[5], 0x0123_4567_89ab_cdef);
 }
+
+#[test]
+fn test_branch_register_and_blr_retail_crt0() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+    // Instruction 0x1000: BLR X1 (0xd63f0020) - matches Pokémon Legends: Z-A rtld!
+    let blr_x1 = 0xd63f0020u32;
+    // Instruction 0x2000: BR X2 (0xd61f0040)
+    let br_x2 = 0xd61f0040u32;
+    // Instruction 0x3000: RET (0xd65f03c0)
+    let ret = 0xd65f03c0u32;
+
+    let mut code1 = vec![0u8; 0x1000];
+    code1[0..4].copy_from_slice(&blr_x1.to_le_bytes());
+    mem.map(0x1000, code1, Permissions::READ_EXECUTE).unwrap();
+
+    let mut code2 = vec![0u8; 0x1000];
+    code2[0..4].copy_from_slice(&br_x2.to_le_bytes());
+    mem.map(0x2000, code2, Permissions::READ_EXECUTE).unwrap();
+
+    let mut code3 = vec![0u8; 0x1000];
+    code3[0..4].copy_from_slice(&ret.to_le_bytes());
+    mem.map(0x3000, code3, Permissions::READ_EXECUTE).unwrap();
+
+    // Set X1 to target 0x2000
+    cpu.x[1] = 0x2000;
+    // Step BLR X1
+    cpu.step(&mut mem).unwrap();
+    // PC must be 0x2000 and LR (X30) must be 0x1004
+    assert_eq!(cpu.pc, 0x2000);
+    assert_eq!(cpu.x[30], 0x1004);
+
+    // Set X2 to target 0x3000
+    cpu.x[2] = 0x3000;
+    // Step BR X2
+    cpu.step(&mut mem).unwrap();
+    // PC must be 0x3000 and X30 must be preserved as 0x1004
+    assert_eq!(cpu.pc, 0x3000);
+    assert_eq!(cpu.x[30], 0x1004);
+
+    // Step RET (returns to X30 = 0x1004)
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.pc, 0x1004);
+}
+
+#[test]
+fn test_test_bit_branch_tbz_tbnz() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // TBZ X0, #3, +8 (0x36180040)
+    let tbz = 0x36180040u32;
+    // TBNZ X0, #3, +8 (0x37180040)
+    let tbnz = 0x37180040u32;
+
+    let mut code = vec![0u8; 0x1000];
+    code[0..4].copy_from_slice(&tbz.to_le_bytes());
+    code[4..8].copy_from_slice(&tbnz.to_le_bytes());
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+
+    // X0 has bit 3 cleared -> TBZ branches (+8: 0x1000 + 8 = 0x1008)
+    cpu.x[0] = 0b0000;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.pc, 0x1008);
+
+    // Reset PC to 0x1000 with bit 3 set -> TBZ falls through to 0x1004
+    cpu.pc = 0x1000;
+    cpu.x[0] = 0b1000;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.pc, 0x1004);
+
+    // At 0x1004: TBNZ with bit 3 set -> branches (+8: 0x1004 + 8 = 0x100c)
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.pc, 0x100c);
+}
+
+#[test]
+fn test_conditional_select_and_arithmetic() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // CSEL X0, X1, X2, EQ (0x9a820020)
+    let csel_eq = 0x9a820020u32;
+    // MUL X3, X1, X2 (0x9b027c23: MADD X3, X1, X2, XZR)
+    let mul = 0x9b027c23u32;
+    // UDIV X4, X1, X2 (0x9ac20824)
+    let udiv = 0x9ac20824u32;
+    // AND X5, X1, #0xffffffff (0x92407c25)
+    let and_imm = 0x92407c25u32;
+
+    let mut code = vec![0u8; 0x1000];
+    code[0..4].copy_from_slice(&csel_eq.to_le_bytes());
+    code[4..8].copy_from_slice(&mul.to_le_bytes());
+    code[8..12].copy_from_slice(&udiv.to_le_bytes());
+    code[12..16].copy_from_slice(&and_imm.to_le_bytes());
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+
+    cpu.x[1] = 100;
+    cpu.x[2] = 20;
+    cpu.nzcv.zero = true; // EQ condition holds
+
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[0], 100); // EQ holds -> X0 = X1 = 100
+
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[3], 2000); // 100 * 20 = 2000
+
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[4], 5); // 100 / 20 = 5
+
+    cpu.x[1] = 0x1234_5678_9abc_def0;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[5], 0x9abc_def0); // masked to 32 bits
+}
+
+#[test]
+fn test_byte_halfword_unscaled_and_register_loads_stores() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // STRB W2, [X1, #2] (0x39000822)
+    let strb = 0x39000822u32;
+    // LDRB W0, [X1, #2] (0x39400820)
+    let ldrb = 0x39400820u32;
+    // LDRSB X3, [X1, #2] (0x39800823)
+    let ldrsb = 0x39800823u32;
+    // STRH W4, [X1, #4] (0x79000824)
+    let strh = 0x79000824u32;
+    // LDRH W5, [X1, #4] (0x79400825)
+    let ldrh = 0x79400825u32;
+    // LDUR X6, [X1, #8] (0xf8408026)
+    let ldur = 0xf8408026u32;
+
+    let mut code = vec![0u8; 0x1000];
+    code[0..4].copy_from_slice(&strb.to_le_bytes());
+    code[4..8].copy_from_slice(&ldrb.to_le_bytes());
+    code[8..12].copy_from_slice(&ldrsb.to_le_bytes());
+    code[12..16].copy_from_slice(&strh.to_le_bytes());
+    code[16..20].copy_from_slice(&ldrh.to_le_bytes());
+    code[20..24].copy_from_slice(&ldur.to_le_bytes());
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+    mem.map(0x2000, vec![0u8; 0x1000], Permissions::READ_WRITE).unwrap();
+
+    cpu.x[1] = 0x2000;
+    cpu.x[2] = 0xfe; // byte: -2 signed
+    cpu.x[4] = 0x1234; // halfword
+    mem.write_u64(0x2008, 0xbeef_cafe_1234_5678).unwrap();
+
+    // Step STRB
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(mem.read_u8(0x2002).unwrap(), 0xfe);
+
+    // Step LDRB
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[0], 0xfe);
+
+    // Step LDRSB (sign extended to 64-bit)
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[3], 0xffff_ffff_ffff_fffe);
+
+    // Step STRH
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(mem.read_u16(0x2004).unwrap(), 0x1234);
+
+    // Step LDRH
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[5], 0x1234);
+
+    // Step LDUR
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[6], 0xbeef_cafe_1234_5678);
+}
