@@ -47,7 +47,7 @@ impl<'a> NspArchive<'a> {
     pub fn parse_tickets(&self) -> Vec<Ticket> {
         let mut tickets = Vec::new();
         for file in self.pfs0.files() {
-            if file.name.ends_with(".tik") {
+            if file.name.to_ascii_lowercase().ends_with(".tik") {
                 if let Some(bytes) = self.pfs0.get_file(&file.name) {
                     if let Ok(ticket) = Ticket::parse(bytes) {
                         tickets.push(ticket);
@@ -78,14 +78,14 @@ impl<'a> NspArchive<'a> {
             .pfs0
             .files()
             .iter()
-            .find(|f| f.name.ends_with(".cnmt.nca"))
+            .find(|f| f.name.to_ascii_lowercase().ends_with(".cnmt.nca"))
         {
             self.pfs0.get_file(&meta_file.name)
         } else {
             // Scan all .nca files for Meta content type
             let mut found = None;
             for file in self.pfs0.files() {
-                if file.name.ends_with(".nca") {
+                if file.name.to_ascii_lowercase().ends_with(".nca") {
                     if let Some(data) = self.pfs0.get_file(&file.name) {
                         if let Ok(hdr) = decrypt_nca3_header(data, keys) {
                             if hdr.metadata.content_type == NcaContentType::Meta {
@@ -108,15 +108,19 @@ impl<'a> NspArchive<'a> {
         // Find Section 0 (PartitionFS containing the CNMT)
         for (i, sec_opt) in header.metadata.sections.iter().enumerate() {
             if sec_opt.is_some() {
-                let fs_header = NcaFsHeader::parse(&header.fs_headers[i])?;
-                if fs_header.fs_type == NcaFsType::PartitionFs {
-                    let decrypted_pfs = header.decrypt_section(meta_nca, i, keys)?;
-                    let pfs = Pfs0Archive::parse(&decrypted_pfs)?;
-                    for file in pfs.files() {
-                        if file.name.ends_with(".cnmt") {
-                            if let Some(cnmt_bytes) = pfs.get_file(&file.name) {
-                                let cnmt = Cnmt::parse(cnmt_bytes)?;
-                                return Ok(Some(cnmt));
+                if let Ok(fs_header) = NcaFsHeader::parse(&header.fs_headers[i]) {
+                    if fs_header.fs_type == NcaFsType::PartitionFs {
+                        if let Ok(decrypted_pfs) = header.decrypt_section(meta_nca, i, keys) {
+                            if let Ok(pfs) = Pfs0Archive::parse(&decrypted_pfs) {
+                                for file in pfs.files() {
+                                    if file.name.to_ascii_lowercase().ends_with(".cnmt") {
+                                        if let Some(cnmt_bytes) = pfs.get_file(&file.name) {
+                                            if let Ok(cnmt) = Cnmt::parse(cnmt_bytes) {
+                                                return Ok(Some(cnmt));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -132,6 +136,13 @@ impl<'a> NspArchive<'a> {
     /// Checks CNMT records first; if CNMT is missing or doesn't match,
     /// falls back to decrypting NCA headers to find `NcaContentType::Program`.
     pub fn find_program_nca(&self, keys: &KeyFile) -> Result<&'a [u8], LoadError> {
+        // Check if any file in the package is in compressed NSZ format (.ncz)
+        let has_ncz = self
+            .pfs0
+            .files()
+            .iter()
+            .any(|f| f.name.to_ascii_lowercase().ends_with(".ncz"));
+
         // First try via CNMT
         if let Ok(Some(cnmt)) = self.parse_cnmt(keys) {
             if let Some(prog_record) = cnmt.find_program_record() {
@@ -139,17 +150,75 @@ impl<'a> NspArchive<'a> {
                 if let Some(data) = self.pfs0.get_file(&filename) {
                     return Ok(data);
                 }
+                // Check if the program content exists in compressed NCZ form
+                let ncz_name = format!("{}.ncz", prog_record.content_id_hex());
+                if self.pfs0.get_file(&ncz_name).is_some() {
+                    return Err(LoadError::Invalid(
+                        "NSP package contains compressed Program NCA (.ncz / NSZ format). Please decompress the NSZ into standard uncompressed NSP before running.",
+                    ));
+                }
+            } else {
+                // CNMT was found, but no Program record was inside it
+                match cnmt.meta_type {
+                    crate::cnmt::ContentMetaType::Patch => {
+                        return Err(LoadError::Invalid(
+                            "Selected package is an Update/Patch NSP without base program executable. Please load the base game NSP.",
+                        ));
+                    }
+                    crate::cnmt::ContentMetaType::AddOnContent => {
+                        return Err(LoadError::Invalid(
+                            "Selected package is a DLC (Add-On Content) NSP without program executable. Please load the base game NSP.",
+                        ));
+                    }
+                    _ => {}
+                }
             }
         }
 
+        if has_ncz {
+            return Err(LoadError::Invalid(
+                "NSP package contains compressed files (.ncz / NSZ format). Please decompress the NSZ into standard uncompressed NSP before running.",
+            ));
+        }
+
+        // Collect all .nca candidate files (ignoring case, excluding .cnmt.nca)
+        let nca_files: Vec<_> = self
+            .pfs0
+            .files()
+            .iter()
+            .filter(|f| {
+                let lower = f.name.to_ascii_lowercase();
+                lower.ends_with(".nca") && !lower.ends_with(".cnmt.nca")
+            })
+            .collect();
+
+        if nca_files.is_empty() {
+            let file_list: Vec<&str> = self.pfs0.files().iter().map(|f| f.name.as_str()).collect();
+            if file_list.is_empty() {
+                return Err(LoadError::Invalid(
+                    "NSP archive is empty (contains no files)",
+                ));
+            }
+            return Err(LoadError::Invalid(
+                "NSP archive contains no .nca content files. The package may be corrupted, a placeholder, or a fake ROM download.",
+            ));
+        }
+
         // Fallback: scan all .nca files in the NSP
-        for file in self.pfs0.files() {
-            if file.name.ends_with(".nca") && !file.name.ends_with(".cnmt.nca") {
-                if let Some(data) = self.pfs0.get_file(&file.name) {
-                    if let Ok(header) = decrypt_nca3_header(data, keys) {
+        let mut header_decrypt_failed = false;
+        let mut found_non_program = false;
+        for file in &nca_files {
+            if let Some(data) = self.pfs0.get_file(&file.name) {
+                match decrypt_nca3_header(data, keys) {
+                    Ok(header) => {
                         if header.metadata.content_type == NcaContentType::Program {
                             return Ok(data);
+                        } else {
+                            found_non_program = true;
                         }
+                    }
+                    Err(_) => {
+                        header_decrypt_failed = true;
                     }
                 }
             }
@@ -158,6 +227,18 @@ impl<'a> NspArchive<'a> {
         if keys.header_key().is_none() {
             return Err(LoadError::Invalid(
                 "NSP archive could not be decrypted: prod.keys is missing or does not contain header_key",
+            ));
+        }
+
+        if header_decrypt_failed {
+            return Err(LoadError::Invalid(
+                "NSP archive contains NCA files but header decryption failed (NCA3 magic missing). Verify your prod.keys header_key or check if the ROM file is corrupted.",
+            ));
+        }
+
+        if found_non_program {
+            return Err(LoadError::Invalid(
+                "NSP archive contains NCA files but none are Program type (found Control/Meta only)",
             ));
         }
 
@@ -178,7 +259,8 @@ impl<'a> NspArchive<'a> {
 
         // Fallback: scan .nca files
         for file in self.pfs0.files() {
-            if file.name.ends_with(".nca") && !file.name.ends_with(".cnmt.nca") {
+            let lower = file.name.to_ascii_lowercase();
+            if lower.ends_with(".nca") && !lower.ends_with(".cnmt.nca") {
                 if let Some(data) = self.pfs0.get_file(&file.name) {
                     if let Ok(header) = decrypt_nca3_header(data, keys) {
                         if header.metadata.content_type == NcaContentType::Control {

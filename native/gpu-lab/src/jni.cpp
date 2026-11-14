@@ -103,6 +103,9 @@ static jbyteArray open_program(JNIEnv* env,jstring path,bool inspect) {
         const auto result=inspect ? emulator_program_inspect_v1() : emulator_program_start_v1();
         if(inspect)(void)emulator_program_close_v1();
         LOGI("open_program: result length=%u bytes", result.length);
+        if (result.length > 0 && result.length <= sizeof(result.bytes)) {
+            LOGI("open_program: result=%.*s", (int)result.length, reinterpret_cast<const char*>(result.bytes));
+        }
         return copy_engine_report(env,result);
     } catch(const std::exception& error) {
         LOGE("open_program: exception: %s", error.what());
