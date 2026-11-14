@@ -13,6 +13,9 @@ NDK_VERSION = "28.2.13676358"
 def main():
     if platform.system() != "Linux":
         raise SystemExit("This cross-build helper currently supports Linux hosts.")
+    cargo_bin = Path.home() / ".cargo/bin"
+    if cargo_bin.exists() and str(cargo_bin) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{cargo_bin}:{os.environ.get('PATH', '')}"
     root = Path(__file__).resolve().parent.parent
     sdk = Path(os.environ.get("ANDROID_SDK_ROOT", os.environ.get("ANDROID_HOME", str(Path.home() / "Android/Sdk"))))
     bin_dir = sdk / "ndk" / NDK_VERSION / "toolchains/llvm/prebuilt/linux-x86_64/bin"

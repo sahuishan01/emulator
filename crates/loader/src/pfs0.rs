@@ -116,7 +116,7 @@ impl<'a> Pfs0Archive<'a> {
 
     pub fn get_file(&self, name: &str) -> Option<&'a [u8]> {
         for entry in &self.files {
-            if entry.name == name {
+            if entry.name == name || entry.name.eq_ignore_ascii_case(name) {
                 let start = entry.offset as usize;
                 let end = start + (entry.size as usize);
                 return Some(&self.data[start..end]);

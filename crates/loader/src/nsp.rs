@@ -155,6 +155,12 @@ impl<'a> NspArchive<'a> {
             }
         }
 
+        if keys.header_key().is_none() {
+            return Err(LoadError::Invalid(
+                "NSP archive could not be decrypted: prod.keys is missing or does not contain header_key",
+            ));
+        }
+
         Err(LoadError::Invalid("NSP archive contains no valid Program NCA"))
     }
 

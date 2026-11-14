@@ -91,3 +91,20 @@ fn debug_format_never_discloses_key_material() {
     assert!(!debug.contains(&secret));
     assert!(debug.contains("redacted"));
 }
+
+#[test]
+fn parse_lenient_handles_comments_rsa_keys_and_large_sets() {
+    let mut contents = String::new();
+    contents.push_str("# Full Switch dump\n");
+    contents.push_str("header_key = 1111111111111111111111111111111111111111111111111111111111111111 # inline comment\n");
+    contents.push_str("eticket_rsa_kek = aabbccdd # invalid 4-byte key ignored\n");
+    contents.push_str("master_key_00 = 22222222222222222222222222222222\n");
+    // Add 300 keys (exceeding standard 256 limit)
+    for i in 1..=300 {
+        contents.push_str(&format!("key_{i:04} = {}\n", "33".repeat(16)));
+    }
+    let keys = KeyFile::parse_lenient(contents.as_bytes());
+    assert_eq!(keys.header_key(), Some(&[0x11; 32]));
+    assert_eq!(keys.master_key(0), Some(&[0x22; 16]));
+    assert_eq!(keys.entry_count(), 302);
+}

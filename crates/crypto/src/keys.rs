@@ -130,6 +130,67 @@ impl KeyFile {
         Ok(Self { entries })
     }
 
+    /// Parse a key file leniently, suitable for arbitrary real-world Switch dumps
+    /// (`prod.keys`, `title.keys`). Inline comments are stripped, non-16/32-byte
+    /// keys (e.g. RSA keys) and unparsable lines are ignored rather than failing
+    /// the entire file, and generous file/entry limits are supported.
+    pub fn parse_lenient(input: &[u8]) -> Self {
+        const MAX_LENIENT_FILE_SIZE: usize = 16 * 1024 * 1024; // 16 MiB
+        const MAX_LENIENT_ENTRIES: usize = 65536;
+
+        if input.len() > MAX_LENIENT_FILE_SIZE {
+            return Self::default();
+        }
+        let Ok(text) = std::str::from_utf8(input) else {
+            return Self::default();
+        };
+        let mut entries = BTreeMap::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if entries.len() >= MAX_LENIENT_ENTRIES {
+                break;
+            }
+            let Some((name, raw_val)) = line.split_once('=') else {
+                continue;
+            };
+            let name = name.trim();
+            if name.is_empty()
+                || name.len() > 128
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            {
+                continue;
+            }
+            // Strip trailing inline comments if any
+            let val = if let Some((v, _)) = raw_val.split_once('#') {
+                v.trim()
+            } else {
+                raw_val.trim()
+            };
+            if (val.len() != 32 && val.len() != 64)
+                || val.len() % 2 != 0
+                || !val.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                continue;
+            }
+            let mut decoded = Vec::with_capacity(val.len() / 2);
+            let mut valid = true;
+            for pair in val.as_bytes().chunks_exact(2) {
+                let Some(high) = hex_nibble(pair[0]) else { valid = false; break; };
+                let Some(low) = hex_nibble(pair[1]) else { valid = false; break; };
+                decoded.push((high << 4) | low);
+            }
+            if valid {
+                entries.insert(name.to_ascii_lowercase(), SecretKey(decoded));
+            }
+        }
+        Self { entries }
+    }
+
     /// Return a key by its normalized lower-case name.
     pub fn get(&self, name: &str) -> Option<&[u8]> {
         self.entries

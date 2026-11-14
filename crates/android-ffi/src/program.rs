@@ -124,8 +124,93 @@ struct Program {
     bytes: ProgramBacking,
     session: Option<Session>,
     last: String,
+    source_dir: Option<std::path::PathBuf>,
 }
 thread_local! { static PROGRAM: RefCell<Option<Program>> = const { RefCell::new(None) }; }
+
+fn discover_keys(source_dir: Option<&std::path::Path>) -> emulator_crypto::keys::KeyFile {
+    let mut keys = emulator_crypto::keys::KeyFile::default();
+    let mut prod_paths = Vec::new();
+    let mut title_paths = Vec::new();
+
+    if let Some(dir) = source_dir {
+        prod_paths.push(dir.join("keys/prod.keys"));
+        prod_paths.push(dir.join("prod.keys"));
+        title_paths.push(dir.join("keys/title.keys"));
+        title_paths.push(dir.join("title.keys"));
+        if let Some(parent) = dir.parent() {
+            prod_paths.push(parent.join("keys/prod.keys"));
+            prod_paths.push(parent.join("prod.keys"));
+            title_paths.push(parent.join("keys/title.keys"));
+            title_paths.push(parent.join("title.keys"));
+        }
+    }
+
+    for p in [
+        "/data/user/0/com.algosculptor.emulator.gpulab/files/keys/prod.keys",
+        "/data/user/0/com.algosculptor.emulator.gpulab/files/prod.keys",
+        "/data/data/com.algosculptor.emulator.gpulab/files/keys/prod.keys",
+        "/data/data/com.algosculptor.emulator.gpulab/files/prod.keys",
+        "/sdcard/switch/prod.keys",
+        "/storage/emulated/0/switch/prod.keys",
+        "/sdcard/Download/prod.keys",
+        "/storage/emulated/0/Download/prod.keys",
+        "/sdcard/Documents/prod.keys",
+        "/storage/emulated/0/Documents/prod.keys",
+        "/sdcard/Android/data/org.yuzu.yuzu_emu/files/keys/prod.keys",
+        "/storage/emulated/0/Android/data/org.yuzu.yuzu_emu/files/keys/prod.keys",
+        "/sdcard/Android/data/dev.lemon.lemon_emu/files/keys/prod.keys",
+        "/storage/emulated/0/Android/data/dev.lemon.lemon_emu/files/keys/prod.keys",
+        "/sdcard/Android/data/org.suyu.suyu_emu/files/keys/prod.keys",
+        "/storage/emulated/0/Android/data/org.suyu.suyu_emu/files/keys/prod.keys",
+        "/sdcard/Android/data/org.sudachi.sudachi_emu/files/keys/prod.keys",
+        "/storage/emulated/0/Android/data/org.sudachi.sudachi_emu/files/keys/prod.keys",
+        "prod.keys",
+        "keys.dat",
+        "/root/.switch/prod.keys",
+        "/data/local/tmp/prod.keys",
+    ] {
+        prod_paths.push(std::path::PathBuf::from(p));
+    }
+
+    for p in [
+        "/data/user/0/com.algosculptor.emulator.gpulab/files/keys/title.keys",
+        "/data/user/0/com.algosculptor.emulator.gpulab/files/title.keys",
+        "/data/data/com.algosculptor.emulator.gpulab/files/keys/title.keys",
+        "/data/data/com.algosculptor.emulator.gpulab/files/title.keys",
+        "/sdcard/switch/title.keys",
+        "/storage/emulated/0/switch/title.keys",
+        "/sdcard/Download/title.keys",
+        "/storage/emulated/0/Download/title.keys",
+        "/sdcard/Android/data/org.yuzu.yuzu_emu/files/keys/title.keys",
+        "/storage/emulated/0/Android/data/org.yuzu.yuzu_emu/files/keys/title.keys",
+        "title.keys",
+    ] {
+        title_paths.push(std::path::PathBuf::from(p));
+    }
+
+    for pth in &prod_paths {
+        if let Ok(data) = std::fs::read(pth) {
+            let kf = emulator_crypto::keys::KeyFile::parse_lenient(&data);
+            if kf.entry_count() > 0 {
+                keys.merge(&kf);
+                break;
+            }
+        }
+    }
+
+    for pth in &title_paths {
+        if let Ok(data) = std::fs::read(pth) {
+            let kf = emulator_crypto::keys::KeyFile::parse_lenient(&data);
+            if kf.entry_count() > 0 {
+                keys.merge(&kf);
+                break;
+            }
+        }
+    }
+
+    keys
+}
 fn error(message: &str) -> String {
     format!(
         "{{\"ok\":false,\"state\":\"error\",\"error\":{}}}",
@@ -180,6 +265,7 @@ pub extern "C" fn emulator_program_begin_v1(length: u32) -> u32 {
                 bytes: ProgramBacking::Heap(bytes),
                 session: None,
                 last: String::new(),
+                source_dir: None,
             });
             0
         })
@@ -242,6 +328,7 @@ pub extern "C" fn emulator_program_open_file_v1(path: *const std::os::raw::c_cha
             if state.is_some() {
                 return 1;
             }
+            let src_dir = file_path.parent().map(|p| p.to_path_buf());
             #[cfg(unix)]
             {
                 if let Ok(mmap) = MmapFile::open(file_path) {
@@ -250,6 +337,7 @@ pub extern "C" fn emulator_program_open_file_v1(path: *const std::os::raw::c_cha
                         bytes: ProgramBacking::Mmap(mmap),
                         session: None,
                         last: String::new(),
+                        source_dir: src_dir.clone(),
                     });
                     return 0;
                 }
@@ -261,6 +349,7 @@ pub extern "C" fn emulator_program_open_file_v1(path: *const std::os::raw::c_cha
                         bytes: ProgramBacking::Heap(bytes),
                         session: None,
                         last: String::new(),
+                        source_dir: src_dir,
                     });
                     return 0;
                 }
@@ -296,14 +385,9 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
             return Err("Incomplete or already-started program".into());
         }
         if p.bytes.starts_with(b"PFS0") {
-            let mut keys = emulator_crypto::keys::KeyFile::default();
-            for pth in ["prod.keys", "/sdcard/switch/prod.keys", "/data/local/tmp/prod.keys"] {
-                if let Ok(data) = std::fs::read(pth) {
-                    if let Ok(kf) = emulator_crypto::keys::KeyFile::parse(&data) {
-                        keys.merge(&kf);
-                        break;
-                    }
-                }
+            let mut keys = discover_keys(p.source_dir.as_deref());
+            if keys.header_key().is_none() {
+                return Err("Nintendo Switch decryption keys (prod.keys) are required to decrypt and run NSP packages. Please install prod.keys in Settings -> Decryption Keys.".into());
             }
             p.session = Some(Session::from_nsp(&p.bytes, &mut keys).map_err(|e| e.to_string())?);
         } else {
@@ -471,6 +555,8 @@ mod tests {
         let nsp_report = text(emulator_program_inspect_v1());
         assert!(nsp_report.contains("\"format\":\"NSP\""), "{nsp_report}");
         assert!(nsp_report.contains("\"mode\":\"package\""), "{nsp_report}");
+        let start_report = text(emulator_program_start_v1());
+        assert!(start_report.contains("prod.keys"), "{start_report}");
         emulator_program_close_v1();
     }
     #[test]

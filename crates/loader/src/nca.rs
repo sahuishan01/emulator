@@ -426,7 +426,7 @@ impl NcaHeader {
         let content_size = u64::from_le_bytes(main[0x208..0x210].try_into().unwrap());
         if content_size < NCA_ENCRYPTED_HEADER_SIZE as u64
             || content_size % NCA_MEDIA_UNIT_SIZE != 0
-            || content_size != archive_size
+            || content_size > archive_size
         {
             return Err(LoadError::Invalid(
                 "NCA3 content size does not match the archive",
