@@ -84,9 +84,9 @@ impl<'a> Pfs0Archive<'a> {
                 .position(|&b| b == 0)
                 .ok_or(LoadError::Invalid("PFS0 filename missing null terminator"))?;
             let name_bytes = &string_table[name_offset..name_offset + null_pos];
-            let name = std::str::from_utf8(name_bytes)
-                .map_err(|_| LoadError::Invalid("PFS0 filename is not valid UTF-8"))?
-                .to_string();
+            let raw_name = std::str::from_utf8(name_bytes)
+                .map_err(|_| LoadError::Invalid("PFS0 filename is not valid UTF-8"))?;
+            let name = raw_name.trim_matches('\0').trim().to_string();
 
             // Total file offset in archive
             let absolute_offset = data_header_total
@@ -114,12 +114,51 @@ impl<'a> Pfs0Archive<'a> {
         &self.files
     }
 
+    /// Normalizes a partition entry filename by stripping leading directory paths,
+    /// slashes, whitespace, and null terminators.
+    pub fn normalize_filename(name: &str) -> String {
+        let mut s = name.trim();
+        if let Some(pos) = s.find('\0') {
+            s = &s[..pos];
+        }
+        let mut s = s.trim();
+        if let Some(rest) = s.strip_prefix("./") {
+            s = rest;
+        }
+        if let Some(rest) = s.strip_prefix('/') {
+            s = rest;
+        }
+        if let Some(rest) = s.strip_prefix('\\') {
+            s = rest;
+        }
+        if s.to_ascii_lowercase().starts_with("exefs/") {
+            s = &s[6..];
+        } else if s.to_ascii_lowercase().starts_with("exefs\\") {
+            s = &s[6..];
+        }
+        s.to_string()
+    }
+
     pub fn get_file(&self, name: &str) -> Option<&'a [u8]> {
+        let clean_name = Self::normalize_filename(name);
         for entry in &self.files {
-            if entry.name == name || entry.name.eq_ignore_ascii_case(name) {
+            let entry_clean = Self::normalize_filename(&entry.name);
+            if entry.name == name
+                || entry.name.eq_ignore_ascii_case(name)
+                || entry_clean == clean_name
+                || entry_clean.eq_ignore_ascii_case(&clean_name)
+                || entry_clean
+                    .strip_suffix(".nso")
+                    .unwrap_or(&entry_clean)
+                    .eq_ignore_ascii_case(
+                        clean_name.strip_suffix(".nso").unwrap_or(&clean_name),
+                    )
+            {
                 let start = entry.offset as usize;
                 let end = start + (entry.size as usize);
-                return Some(&self.data[start..end]);
+                if end <= self.data.len() {
+                    return Some(&self.data[start..end]);
+                }
             }
         }
         None

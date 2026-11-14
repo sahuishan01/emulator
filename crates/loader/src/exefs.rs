@@ -33,9 +33,11 @@ impl ExeFsProgram {
                 if off + 4 <= archive_bytes.len() {
                     let magic = &archive_bytes[off..off + 4];
                     if magic == PFS0_MAGIC || magic == HFS0_MAGIC {
-                        if Pfs0Archive::parse(&archive_bytes[off..]).is_ok() {
+                        if let Ok(arch) = Pfs0Archive::parse(&archive_bytes[off..]) {
                             found_offset = Some(off);
-                            break;
+                            if !arch.files().is_empty() {
+                                break;
+                            }
                         }
                     }
                 }
@@ -58,13 +60,14 @@ impl ExeFsProgram {
         let mut modules = Vec::new();
 
         // Standard load order for Switch executables:
-        // 1. rtld (Runtime Linker, if present)
-        // 2. main (Main application binary)
+        // 1. rtld / nnrtld (Runtime Linker, if present)
+        // 2. main / program / application (Main application binary)
         // 3. subsdk0 .. subsdk9 (SDK and middleware dynamic libraries)
-        // 4. sdk (SDK binary)
+        // 4. sdk / sdk0 (SDK binary)
         let candidates = [
-            "rtld", "main", "subsdk0", "subsdk1", "subsdk2", "subsdk3", "subsdk4", "subsdk5",
-            "subsdk6", "subsdk7", "subsdk8", "subsdk9", "sdk",
+            "rtld", "nnrtld", "main", "program", "application", "subsdk0", "subsdk1", "subsdk2",
+            "subsdk3", "subsdk4", "subsdk5", "subsdk6", "subsdk7", "subsdk8", "subsdk9",
+            "sdk", "sdk0",
         ];
 
         for name in candidates {
@@ -72,7 +75,11 @@ impl ExeFsProgram {
                 .get_file(name)
                 .or_else(|| archive.get_file(&format!("{name}.nso")));
             if let Some(bytes) = nso_bytes {
-                let image = NsoImage::parse(bytes)?;
+                let image = NsoImage::parse(bytes).map_err(|e| {
+                    LoadError::Invalid(Box::leak(
+                        format!("failed to parse NSO module '{name}': {e}").into_boxed_str(),
+                    ))
+                })?;
                 modules.push(ExeFsModule {
                     name: name.to_string(),
                     image,
@@ -83,25 +90,56 @@ impl ExeFsProgram {
         // Fallback: scan all files in the archive for NSO0 magic (excluding metadata and logo files)
         if modules.is_empty() {
             for file in archive.files() {
-                let lower = file.name.to_ascii_lowercase();
+                let clean = Pfs0Archive::normalize_filename(&file.name);
+                let lower = clean.to_ascii_lowercase();
                 if lower == "main.npdm" || lower.ends_with(".png") || lower.ends_with(".gif") {
                     continue;
                 }
                 if let Some(bytes) = archive.get_file(&file.name) {
                     if bytes.len() >= 4 && &bytes[..4] == b"NSO0" {
-                        if let Ok(image) = NsoImage::parse(bytes) {
-                            modules.push(ExeFsModule {
-                                name: file.name.clone(),
-                                image,
-                            });
-                        }
+                        let image = NsoImage::parse(bytes).map_err(|e| {
+                            LoadError::Invalid(Box::leak(
+                                format!("failed to parse NSO module '{}': {e}", file.name)
+                                    .into_boxed_str(),
+                            ))
+                        })?;
+                        let clean_name = Pfs0Archive::normalize_filename(&file.name);
+                        let mod_name = clean_name.strip_suffix(".nso").unwrap_or(&clean_name).to_string();
+                        modules.push(ExeFsModule {
+                            name: mod_name,
+                            image,
+                        });
                     }
                 }
             }
         }
 
         if modules.is_empty() {
-            return Err(LoadError::Invalid("ExeFS contains no valid NSO modules"));
+            let file_summary: Vec<String> = archive
+                .files()
+                .iter()
+                .map(|f| {
+                    let magic = archive
+                        .get_file(&f.name)
+                        .map(|b| {
+                            if b.len() >= 4 {
+                                format!("{:?}", String::from_utf8_lossy(&b[..4]))
+                            } else {
+                                format!("{}B", b.len())
+                            }
+                        })
+                        .unwrap_or_else(|| "none".into());
+                    format!("{}(size={},magic={})", f.name, f.size, magic)
+                })
+                .collect();
+            return Err(LoadError::Invalid(Box::leak(
+                format!(
+                    "ExeFS contains no valid NSO modules (archive has {} files: [{}])",
+                    archive.files().len(),
+                    file_summary.join(", ")
+                )
+                .into_boxed_str(),
+            )));
         }
 
         Ok(Self { npdm, modules })

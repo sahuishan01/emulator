@@ -588,6 +588,7 @@ impl NcaDecryptedHeader {
         keys: &KeyFile,
     ) -> Result<crate::exefs::ExeFsProgram, LoadError> {
         let mut last_error = None;
+        let mut logo_error = None;
         for (i, sec_opt) in self.metadata.sections.iter().enumerate() {
             if sec_opt.is_some() {
                 if let Ok(fs_header) = NcaFsHeader::parse(&self.fs_headers[i]) {
@@ -596,11 +597,12 @@ impl NcaDecryptedHeader {
                             Ok(decrypted) => {
                                 let (data_off, data_sz) =
                                     fs_header.data_region(decrypted.len() as u64);
-                                let exefs_bytes = if data_off > 0
-                                    && (data_off + data_sz) as usize <= decrypted.len()
-                                    && data_sz > 0
-                                {
-                                    &decrypted[data_off as usize..(data_off + data_sz) as usize]
+                                let exefs_bytes = if data_off > 0 && (data_off as usize) < decrypted.len() {
+                                    if data_sz > 0 && (data_off + data_sz) as usize <= decrypted.len() {
+                                        &decrypted[data_off as usize..(data_off + data_sz) as usize]
+                                    } else {
+                                        &decrypted[data_off as usize..]
+                                    }
                                 } else {
                                     &decrypted[..]
                                 };
@@ -618,7 +620,15 @@ impl NcaDecryptedHeader {
                                 match crate::exefs::ExeFsProgram::parse(target_bytes) {
                                     Ok(program) => return Ok(program),
                                     Err(e) => {
-                                        last_error = Some(e);
+                                        let err_str = e.to_string();
+                                        if err_str.contains("NintendoLogo")
+                                            || err_str.contains(".png")
+                                            || err_str.contains(".gif")
+                                        {
+                                            logo_error = Some(e);
+                                        } else {
+                                            last_error = Some(e);
+                                        }
                                     }
                                 }
                             }
@@ -630,7 +640,7 @@ impl NcaDecryptedHeader {
                 }
             }
         }
-        Err(last_error.unwrap_or(LoadError::Invalid("NCA3 archive does not contain an active PartitionFS section with executable modules")))
+        Err(last_error.or(logo_error).unwrap_or(LoadError::Invalid("NCA3 archive does not contain an active PartitionFS section with executable modules")))
     }
 
     /// Open the RomFS filesystem contained in the NCA archive (typically Section 1, RomFs).

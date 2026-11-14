@@ -119,3 +119,35 @@ fn test_exefs_parse_finds_pfs0_at_aligned_offset() {
     assert_eq!(exefs.modules.len(), 1);
     assert_eq!(exefs.modules[0].name, "main");
 }
+
+#[test]
+fn test_exefs_handles_prefixed_and_clean_module_names() {
+    let nso_bytes = build_test_nso();
+    let npdm_bytes = build_test_npdm();
+
+    let files = [
+        ("exefs/main.npdm", npdm_bytes.as_slice()),
+        ("./main.nso", nso_bytes.as_slice()),
+    ];
+
+    let exefs_bytes = build_pfs0(&files);
+    let exefs = ExeFsProgram::parse(&exefs_bytes).expect("parse ExeFS with path prefixes");
+    assert!(exefs.npdm.is_some());
+    assert_eq!(exefs.modules.len(), 1);
+    assert_eq!(exefs.modules[0].name, "main");
+}
+
+#[test]
+fn test_exefs_error_reports_archive_contents() {
+    let files = [
+        ("NintendoLogo.png", [0x89, 0x50, 0x4E, 0x47].as_slice()),
+        ("StartupMovie.gif", [0x47, 0x49, 0x46, 0x38].as_slice()),
+    ];
+
+    let exefs_bytes = build_pfs0(&files);
+    let err = ExeFsProgram::parse(&exefs_bytes).unwrap_err();
+    let err_str = err.to_string();
+    assert!(err_str.contains("ExeFS contains no valid NSO modules"));
+    assert!(err_str.contains("NintendoLogo.png"));
+    assert!(err_str.contains("StartupMovie.gif"));
+}

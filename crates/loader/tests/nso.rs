@@ -108,3 +108,31 @@ fn nso_program_loads_multiple_modules_sequentially() {
     assert!(program.load_module("main", &nso1, &mut memory, 0x200000).is_err());
 }
 
+#[test]
+fn test_nso_horizon_flags_at_0xc_and_non_page_aligned_sizes() {
+    let mut data = vec![0u8; 0x100 + 0x3000];
+    data[0..4].copy_from_slice(b"NSO0");
+    data[4..8].copy_from_slice(&0u32.to_le_bytes()); // version
+    data[8..12].copy_from_slice(&0u32.to_le_bytes()); // reserved = 0
+    data[0xC..0x10].copy_from_slice(&0u32.to_le_bytes()); // flags at 0xC: uncompressed
+
+    // Text: decompressed size 0x1234 (not a multiple of 4096)
+    data[0x10..0x14].copy_from_slice(&0x100u32.to_le_bytes());
+    data[0x14..0x18].copy_from_slice(&0x0u32.to_le_bytes());
+    data[0x18..0x1c].copy_from_slice(&0x1234u32.to_le_bytes());
+
+    // Ro: memory offset 0x2000 (page-aligned)
+    data[0x20..0x24].copy_from_slice(&0x1400u32.to_le_bytes());
+    data[0x24..0x28].copy_from_slice(&0x2000u32.to_le_bytes());
+    data[0x28..0x2c].copy_from_slice(&0x800u32.to_le_bytes());
+
+    // Data: memory offset 0x3000
+    data[0x30..0x34].copy_from_slice(&0x1C00u32.to_le_bytes());
+    data[0x34..0x38].copy_from_slice(&0x3000u32.to_le_bytes());
+    data[0x38..0x3c].copy_from_slice(&0x500u32.to_le_bytes());
+
+    let image = NsoImage::parse(&data).expect("parse NSO with flags at 0xC and non-page-aligned segment sizes");
+    assert_eq!(image.segments()[0].file_size, 0x1234);
+    assert_eq!(image.segments()[0].memory_size, 0x2000); // rounded up to page size
+}
+

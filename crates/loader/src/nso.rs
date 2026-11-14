@@ -37,7 +37,8 @@ impl NsoImage {
         if version != 0 {
             return Err(LoadError::UnsupportedVersion(version));
         }
-        let flags = word(input, 8);
+        // Flags offset is 0xC per Horizon NSO0 specification; also check 0x8 for backwards compatibility
+        let flags = word(input, 0xC) | word(input, 8);
         // Bit 0: Text compressed, Bit 1: Ro compressed, Bit 2: Data compressed
         // Bit 3: Text hash check, Bit 4: Ro hash check, Bit 5: Data hash check
 
@@ -83,8 +84,8 @@ impl NsoImage {
         for (i, hdr) in section_headers.iter().enumerate() {
             let mem_offset = u64::from(hdr.memory_offset);
             let size = hdr.decompressed_size as usize;
-            if mem_offset % PAGE_SIZE != 0 || (size as u64) % PAGE_SIZE != 0 {
-                return Err(LoadError::Invalid("NSO sections must be page-aligned"));
+            if mem_offset % PAGE_SIZE != 0 {
+                return Err(LoadError::Invalid("NSO section memory offset must be page-aligned"));
             }
             if mem_offset < previous_end {
                 return Err(LoadError::Invalid("NSO section overlap"));
@@ -121,11 +122,12 @@ impl NsoImage {
                 }
             }
 
-            let memory_size = if i == 2 {
+            let raw_mem_size = if i == 2 {
                 size.checked_add(bss_size as usize).ok_or(LoadError::LimitExceeded)?
             } else {
                 size
             };
+            let memory_size = ((raw_mem_size as u64 + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)) as usize;
 
             total_memory = total_memory.checked_add(memory_size).ok_or(LoadError::LimitExceeded)?;
             if total_memory > MAX_IMAGE_MEMORY {

@@ -23,8 +23,8 @@ use std::fmt;
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_NRO_FILE_SIZE: usize = 64 * 1024 * 1024;
 pub const MAX_NRO_MEMORY: usize = 128 * 1024 * 1024;
-pub const MAX_IMAGE_FILE_SIZE: usize = 64 * 1024 * 1024;
-pub const MAX_IMAGE_MEMORY: usize = 128 * 1024 * 1024;
+pub const MAX_IMAGE_FILE_SIZE: usize = 256 * 1024 * 1024;
+pub const MAX_IMAGE_MEMORY: usize = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadError {

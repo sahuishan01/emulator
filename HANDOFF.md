@@ -19,19 +19,21 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.16-dev` (versionCode 56).
+- **Latest Release**: `v0.28.17-dev` (versionCode 57).
+  - Resolved `invalid loader input: ExeFS contains no valid NSO modules` on commercial Switch NSP game packages.
+  - Fixed NSO0 header flags offset to `0xC` (per Horizon NSO0 format specification; retaining `0x8` for backwards compatibility) ensuring compressed retail NSO sections are properly recognized and decompressed with LZ4.
+  - Removed strict page-multiple restriction on NSO section decompressed sizes, properly page-aligning memory regions during load.
+  - Increased maximum image file size to 256 MiB and memory size to 512 MiB to accommodate commercial game executables.
+  - Added path normalization (`Pfs0Archive::normalize_filename`) stripping leading slashes, `./`, `exefs/`, nulls, and whitespace during file extraction and lookup.
+  - Expanded ExeFS candidate executable names (`rtld`, `nnrtld`, `main`, `program`, `application`, `sdk0`, etc.) and prevent silent suppression of NSO parsing errors during fallback archive scanning.
+  - Updated `open_exefs()` so non-executable logo partitions (containing `NintendoLogo.png` / `StartupMovie.gif`) do not overwrite or mask primary ExeFS decryption errors.
+  - Enhanced ExeFS error reporting to detail archive file inventory (filenames, sizes, magic headers) when no valid modules are detected.
+- **Previous Release**: `v0.28.16-dev` (versionCode 56).
   - Resolved `invalid loader input: invalid PFS0/HFS0 magic` on Hierarchical SHA-256 PartitionFS (ExeFS) and CNMT sections.
   - Implemented `NcaFsHeader::data_region()` to parse data layer offsets from `HierarchicalSha256Data` (skipping layer 0 SHA-256 hash block tables) and IVFC levels.
   - Updated `open_exefs()` and `parse_cnmt()` to slice decrypted payloads by `data_region()` to locate the inner PFS0 archive.
   - Updated `decrypt_section()` candidate key testing to verify magic at `data_region.offset` using the corresponding offset CTR counter.
   - Added fallback in `ExeFsProgram::parse()` and `parse_cnmt()` to scan for `PFS0`/`HFS0` at 0x200-aligned sector boundaries in un-sliced payloads.
-- **Previous Release**: `v0.28.15-dev` (versionCode 55).
-  - Resolved `invalid loader input: invalid PFS0/HFS0 magic` on commercial NSP packages using standard Key Area encryption.
-  - Implemented Key Area slot 0 support (standard retail application content key slot) alongside slots 1, 2, and 3 in `candidate_section_keys()`.
-  - Added automatic derivation of `titlekek_##` and `key_area_key_*_##` (Application, Ocean, System) from `master_key_##` and source constants in `KeyFile`.
-  - Added multi-format title key resolution (exact 32-hex rights ID, masked 32-hex rights ID with lower 8 bytes zeroed, and 16-hex title ID prefix).
-  - Added strict `PFS0`/`HFS0` magic verification on decrypted PartitionFS payloads to prevent garbage buffer passthrough.
-  - Enhanced key discovery across internal and external paths (`/sdcard/switch/`, `Documents/`, `title.keys` variants) without early truncation.
 - **Physical Device Telemetry (Issue #15)**:
   - Latest report: `1794318272960-44c3d786`, app version `0.28.6-dev` on `Mali-G720-Immortalis MC12`.
   - Diagnostics: 269/275 checks passed, 65/66 visible patterns passed.
