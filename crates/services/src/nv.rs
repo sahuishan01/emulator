@@ -213,6 +213,24 @@ impl NvDriver {
         self.collect_closed();
         Ok(reply(&[0]))
     }
+    fn query_event(
+        &mut self,
+        r: &Request,
+        c: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        c.require_buffers(0, 0)?;
+        super::payload(r, 8)?;
+        let fd = input_word(r, 0);
+        let _event_id = input_word(r, 4);
+        let Some(_) = self.devices.iter().position(|d| d.fd == fd) else {
+            return Ok(reply(&[BAD_PARAMETER]));
+        };
+        let mut response = reply(&[0]);
+        response
+            .moved_objects
+            .push(Box::new(crate::event::EventHandle::new(false)));
+        Ok(response)
+    }
     fn control(&self, code: u32, input: &[u8]) -> Result<Vec<u8>, u32> {
         let mut output = input.to_vec();
         match code {
@@ -507,8 +525,10 @@ impl Service for NvDriver {
             context.require_copy_handles(0)?;
             return match request.command_id {
                 0 => self.open(request, context),
-                1 => self.ioctl(request, context),
+                1 | 13 => self.ioctl(request, context),
                 2 => self.close(request, context),
+                4 => self.query_event(request, context),
+                8 | 11 => Ok(reply(&[0])),
                 _ => self.dispatch(request),
             };
         }

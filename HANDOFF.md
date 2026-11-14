@@ -19,7 +19,26 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.32-dev` (versionCode 72).
+- **Latest Release**: `v0.28.33-dev` (versionCode 73).
+  - **Horizon OS Applet Manager (`appletOE` / `appletAE`) Controller Architecture**:
+    - Implemented full clean-room `IApplicationProxy` sub-interface hierarchy (`CommonStateGetter`, `SelfController`, `WindowController`, `AudioController`, `DisplayController`, `LibraryAppletCreator`, `ApplicationFunctions`, `DebugFunctions`), resolving startup crashes when official Nintendo SDK CRT calls `OpenApplicationProxy` (command 200) and attempts to query child controllers.
+    - `ICommonStateGetter`: Implemented `GetEventHandle` (0) returning kernel readable event handle, `ReceiveMessage` (1) returning focus change message `0x0F`, `GetOperationMode` (5) returning Handheld (0), `GetPerformanceMode` (6) returning Handheld (0), and `GetCurrentFocusState` (9) returning InFocus (1).
+    - `ISelfController`: Implemented `Exit` (0), `LockExit` (1), `UnlockExit` (2), `GetLibraryAppletLaunchableEvent` (9) returning kernel event handle, `CreateManagedDisplayLayer` (40) returning layer ID 1, `CreateManagedDisplaySeparableLayer` (41), screen shot and operation mode change notification handlers.
+    - `IWindowController`: Implemented `GetAppletResourceUserId` (1) returning user ID 1 and `AcquireForegroundRights` (10).
+    - `IAudioController`: Implemented `SetExpectedMasterVolume` (0) and `GetMainAppletExpectedMasterVolume` (1) returning 1.0f32.
+    - `IApplicationFunctions`: Implemented `InitializeApplicationCopyrightFlag` (1), `EnsureSaveData` (20), `GetDesiredLanguage` (21) returning "en-US", `SetTerminateResult` (22), `GetDisplayVersion` (23) returning "1.0.0", `NotifyRunning` (40), `GetPseudoDeviceId` (50) returning 16-byte pseudo UUID, and gameplay recording stubs (66, 67).
+  - **Horizon OS Event Handle IPC Abstraction**:
+    - Created `EventHandle` (`crates/services/src/event.rs`) bridging kernel `Object::ReadableEvent` to guest IPC responses, enabling services (`applet`, `nvdrv`, `time`) to pass real waitable event handles back to guest threads via `ServiceReply.moved_objects`.
+  - **Horizon OS System Settings (`set:sys` / `set`) Extended Primitives**:
+    - Implemented `GetSystemLanguage` (2) returning AmericanEnglish (1), `GetPrimaryAlbumStorage` (5) returning SdCard (1), `GetProductModel` (8) returning Erista (1), `GetDeviceNickName` (11) returning "Switch", and `GetFirmwareVersion` (14) returning 0x100-byte Horizon OS 18.1.0 struct.
+  - **Horizon OS Steady Clock & Time Services (`time:s` / `time:u` / `time:a`)**:
+    - Implemented `SystemClockService` (`GetStandardUserSystemClock` 3, `GetStandardNetworkSystemClock` 4), `SteadyClockService` (`GetStandardSteadyClock` 5), `TimeZoneService` (`GetTimeZoneService` 6), and `GetSharedMemoryNativeHandle` (20).
+  - **Horizon OS NVIDIA Driver (`nvdrv` / `nvdrv:a` / `nvdrv:s` / `nvdrv:t`) Extended Commands**:
+    - Implemented `QueryEvent` (4) returning syncpoint event handles for guest synchronization, `SetClientPID` (8), `DumpGraphicsMemoryInfo` (11), and multi-buffer ioctl routing (`Ioctl3` 13).
+  - **Filesystem Proxy (`fsp-srv` / `fsp-pr`) & Service Port Aliasing**:
+    - Implemented `OpenDataStorageByProgramId` (202), `OpenDataStorageByDataId` (203), `OpenRomStorage` (204), and `SetGlobalAccessLogMode` (1005).
+    - Registered official service port aliases `time:a`, `nvdrv:t`, `fsp-pr`, and `apm:sys`.
+- **Previous Release**: `v0.28.32-dev` (versionCode 72).
   - **Dynamic Surface Lifecycle & Worker Thread Handover**:
     - Replaced asynchronous executor-task queueing in `ProgramActivity.kt` (`onSurfaceTextureAvailable`, `onSurfaceTextureSizeChanged`, `onSurfaceTextureDestroyed`) with lock-free atomic handover (`pendingSurface` / `surfaceNeedsUpdate`).
     - Resolved critical issue where `NativePrograms.setSurface` was starved from executing because `worker` was occupied by the continuous execution loop: surface changes are now dynamically applied by the worker thread itself at the top of each execution step.

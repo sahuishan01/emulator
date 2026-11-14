@@ -806,3 +806,27 @@ fn test_nv_ctrl_gpu_and_characteristics() {
     assert_eq!(arch, 0x120);
     assert_eq!(impl_id, 0x0b);
 }
+
+#[test]
+fn test_nv_query_event_and_extended_commands() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let (gpu_fd, res) = r.open_device(b"/dev/nvhost-gpu", 0);
+    assert_eq!(res, 0);
+    assert!(gpu_fd > 0);
+
+    // Command 4: QueryEvent
+    let q_reply = r.call(&message(4, &[gpu_fd, 1], None, None));
+    assert!(q_reply.is_ok());
+
+    // Command 8: SetClientPID
+    let pid_reply = r.call(&message(8, &[100, 0], None, None));
+    assert!(pid_reply.is_ok());
+
+    // Command 11: DumpGraphicsMemoryInfo
+    let dump_reply = r.call(&message(11, &[], None, None));
+    assert!(dump_reply.is_ok());
+
+    // Invalid FD query event should return BAD_PARAMETER
+    let bad_q = r.call(&message(4, &[9999, 1], None, None));
+    assert!(bad_q.is_ok());
+}

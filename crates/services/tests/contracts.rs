@@ -276,3 +276,132 @@ fn test_vi_and_applet_services() {
     let npad_reply = hid.dispatch(&request(100, &[1, 0, 0, 0, 0, 0, 0, 0], None)).unwrap();
     assert_eq!(npad_reply.result, 0);
 }
+
+#[test]
+fn test_applet_subcontrollers_and_extended_services() {
+    let mut sm = ServiceManager::default();
+    sm.dispatch(&request(0, &[0; 8], Some(1))).unwrap();
+
+    // Verify newly added service port aliases
+    assert!(sm.dispatch(&request(1, b"time:a\0\0", None)).is_ok());
+    assert!(sm.dispatch(&request(1, b"nvdrv:t\0", None)).is_ok());
+    assert!(sm.dispatch(&request(1, b"fsp-pr\0\0", None)).is_ok());
+    assert!(sm.dispatch(&request(1, b"apm:sys\0", None)).is_ok());
+
+    // Test set:sys extended commands
+    let mut setsys = sm
+        .dispatch(&request(1, b"set:sys\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let sys_lang = setsys.dispatch(&request(2, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(sys_lang.data.try_into().unwrap()), 1);
+
+    let album = setsys.dispatch(&request(5, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(album.data.try_into().unwrap()), 1);
+
+    let model = setsys.dispatch(&request(8, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(model.data.try_into().unwrap()), 1);
+
+    let nickname = setsys.dispatch(&request(11, &[], None)).unwrap();
+    assert_eq!(&nickname.data[..6], b"Switch");
+
+    let fw = setsys.dispatch(&request(14, &[], None)).unwrap();
+    assert_eq!(fw.data[0], 18);
+    assert_eq!(fw.data[1], 1);
+    assert_eq!(&fw.data[0x28..0x28 + 6], b"18.1.0");
+
+    // Test time:s extended commands
+    let mut timesys = sm
+        .dispatch(&request(1, b"time:s\0\0", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let mut user_clock_reply = timesys.dispatch(&request(3, &[], None)).unwrap();
+    assert_eq!(user_clock_reply.result, 0);
+    let mut user_clock = user_clock_reply.moved_objects.remove(0);
+    let cur_time = user_clock.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(u64::from_le_bytes(cur_time.data.try_into().unwrap()), 1767225600);
+
+    let mut steady_clock_reply = timesys.dispatch(&request(5, &[], None)).unwrap();
+    let mut steady_clock = steady_clock_reply.moved_objects.remove(0);
+    let pt = steady_clock.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(pt.data.len(), 0x18);
+
+    let mut tz_reply = timesys.dispatch(&request(6, &[], None)).unwrap();
+    let mut tz = tz_reply.moved_objects.remove(0);
+    let loc = tz.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(&loc.data[..3], b"UTC");
+
+    // Test appletOE / appletAE full controller hierarchy
+    let mut applet = sm
+        .dispatch(&request(1, b"appletOE", None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+
+    let mut proxy_reply = applet.dispatch(&request(200, &[], None)).unwrap();
+    assert_eq!(proxy_reply.result, 0);
+    let mut proxy = proxy_reply.moved_objects.remove(0);
+
+    // 1. GetCommonStateGetter (command 0)
+    let mut csg_reply = proxy.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(csg_reply.result, 0);
+    let mut csg = csg_reply.moved_objects.remove(0);
+
+    let event_reply = csg.dispatch(&request(0, &[], None)).unwrap();
+    assert_eq!(event_reply.result, 0);
+    assert_eq!(event_reply.moved_objects.len(), 1);
+
+    let msg_reply = csg.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(msg_reply.data.try_into().unwrap()), 0x0F);
+
+    let op_mode = csg.dispatch(&request(5, &[], None)).unwrap();
+    assert_eq!(op_mode.data[0], 0);
+
+    let perf_mode = csg.dispatch(&request(6, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(perf_mode.data.try_into().unwrap()), 0);
+
+    let focus = csg.dispatch(&request(9, &[], None)).unwrap();
+    assert_eq!(focus.data[0], 1);
+
+    // 2. GetSelfController (command 1)
+    let mut sc_reply = proxy.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(sc_reply.result, 0);
+    let mut sc = sc_reply.moved_objects.remove(0);
+
+    assert_eq!(sc.dispatch(&request(0, &[], None)).unwrap().result, 0);
+    assert_eq!(sc.dispatch(&request(10, &[], None)).unwrap().result, 0);
+    let layer_reply = sc.dispatch(&request(40, &[], None)).unwrap();
+    assert_eq!(u64::from_le_bytes(layer_reply.data.try_into().unwrap()), 1);
+
+    // 3. GetWindowController (command 2)
+    let mut wc_reply = proxy.dispatch(&request(2, &[], None)).unwrap();
+    let mut wc = wc_reply.moved_objects.remove(0);
+    let uid_reply = wc.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(u64::from_le_bytes(uid_reply.data.try_into().unwrap()), 1);
+
+    // 4. GetAudioController (command 3)
+    let mut ac_reply = proxy.dispatch(&request(3, &[], None)).unwrap();
+    let mut ac = ac_reply.moved_objects.remove(0);
+    let vol_reply = ac.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(f32::from_le_bytes(vol_reply.data.try_into().unwrap()), 1.0);
+
+    // 5. GetApplicationFunctions (command 20)
+    let mut af_reply = proxy.dispatch(&request(20, &[], None)).unwrap();
+    let mut af = af_reply.moved_objects.remove(0);
+
+    let lang_reply = af.dispatch(&request(21, &[], None)).unwrap();
+    assert_eq!(&lang_reply.data[..5], b"en-US");
+
+    let ver_reply = af.dispatch(&request(23, &[], None)).unwrap();
+    assert_eq!(&ver_reply.data[..5], b"1.0.0");
+
+    let running_reply = af.dispatch(&request(40, &[], None)).unwrap();
+    assert_eq!(running_reply.data[0], 1);
+
+    let pseudo_reply = af.dispatch(&request(50, &[], None)).unwrap();
+    assert_eq!(pseudo_reply.data.len(), 16);
+}

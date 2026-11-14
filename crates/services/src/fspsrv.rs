@@ -299,8 +299,9 @@ impl Service for FspSrvService {
                     effect: None,
                 })
             }
-            // OpenDataStorageByCurrentProcess (Command 200)
-            200 => {
+            // OpenDataStorageByCurrentProcess (Command 200), OpenDataStorageByProgramId (202),
+            // OpenDataStorageByDataId (203), OpenRomStorage (204)
+            200 | 202 | 203 | 204 => {
                 Ok(ServiceReply {
                     result: 0,
                     data: Vec::new(),
@@ -308,6 +309,8 @@ impl Service for FspSrvService {
                     effect: None,
                 })
             }
+            // SetGlobalAccessLogMode (Command 1005)
+            1005 => Ok(ServiceReply::default()),
             command => Err(ServiceError::UnsupportedCommand {
                 service: "fsp-srv",
                 command,

@@ -8,6 +8,7 @@ pub mod acc;
 pub mod apm;
 pub mod applet;
 pub mod aud;
+pub mod event;
 pub mod fspsrv;
 pub mod hid;
 pub mod reference;
@@ -20,6 +21,7 @@ pub use acc::AccountService;
 pub use apm::ApmService;
 pub use applet::AppletManagerService;
 pub use aud::{AudioOutManager, AudioRendererManager};
+pub use event::EventHandle;
 pub use fspsrv::FspSrvService;
 pub use gpu::DiagnosticGpu;
 pub use hid::HidService;
@@ -96,12 +98,12 @@ impl Service for ServiceManager {
                 let object: Box<dyn Service> = match &name {
                     b"emu:test" => Box::new(DiagnosticCounter::default()),
                     b"emu:gpu\0" => Box::new(DiagnosticGpu::default()),
-                    b"nvdrv\0\0\0" | b"nvdrv:a\0" | b"nvdrv:s\0" => {
+                    b"nvdrv\0\0\0" | b"nvdrv:a\0" | b"nvdrv:s\0" | b"nvdrv:t\0" => {
                         Box::new(NvDriver::with_graphics(self.graphics.clone()))
                     }
-                    b"fsp-srv\0" => Box::new(FspSrvService::with_romfs(self.romfs.clone())),
+                    b"fsp-srv\0" | b"fsp-pr\0\0" => Box::new(FspSrvService::with_romfs(self.romfs.clone())),
                     b"set:sys\0" | b"set\0\0\0\0\0" => Box::new(SetSysService::default()),
-                    b"time:s\0\0" | b"time:u\0\0" => Box::new(TimeService::default()),
+                    b"time:s\0\0" | b"time:u\0\0" | b"time:a\0\0" => Box::new(TimeService::default()),
                     b"vi:m\0\0\0\0" | b"vi:u\0\0\0\0" | b"vi:s\0\0\0\0" => {
                         Box::new(ViManagerService::with_graphics(self.graphics.clone()))
                     }
@@ -110,7 +112,7 @@ impl Service for ServiceManager {
                     b"acc:u0\0\0" | b"acc:u1\0\0" | b"acc:e\0\0\0" => {
                         Box::new(AccountService::default())
                     }
-                    b"apm\0\0\0\0\0" | b"apm:p\0\0\0" => Box::new(ApmService::default()),
+                    b"apm\0\0\0\0\0" | b"apm:p\0\0\0" | b"apm:sys\0" => Box::new(ApmService::default()),
                     b"audren:u" => Box::new(AudioRendererManager::default()),
                     b"audout:u" => Box::new(AudioOutManager::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
