@@ -106,7 +106,7 @@ impl Service for ServiceManager {
                         Box::new(ViManagerService::default())
                     }
                     b"appletAE" | b"appletOE" => Box::new(AppletManagerService::default()),
-                    b"hid\0\0\0\0\0" => Box::new(HidService::default()),
+                    b"hid\0\0\0\0\0" | b"hid:sys\0" | b"hid:dbg\0" => Box::new(HidService::default()),
                     b"acc:u0\0\0" | b"acc:u1\0\0" | b"acc:e\0\0\0" => {
                         Box::new(AccountService::default())
                     }

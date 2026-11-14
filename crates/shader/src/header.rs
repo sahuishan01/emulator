@@ -10,6 +10,7 @@ pub fn decode_program(bytes: &[u8], stage: Stage) -> Result<Program, Error> {
     expected[0] = match stage {
         Stage::Vertex => 1 | (3 << 5) | (1 << 10) | (1 << 17) | (1 << 26),
         Stage::Fragment => 2 | (3 << 5) | (5 << 10) | (1 << 17),
+        Stage::Compute => 5 | (3 << 5) | (1 << 17),
     };
     if u32::from_le_bytes(bytes[..4].try_into().expect("word")) != expected[0] {
         return Err(Error::Header);
@@ -35,6 +36,7 @@ pub fn decode_program(bytes: &[u8], stage: Stage) -> Result<Program, Error> {
                 }
             }
         }
+        Stage::Compute => {}
     }
     for (word, want) in bytes[..HEADER_BYTES].chunks_exact(4).zip(expected) {
         if u32::from_le_bytes(word.try_into().expect("word")) != want {

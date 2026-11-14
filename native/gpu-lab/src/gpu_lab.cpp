@@ -224,6 +224,9 @@ public:
         device_info.queueCreateInfoCount = 1; device_info.pQueueCreateInfos = &queue_info;
         const char* swapchain_extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
         if (surface) { device_info.enabledExtensionCount = 1; device_info.ppEnabledExtensionNames = &swapchain_extension; }
+        VkPhysicalDeviceFeatures enabled_features{};
+        if (features.depthClamp) enabled_features.depthClamp = VK_TRUE;
+        device_info.pEnabledFeatures = &enabled_features;
         check(vkCreateDevice(physical, &device_info, nullptr, &device), "create logical device");
         vkGetDeviceQueue(device, family, 0, &queue);
         auto pool = structure<VkCommandPoolCreateInfo>(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
@@ -575,6 +578,7 @@ std::vector<uint8_t> draw_triangles(Context& context, bool compute) {
     auto viewport_info = structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
     viewport_info.viewportCount = 1; viewport_info.pViewports = &viewport; viewport_info.scissorCount = 1; viewport_info.pScissors = &scissor;
     auto raster = structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
+    raster.depthClampEnable = context.features.depthClamp ? VK_TRUE : VK_FALSE;
     raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
     auto multisample = structure<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -708,6 +712,7 @@ std::array<bool, 2> sampled_bc1_updates(Context& context) {
     auto viewport_info = structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
     viewport_info.viewportCount = 1; viewport_info.pViewports = &viewport; viewport_info.scissorCount = 1; viewport_info.pScissors = &scissor;
     auto raster = structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
+    raster.depthClampEnable = context.features.depthClamp ? VK_TRUE : VK_FALSE;
     raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
     auto multisample = structure<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -896,6 +901,7 @@ bool guest_clear_replay(Context& context, uint32_t index) {
         auto viewport_info = structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
         viewport_info.viewportCount=1; viewport_info.pViewports=&viewport; viewport_info.scissorCount=1; viewport_info.pScissors=&scissor;
         auto raster = structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
+        raster.depthClampEnable = context.features.depthClamp ? VK_TRUE : VK_FALSE;
         raster.polygonMode=VK_POLYGON_MODE_FILL; raster.cullMode=VK_CULL_MODE_NONE; raster.lineWidth=1;
         auto multisample = structure<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
         multisample.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
@@ -983,6 +989,7 @@ bool translated_shader_draw(Context& context,uint32_t index) {
         auto viewport_info=structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
         viewport_info.viewportCount=1;viewport_info.pViewports=&viewport;viewport_info.scissorCount=1;viewport_info.pScissors=&scissor;
         auto raster=structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
+        raster.depthClampEnable = context.features.depthClamp ? VK_TRUE : VK_FALSE;
         raster.polygonMode=VK_POLYGON_MODE_FILL;raster.cullMode=VK_CULL_MODE_NONE;raster.lineWidth=1;
         auto multisample=structure<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);multisample.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
         VkPipelineColorBlendAttachmentState blend_attachment{};blend_attachment.colorWriteMask=15;
@@ -1157,6 +1164,7 @@ template<class Replay> bool render_guest_commands(Context& context,const Replay&
         auto viewport_info=structure<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
         viewport_info.viewportCount=1;viewport_info.pViewports=&viewport;viewport_info.scissorCount=1;viewport_info.pScissors=&scissor;
         auto raster=structure<VkPipelineRasterizationStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO);
+        raster.depthClampEnable = context.features.depthClamp ? VK_TRUE : VK_FALSE;
         raster.polygonMode=VK_POLYGON_MODE_FILL;raster.cullMode=VK_CULL_MODE_NONE;raster.lineWidth=1;
         auto multisample=structure<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);multisample.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
         VkPipelineColorBlendAttachmentState blend_attachment{};blend_attachment.colorWriteMask=15;

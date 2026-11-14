@@ -78,6 +78,16 @@ pub(crate) struct Registers {
     index_range: [Option<u32>; 4],
     base_vertex: Option<u32>,
     restart: Option<u32>,
+    // Extended Maxwell B197 3D state
+    streams_ext: [[Option<u32>; 4]; 16],
+    attributes_ext: [Option<u32>; 32],
+    viewports_ext: [[Option<u32>; 6]; 16],
+    scissors_ext: [[Option<u32>; 4]; 16],
+    stencil_params: [Option<u32>; 8],
+    blend_targets: [Option<u32>; 8],
+    blend_equations: [Option<u32>; 8],
+    color_targets_mrt: [[Option<u32>; 8]; 8],
+    semaphores: [Option<u32>; 6],
 }
 fn required(v: Option<u32>) -> Result<u32, E> {
     v.ok_or(E::UninitializedRegister)
@@ -96,12 +106,45 @@ impl Registers {
             return Ok(Some(None));
         }
         match offset {
-            0xa00..=0xa14 => self.viewport[((offset - 0xa00) / 4) as usize] = Some(data),
+            0x48..=0x5c => self.semaphores[((offset - 0x48) / 4) as usize] = Some(data),
+            0xa00..=0xa14 => {
+                self.viewport[((offset - 0xa00) / 4) as usize] = Some(data);
+                self.viewports_ext[0][((offset - 0xa00) / 4) as usize] = Some(data);
+            }
+            0xa18..=0xbf0 => {
+                let vp = ((offset - 0xa00) / 32) as usize;
+                let f = (((offset - 0xa00) % 32) / 4) as usize;
+                if vp < 16 && f < 6 {
+                    self.viewports_ext[vp][f] = Some(data);
+                }
+            }
             0xc00..=0xc0c => self.clip[((offset - 0xc00) / 4) as usize] = Some(data),
-            0x1c00..=0x1c0c => self.stream[((offset - 0x1c00) / 4) as usize] = Some(data),
+            0x1c00..=0x1c0c => {
+                self.stream[((offset - 0x1c00) / 4) as usize] = Some(data);
+                self.streams_ext[0][((offset - 0x1c00) / 4) as usize] = Some(data);
+            }
+            0x1c10..=0x1cfc => {
+                let s = ((offset - 0x1c00) / 16) as usize;
+                let f = (((offset - 0x1c00) % 16) / 4) as usize;
+                if s < 16 && f < 4 {
+                    self.streams_ext[s][f] = Some(data);
+                }
+            }
             0x1f00..=0x1f04 => self.limit[((offset - 0x1f00) / 4) as usize] = Some(data),
-            0x1160 => self.attribute = Some(data),
-            0x1164 => self.attribute1 = Some(data),
+            0x1160 => {
+                self.attribute = Some(data);
+                self.attributes_ext[0] = Some(data);
+            }
+            0x1164 => {
+                self.attribute1 = Some(data);
+                self.attributes_ext[1] = Some(data);
+            }
+            0x1168..=0x11dc => {
+                let attr = ((offset - 0x1160) / 4) as usize;
+                if attr < 32 {
+                    self.attributes_ext[attr] = Some(data);
+                }
+            }
             0xf10 => self.texture_mode = Some(data),
             0x1574..=0x157c => self.texture_pools[0][((offset - 0x1574) / 4) as usize] = Some(data),
             0x155c..=0x1564 => self.texture_pools[1][((offset - 0x155c) / 4) as usize] = Some(data),
@@ -117,16 +160,53 @@ impl Registers {
                 self.pipeline[slot][field] = Some(data);
             }
             0x12cc => self.disabled[0] = Some(data), // depth test
-            0x1360 => self.disabled[1] = Some(data), // blend target 0
+            0x1360 => {
+                self.disabled[1] = Some(data); // blend target 0
+                self.blend_targets[0] = Some(data);
+            }
+            0x1364..=0x137c => {
+                let target = ((offset - 0x1360) / 4) as usize;
+                if target < 8 {
+                    self.blend_targets[target] = Some(data);
+                }
+            }
+            0x1300..=0x133c => {
+                let eq = ((offset - 0x1300) / 8) as usize;
+                if eq < 8 {
+                    self.blend_equations[eq] = Some(data);
+                }
+            }
             0x1918 => self.disabled[2] = Some(data), // OGL cull
             0x1380 => self.disabled[3] = Some(data), // stencil test
+            0x1384..=0x13a4 => {
+                let param = ((offset - 0x1384) / 4) as usize;
+                if param < 8 {
+                    self.stencil_params[param] = Some(data);
+                }
+            }
+            0x1800..=0x18fc => {
+                let sc = ((offset - 0x1800) / 16) as usize;
+                let f = (((offset - 0x1800) % 16) / 4) as usize;
+                if sc < 16 && f < 4 {
+                    self.scissors_ext[sc][f] = Some(data);
+                }
+            }
             0x13ac => self.origin = Some(data),
             0x192c => self.scale = Some(data),
             0x1a00 => self.mask = Some(data),
             0x121c => self.targets = Some(data),
+            0x840..=0x87c | 0x880..=0x8bc | 0x8c0..=0x8fc | 0x940..=0x97c | 0x980..=0x9bc | 0x9c0..=0x9fc => {
+                let rt = ((offset - 0x800) / 64) as usize;
+                let f = (((offset - 0x800) % 64) / 4) as usize;
+                if rt < 8 && f < 8 {
+                    self.color_targets_mrt[rt][f] = Some(data);
+                }
+            }
             0x17c8..=0x17d4 => self.index_range[((offset - 0x17c8) / 4) as usize] = Some(data),
             0x1434 => self.base_vertex = Some(data),
+            0xde4 => {} // Primitive restart enable
             0xde8 => self.restart = Some(data),
+            0x1df4 => {} // Draw count
             0x1214 | 0x17e4 | 0x17e8 | 0x17ec => {
                 return Ok(Some(Some(Command {
                     word: data,

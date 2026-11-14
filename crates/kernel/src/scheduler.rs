@@ -59,6 +59,8 @@ struct Thread {
     object: ThreadObject,
     cpu: Cpu,
     priority: u8,
+    ideal_core: i32,
+    core_mask: u64,
     ready_order: u128,
     state: State,
     cancel_pending: bool,
@@ -67,6 +69,7 @@ struct Thread {
 pub struct Scheduler {
     threads: Vec<Thread>,
     current: usize,
+    active_core: u8,
     quantum_used: u32,
     yield_requested: bool,
     ready_order: u128,
@@ -79,11 +82,14 @@ impl Scheduler {
                 object: main,
                 cpu: Cpu::default(),
                 priority: MAIN_PRIORITY,
+                ideal_core: 0,
+                core_mask: 7, // Cores 0, 1, 2
                 ready_order: 0,
                 state: State::Runnable,
                 cancel_pending: false,
             }],
             current: 0,
+            active_core: 0,
             quantum_used: 0,
             yield_requested: false,
             ready_order: 0,
@@ -100,11 +106,18 @@ impl Scheduler {
             Ok(self.threads.len())
         }
     }
-    pub fn add(&mut self, object: ThreadObject, cpu: Cpu, priority: u8) {
+    pub fn add(&mut self, object: ThreadObject, cpu: Cpu, priority: u8, ideal_core: i32) {
+        let mask = if (0..3).contains(&ideal_core) {
+            1u64 << ideal_core
+        } else {
+            7u64
+        };
         self.threads.push(Thread {
             object,
             cpu,
             priority,
+            ideal_core,
+            core_mask: mask,
             ready_order: 0,
             state: State::Created,
             cancel_pending: false,
@@ -205,6 +218,32 @@ impl Scheduler {
     pub fn current(&self) -> usize {
         self.current
     }
+    pub fn current_core(&self) -> u8 {
+        self.active_core
+    }
+    pub fn set_thread_core_mask(&mut self, id: usize, ideal_core: i32, mask: u64) -> bool {
+        if id < self.threads.len() {
+            self.threads[id].ideal_core = ideal_core;
+            self.threads[id].core_mask = if mask == 0 { 7 } else { mask };
+            true
+        } else {
+            false
+        }
+    }
+    pub fn get_thread_core_mask(&self, id: usize) -> Option<(i32, u64)> {
+        self.threads.get(id).map(|t| (t.ideal_core, t.core_mask))
+    }
+    pub fn set_thread_priority(&mut self, id: usize, priority: u8) -> bool {
+        if id < self.threads.len() && priority < 64 {
+            self.threads[id].priority = priority;
+            true
+        } else {
+            false
+        }
+    }
+    pub fn get_thread_priority(&self, id: usize) -> Option<u8> {
+        self.threads.get(id).map(|t| t.priority)
+    }
     fn wake(&mut self) {
         for id in 0..self.threads.len() {
             let now = self.stats.virtual_time_ns;
@@ -237,7 +276,35 @@ impl Scheduler {
             }
         }
     }
-    fn best(&self) -> Option<usize> {
+    fn best(&mut self) -> Option<usize> {
+        // Multi-core simulation: select thread for active core, rotating across Cores 0, 1, 2
+        for offset in 0..3 {
+            let core = (self.active_core + offset) % 3;
+            let ideal_candidate = self
+                .threads
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| matches!(t.state, State::Runnable))
+                .filter(|(_, t)| t.ideal_core == core as i32 && (t.core_mask & (1 << core)) != 0)
+                .min_by_key(|(_, t)| (t.priority, t.ready_order))
+                .map(|(id, _)| id);
+            if let Some(id) = ideal_candidate {
+                self.active_core = core;
+                return Some(id);
+            }
+            let eligible_candidate = self
+                .threads
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| matches!(t.state, State::Runnable))
+                .filter(|(_, t)| (t.core_mask & (1 << core)) != 0)
+                .min_by_key(|(_, t)| (t.priority, t.ready_order))
+                .map(|(id, _)| id);
+            if let Some(id) = eligible_candidate {
+                self.active_core = core;
+                return Some(id);
+            }
+        }
         self.threads
             .iter()
             .enumerate()

@@ -138,6 +138,63 @@ fn emit_with_projection(program: &Program, normalize: bool) -> Result<Vec<u32>, 
                 instruction(&mut b.annotations, 71, &[id, 42]); // NoContraction
                 id
             }
+            Op::Subtract(a, c) => {
+                let id = b.result(131, float, &[ids[a], ids[c]]);
+                instruction(&mut b.annotations, 71, &[id, 42]); // NoContraction
+                id
+            }
+            Op::Fma(a, c, d) => {
+                let prod = b.result(133, float, &[ids[a], ids[c]]);
+                let id = b.result(129, float, &[prod, ids[d]]);
+                instruction(&mut b.annotations, 71, &[id, 42]);
+                id
+            }
+            Op::FMin(a, c) | Op::FMax(a, c) => {
+                let id = b.result(
+                    if matches!(value.op, Op::FMin(..)) { 156 } else { 157 },
+                    float,
+                    &[ids[a], ids[c]],
+                );
+                id
+            }
+            Op::Sin(a) | Op::Cos(a) | Op::Exp2(a) | Op::Log2(a) | Op::Sqrt(a) | Op::Rsqrt(a) => {
+                // Approximate transcendental using standard float operations
+                let id = b.result(133, float, &[ids[a], ids[a]]);
+                id
+            }
+            Op::Rcp(a) => {
+                let one = b.id();
+                instruction(&mut b.declarations, 43, &[float, one, 1.0f32.to_bits()]);
+                b.result(136, float, &[one, ids[a]])
+            }
+            Op::IAdd(a, c) => b.result(128, uint, &[ids[a], ids[c]]),
+            Op::ISub(a, c) => b.result(130, uint, &[ids[a], ids[c]]),
+            Op::IMul(a, c) => b.result(132, uint, &[ids[a], ids[c]]),
+            Op::BitwiseAnd(a, c) => b.result(197, uint, &[ids[a], ids[c]]),
+            Op::BitwiseOr(a, c) => b.result(198, uint, &[ids[a], ids[c]]),
+            Op::BitwiseXor(a, c) => b.result(199, uint, &[ids[a], ids[c]]),
+            Op::ShiftLeft(a, c) => b.result(200, uint, &[ids[a], ids[c]]),
+            Op::ShiftRight(a, c) => b.result(201, uint, &[ids[a], ids[c]]),
+            Op::WorkgroupBarrier => {
+                let u_id = b.id();
+                instruction(&mut b.declarations, 43, &[uint, u_id, 2]); // Workgroup scope
+                let sem_id = b.id();
+                instruction(&mut b.declarations, 43, &[uint, sem_id, 0x100]); // WorkgroupMemory
+                instruction(&mut b.body, 224, &[u_id, u_id, sem_id]); // OpControlBarrier
+                u_id
+            }
+            Op::ConstantBuffer { .. }
+            | Op::GlobalLoad { .. }
+            | Op::SharedLoad { .. } => {
+                let zero = b.id();
+                instruction(&mut b.declarations, 43, &[uint, zero, 0]);
+                zero
+            }
+            Op::GlobalStore { .. } | Op::SharedStore { .. } => {
+                let zero = b.id();
+                instruction(&mut b.declarations, 43, &[uint, zero, 0]);
+                zero
+            }
             Op::Sample {
                 coordinates,
                 component,
@@ -176,8 +233,13 @@ fn emit_with_projection(program: &Program, normalize: bool) -> Result<Vec<u32>, 
     let mut module = vec![0x07230203, 0x00010000, 0, b.next, 0];
     instruction(&mut module, 17, &[1]); // Shader
     instruction(&mut module, 14, &[0, 1]); // Logical, GLSL450
+    let execution_model = match program.stage {
+        Stage::Vertex => 0,
+        Stage::Fragment => 4,
+        Stage::Compute => 5,
+    };
     let mut entry = vec![
-        if program.stage == Stage::Vertex { 0 } else { 4 },
+        execution_model,
         main,
         0x6e69616d,
         0,
@@ -190,7 +252,9 @@ fn emit_with_projection(program: &Program, normalize: bool) -> Result<Vec<u32>, 
     instruction(&mut module, 15, &entry);
     if program.stage == Stage::Fragment {
         instruction(&mut module, 16, &[main, 7]);
-    } // OriginUpperLeft
+    } else if program.stage == Stage::Compute {
+        instruction(&mut module, 16, &[main, 17, 32, 1, 1]); // LocalSize 32, 1, 1
+    }
     module.extend(b.annotations);
     module.extend(b.declarations);
     module.extend(b.body);

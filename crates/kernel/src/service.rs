@@ -191,4 +191,8 @@ pub trait Service: fmt::Debug {
         context.require_copy_handles(0)?;
         self.dispatch(request)
     }
+    /// Optional conversion into a non-session kernel object (e.g. SharedMemory).
+    fn as_handle(&self) -> Option<Object> {
+        None
+    }
 }

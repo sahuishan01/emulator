@@ -7,9 +7,9 @@ mod sync;
 
 use emulator_a64::Cpu;
 use emulator_ipc::{encode_reply, parse_request, CommandType, IpcError, IPC_BUFFER_SIZE};
-use emulator_memory::{Access, AddressSpace, MemoryError};
-pub use handles::{HandleError, TransferMemory};
-use handles::{HandleTable, Object, ProcessIdentity, ThreadObject};
+use emulator_memory::{Access, AddressSpace, MemoryError, Permissions};
+pub use handles::{HandleError, Object, ProcessIdentity, TransferMemory};
+use handles::{HandleTable, ThreadObject};
 pub use scheduler::{
     ScheduleOutcome, SchedulerError, SchedulerStats, MAX_THREADS, THREAD_QUANTUM, THREAD_TLS_ARENA,
 };
@@ -29,9 +29,15 @@ pub const SVC_CREATE_THREAD: u16 = 0x08;
 pub const SVC_START_THREAD: u16 = 0x09;
 pub const SVC_EXIT_THREAD: u16 = 0x0a;
 pub const SVC_SLEEP_THREAD: u16 = 0x0b;
+pub const SVC_SET_THREAD_PRIORITY: u16 = 0x0c;
+pub const SVC_GET_THREAD_PRIORITY: u16 = 0x0d;
+pub const SVC_GET_THREAD_CORE_MASK: u16 = 0x0e;
+pub const SVC_SET_THREAD_CORE_MASK: u16 = 0x0f;
 pub const SVC_GET_CURRENT_PROCESSOR_NUMBER: u16 = 0x10;
 pub const SVC_SIGNAL_EVENT: u16 = 0x11;
 pub const SVC_CLEAR_EVENT: u16 = 0x12;
+pub const SVC_MAP_SHARED_MEMORY: u16 = 0x13;
+pub const SVC_UNMAP_SHARED_MEMORY: u16 = 0x14;
 pub const SVC_CREATE_TRANSFER_MEMORY: u16 = 0x15;
 pub const SVC_CLOSE_HANDLE: u16 = 0x16;
 pub const SVC_RESET_SIGNAL: u16 = 0x17;
@@ -449,15 +455,14 @@ impl Kernel {
                 return Err(KernelError::Service(ServiceError::InvalidEffect));
             }
         }
+        let staged_objects: Vec<Object> = reply
+            .moved_objects
+            .into_iter()
+            .map(|s| s.as_handle().unwrap_or_else(|| Object::session(s)))
+            .collect();
         let pending = self
             .handles
-            .stage(
-                reply
-                    .moved_objects
-                    .into_iter()
-                    .map(Object::session)
-                    .collect(),
-            )
+            .stage(staged_objects)
             .map_err(KernelError::Handle)?;
         let encoded =
             encode_reply(reply.result, &reply.data, &pending.ids).map_err(KernelError::Ipc)?;
@@ -554,7 +559,7 @@ impl Kernel {
                 emulator_memory::Permissions::READ_WRITE,
             )
             .map_err(KernelError::Memory)?;
-        self.scheduler.add(object, context, priority as u8);
+        self.scheduler.add(object, context, priority as u8, core);
         let _ = memory.set_state(tls_page, 4096, 0x0c);
         cpu.x[0] = 0;
         cpu.x[1] = u64::from(pending.ids[0]);
@@ -753,8 +758,131 @@ impl Kernel {
                     .map_err(KernelError::Scheduler)?;
                 Ok(KernelEvent::Continue)
             }
+            SVC_SET_THREAD_PRIORITY => {
+                let handle = cpu.x[0] as u32;
+                let priority = cpu.x[1] as u8;
+                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                    self.scheduler.current()
+                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                    t.id
+                } else {
+                    cpu.x[0] = RESULT_INVALID_HANDLE;
+                    return Ok(KernelEvent::Continue);
+                };
+                if self.scheduler.set_thread_priority(thread_id, priority) {
+                    cpu.x[0] = 0;
+                } else {
+                    cpu.x[0] = RESULT_INVALID_STATE;
+                }
+                Ok(KernelEvent::Continue)
+            }
+            SVC_GET_THREAD_PRIORITY => {
+                let handle = cpu.x[1] as u32;
+                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                    self.scheduler.current()
+                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                    t.id
+                } else {
+                    cpu.x[0] = RESULT_INVALID_HANDLE;
+                    return Ok(KernelEvent::Continue);
+                };
+                if let Some(priority) = self.scheduler.get_thread_priority(thread_id) {
+                    cpu.x[0] = 0;
+                    cpu.x[1] = priority as u64;
+                } else {
+                    cpu.x[0] = RESULT_INVALID_HANDLE;
+                }
+                Ok(KernelEvent::Continue)
+            }
+            SVC_GET_THREAD_CORE_MASK => {
+                let handle = cpu.x[2] as u32;
+                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                    self.scheduler.current()
+                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                    t.id
+                } else {
+                    cpu.x[0] = RESULT_INVALID_HANDLE;
+                    return Ok(KernelEvent::Continue);
+                };
+                if let Some((ideal, mask)) = self.scheduler.get_thread_core_mask(thread_id) {
+                    cpu.x[0] = 0;
+                    cpu.x[1] = ideal as u64;
+                    cpu.x[2] = mask;
+                } else {
+                    cpu.x[0] = RESULT_INVALID_HANDLE;
+                }
+                Ok(KernelEvent::Continue)
+            }
+            SVC_SET_THREAD_CORE_MASK => {
+                let handle = cpu.x[0] as u32;
+                let ideal_core = cpu.x[1] as i32;
+                let mask = cpu.x[2];
+                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                    self.scheduler.current()
+                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                    t.id
+                } else {
+                    cpu.x[0] = RESULT_INVALID_HANDLE;
+                    return Ok(KernelEvent::Continue);
+                };
+                if self.scheduler.set_thread_core_mask(thread_id, ideal_core, mask) {
+                    cpu.x[0] = 0;
+                } else {
+                    cpu.x[0] = RESULT_INVALID_STATE;
+                }
+                Ok(KernelEvent::Continue)
+            }
             SVC_GET_CURRENT_PROCESSOR_NUMBER => {
-                cpu.x[0] = 0;
+                cpu.x[0] = self.scheduler.current_core() as u64;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_MAP_SHARED_MEMORY => {
+                let handle = cpu.x[0] as u32;
+                let addr = cpu.x[1];
+                let size = cpu.x[2] as usize;
+                let perms = cpu.x[3];
+                if addr % 4096 != 0 || size == 0 || size % 4096 != 0 {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                let permission = match perms {
+                    1 => Permissions::READ,
+                    3 => Permissions::READ_WRITE,
+                    _ => Permissions::READ,
+                };
+                match self.handles.get(handle) {
+                    Ok(Object::SharedMemory(buf)) => {
+                        let buffer = buf.borrow();
+                        let data = if buffer.len() >= size {
+                            buffer[..size].to_vec()
+                        } else {
+                            let mut d = buffer.clone();
+                            d.resize(size, 0);
+                            d
+                        };
+                        if memory.map(addr, data, permission).is_ok() {
+                            let _ = memory.set_state(addr, size, 0x0D);
+                            cpu.x[0] = 0;
+                        } else {
+                            cpu.x[0] = RESULT_OUT_OF_MEMORY;
+                        }
+                    }
+                    _ => {
+                        cpu.x[0] = RESULT_INVALID_HANDLE;
+                    }
+                }
+                Ok(KernelEvent::Continue)
+            }
+            SVC_UNMAP_SHARED_MEMORY => {
+                let _handle = cpu.x[0] as u32;
+                let addr = cpu.x[1];
+                let size = cpu.x[2] as usize;
+                if addr % 4096 != 0 || size == 0 || size % 4096 != 0 {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                } else {
+                    let _ = memory.unmap(addr, size);
+                    cpu.x[0] = 0;
+                }
                 Ok(KernelEvent::Continue)
             }
             SVC_ARBITRATE_LOCK => {
@@ -980,7 +1108,13 @@ pub fn homebrew_config() -> Vec<u8> {
         SVC_START_THREAD,
         SVC_EXIT_THREAD,
         SVC_SLEEP_THREAD,
+        SVC_SET_THREAD_PRIORITY,
+        SVC_GET_THREAD_PRIORITY,
+        SVC_GET_THREAD_CORE_MASK,
+        SVC_SET_THREAD_CORE_MASK,
         SVC_GET_CURRENT_PROCESSOR_NUMBER,
+        SVC_MAP_SHARED_MEMORY,
+        SVC_UNMAP_SHARED_MEMORY,
         SVC_OUTPUT_DEBUG_STRING,
         SVC_CLOSE_HANDLE,
         SVC_CREATE_TRANSFER_MEMORY,

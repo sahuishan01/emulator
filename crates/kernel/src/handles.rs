@@ -28,10 +28,14 @@ pub enum Object {
     Session(Rc<RefCell<Box<dyn Service>>>),
     WritableEvent(Rc<Cell<bool>>),
     ReadableEvent(Rc<Cell<bool>>),
+    SharedMemory(Rc<RefCell<Vec<u8>>>),
 }
 impl Object {
     pub fn session(service: Box<dyn Service>) -> Self {
         Self::Session(Rc::new(RefCell::new(service)))
+    }
+    pub fn shared_memory(buffer: Rc<RefCell<Vec<u8>>>) -> Self {
+        Self::SharedMemory(buffer)
     }
 }
 
@@ -112,7 +116,7 @@ impl HandleTable {
 
 /// Opaque host identity; the public PID remains the reference guest PID 1.
 #[derive(Clone, Debug)]
-pub(crate) struct ProcessIdentity(Rc<()>);
+pub struct ProcessIdentity(pub(crate) Rc<()>);
 impl ProcessIdentity {
     pub fn new() -> Self {
         Self(Rc::new(()))

@@ -19,7 +19,28 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.25-dev` (versionCode 65).
+- **Latest Release**: `v0.28.26-dev` (versionCode 66).
+  - **Phase 3 (M6A) Multi-Core Scheduler Simulation & Horizon Services**:
+    - 3-core guest scheduler simulation (`active_core: 0..=2`), ideal core and core mask affinity tracking, priority-based round-robin core rotation.
+    - Core affinity & priority SVCs: `SVC_SET_THREAD_PRIORITY` (0x0C), `SVC_GET_THREAD_PRIORITY` (0x0D), `SVC_GET_THREAD_CORE_MASK` (0x0E), `SVC_SET_THREAD_CORE_MASK` (0x0F), `SVC_GET_CURRENT_PROCESSOR_NUMBER` (0x10) returning current active core.
+    - Shared memory mapping SVCs: `SVC_MAP_SHARED_MEMORY` (0x13), `SVC_UNMAP_SHARED_MEMORY` (0x14).
+    - HID subsystem: 0x40000-byte shared memory ring layout for Touchscreen and Npad (Handheld, Player1..Player8) with real `SharedMemoryHandle` IPC relay on `IAppletResource::GetSharedMemoryHandle`, full vibration/controller command set (100–106, 120–126, 200–207).
+    - Filesystem Proxy: RomFS hierarchical directory traversal (`DirectoryProxy`, `DirectoryEntry`), transactional SaveData commit stubs.
+  - **Phase 4 (M6B) Maxwell 3D GPFIFO Engine & State**:
+    - Complete B197 3D method state: 16 vertex streams (`0x1c00..=0x1cfc`), 32 vertex attributes (`0x1160..=0x11dc`), 16 viewports (`0xa00..=0xbf0`), 16 scissors (`0x1800..=0x18fc`), two-sided stencil test (`0x1384..=0x13a4`), independent blend targets (`0x1360..=0x137c`), blend equations (`0x1300..=0x133c`), MRT color targets, semaphores & syncpoints (`0x48..=0x5c`).
+    - BC7 texture decompression (modes 0-7, mode 6 RGBA with 4-bit indices, modes 1-5, mode 7) & Tegra X1 TIC/TSC descriptor parsing.
+  - **Phase 5 (M6C) Maxwell SM53 Shader Translator & Compute**:
+    - Compute stage (`Stage::Compute`) entry points and SPH header parsing in SSA IR and SPIR-V generator.
+    - SSA IR opcode coverage expanded: `Subtract`, `Fma`, `FMin`, `FMax`, `Sin`, `Cos`, `Exp2`, `Log2`, `Rcp`, `Rsqrt`, `Sqrt`, integer arithmetic (`IAdd`, `ISub`, `IMul`), bitwise (`BitwiseAnd`, `BitwiseOr`, `BitwiseXor`, `ShiftLeft`, `ShiftRight`), memory loads/stores (`ConstantBuffer`, `GlobalLoad`, `GlobalStore`, `SharedLoad`, `SharedStore`), workgroup barriers (`WorkgroupBarrier`).
+    - CPU interpreter evaluator match arms for all new SSA IR opcodes.
+  - **Phase 6 (M7A) Host Vulkan Immortalis-G720 Renderer**:
+    - Automated compute-to-draw execution/memory barriers (`VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT` -> `VK_PIPELINE_STAGE_VERTEX_INPUT_BIT`).
+    - Reverse-Z depth clamping (`depthClampEnable = VK_TRUE`) gated on `features.depthClamp`.
+    - Extended dynamic state (EDS) driver fallback with specialized static graphics pipelines.
+  - **Phase 7 (M7B) Android ARM64 Native Code Execution (NCE) Scaffolding & 16 KiB Page Alignment**:
+    - Verified 16 KiB ELF alignment across `arm64-v8a` and `x86_64` native binaries.
+    - All 22+ native engine symbols verified and exported in `android-ffi`.
+- **Previous Release**: `v0.28.25-dev` (versionCode 65).
   - Implemented monotonic ticket futex arbitration in `crates/kernel/src/sync.rs` (`FutexArbitrator`) guaranteeing strict FIFO waiter order and immunity to spurious wakeups:
     - `SVC_ARBITRATE_LOCK` (0x1A): Atomic compare-and-swap lock acquisition with contention waiter tagging (`0x4000_0000`).
     - `SVC_ARBITRATE_UNLOCK` (0x1B): Wakes next queued waiter with ownership transfer.

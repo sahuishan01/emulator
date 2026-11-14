@@ -14,6 +14,7 @@ pub const MAX_SPIRV_WORDS: usize = 2048;
 pub enum Stage {
     Vertex,
     Fragment,
+    Compute,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -52,10 +53,48 @@ pub enum Op {
     FloatToBits(usize),
     Add(usize, usize),
     Multiply(usize, usize),
+    Subtract(usize, usize),
+    Fma(usize, usize, usize),
+    FMin(usize, usize),
+    FMax(usize, usize),
+    Sin(usize),
+    Cos(usize),
+    Exp2(usize),
+    Log2(usize),
+    Rcp(usize),
+    Rsqrt(usize),
+    Sqrt(usize),
+    IAdd(usize, usize),
+    ISub(usize, usize),
+    IMul(usize, usize),
+    BitwiseAnd(usize, usize),
+    BitwiseOr(usize, usize),
+    BitwiseXor(usize, usize),
+    ShiftLeft(usize, usize),
+    ShiftRight(usize, usize),
     Sample {
         coordinates: [usize; 2],
         component: u8,
     },
+    ConstantBuffer {
+        bank: u8,
+        offset: usize,
+    },
+    GlobalLoad {
+        address: usize,
+    },
+    GlobalStore {
+        address: usize,
+        value: usize,
+    },
+    SharedLoad {
+        offset: usize,
+    },
+    SharedStore {
+        offset: usize,
+        value: usize,
+    },
+    WorkgroupBarrier,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Value {
@@ -134,7 +173,40 @@ impl Program {
                 Op::Input(c) => input[c as usize / 4][c as usize % 4],
                 Op::BitsToFloat(a) | Op::FloatToBits(a) => bits[a],
                 Op::Add(a, b) => (f32::from_bits(bits[a]) + f32::from_bits(bits[b])).to_bits(),
+                Op::Subtract(a, b) => (f32::from_bits(bits[a]) - f32::from_bits(bits[b])).to_bits(),
                 Op::Multiply(a, b) => (f32::from_bits(bits[a]) * f32::from_bits(bits[b])).to_bits(),
+                Op::Fma(a, b, c) => (f32::from_bits(bits[a]) * f32::from_bits(bits[b]) + f32::from_bits(bits[c])).to_bits(),
+                Op::FMin(a, b) => {
+                    let fa = f32::from_bits(bits[a]);
+                    let fb = f32::from_bits(bits[b]);
+                    fa.min(fb).to_bits()
+                }
+                Op::FMax(a, b) => {
+                    let fa = f32::from_bits(bits[a]);
+                    let fb = f32::from_bits(bits[b]);
+                    fa.max(fb).to_bits()
+                }
+                Op::Sin(a) => (f32::from_bits(bits[a]).sin()).to_bits(),
+                Op::Cos(a) => (f32::from_bits(bits[a]).cos()).to_bits(),
+                Op::Exp2(a) => (f32::from_bits(bits[a]).exp2()).to_bits(),
+                Op::Log2(a) => (f32::from_bits(bits[a]).log2()).to_bits(),
+                Op::Rcp(a) => (1.0f32 / f32::from_bits(bits[a])).to_bits(),
+                Op::Rsqrt(a) => (1.0f32 / f32::from_bits(bits[a]).sqrt()).to_bits(),
+                Op::Sqrt(a) => (f32::from_bits(bits[a]).sqrt()).to_bits(),
+                Op::IAdd(a, b) => bits[a].wrapping_add(bits[b]),
+                Op::ISub(a, b) => bits[a].wrapping_sub(bits[b]),
+                Op::IMul(a, b) => bits[a].wrapping_mul(bits[b]),
+                Op::BitwiseAnd(a, b) => bits[a] & bits[b],
+                Op::BitwiseOr(a, b) => bits[a] | bits[b],
+                Op::BitwiseXor(a, b) => bits[a] ^ bits[b],
+                Op::ShiftLeft(a, b) => bits[a].wrapping_shl(bits[b]),
+                Op::ShiftRight(a, b) => bits[a].wrapping_shr(bits[b]),
+                Op::ConstantBuffer { .. } => 0,
+                Op::GlobalLoad { .. } => 0,
+                Op::GlobalStore { .. } => 0,
+                Op::SharedLoad { .. } => 0,
+                Op::SharedStore { .. } => 0,
+                Op::WorkgroupBarrier => 0,
                 Op::Sample {
                     coordinates,
                     component,
@@ -248,19 +320,92 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
                 Some(read(&regs, b, offset)?)
             } else if matches!(
                 w & !0x000000000ff0ffff,
-                0x5c58000000070000 | 0x5c68000000070000
+                0x5c58000000070000 | 0x5c68000000070000 | 0x5c50000000070000
             ) {
                 let lhs = read(&regs, a, offset)?;
                 let rhs = read(&regs, b, offset)?;
                 let lhs = value(&mut values, Type::F32, Op::BitsToFloat(lhs));
                 let rhs = value(&mut values, Type::F32, Op::BitsToFloat(rhs));
-                let op = if w >> 52 == 0x5c5 {
+                let op = if (w >> 52) & 0xff == 0x5c && (w >> 20) & 0x0f == 0 {
+                    Op::Subtract(lhs, rhs)
+                } else if w >> 52 == 0x5c5 {
                     Op::Add(lhs, rhs)
                 } else {
                     Op::Multiply(lhs, rhs)
                 };
                 let f = value(&mut values, Type::F32, op);
                 Some(value(&mut values, Type::Bits32, Op::FloatToBits(f)))
+            } else if w & !0x000000000ff0ffff == 0x5980000000070000 {
+                // FFMA: d = a * b + c
+                let c_reg = ((w >> 39) & 0xff) as u8;
+                let lhs = read(&regs, a, offset)?;
+                let rhs = read(&regs, b, offset)?;
+                let acc = read(&regs, c_reg, offset)?;
+                let lhs = value(&mut values, Type::F32, Op::BitsToFloat(lhs));
+                let rhs = value(&mut values, Type::F32, Op::BitsToFloat(rhs));
+                let acc = value(&mut values, Type::F32, Op::BitsToFloat(acc));
+                let f = value(&mut values, Type::F32, Op::Fma(lhs, rhs, acc));
+                Some(value(&mut values, Type::Bits32, Op::FloatToBits(f)))
+            } else if w & !0x000000000ff0ffff == 0x5080000000070000 {
+                // MUFU: transcendental function
+                let src = read(&regs, a, offset)?;
+                let src_f = value(&mut values, Type::F32, Op::BitsToFloat(src));
+                let sub_op = ((w >> 20) & 0x0f) as u8;
+                let op = match sub_op {
+                    0 => Op::Cos(src_f),
+                    1 => Op::Sin(src_f),
+                    2 => Op::Exp2(src_f),
+                    3 => Op::Log2(src_f),
+                    4 => Op::Rcp(src_f),
+                    5 => Op::Rsqrt(src_f),
+                    _ => Op::Sqrt(src_f),
+                };
+                let f = value(&mut values, Type::F32, op);
+                Some(value(&mut values, Type::Bits32, Op::FloatToBits(f)))
+            } else if w & !0x000000000ff0ffff == 0x5c10000000070000 {
+                // IADD: d = a + b
+                let lhs = read(&regs, a, offset)?;
+                let rhs = read(&regs, b, offset)?;
+                Some(value(&mut values, Type::Bits32, Op::IAdd(lhs, rhs)))
+            } else if w & !0x000000000ff0ffff == 0x5c11000000070000 {
+                // ISUB: d = a - b
+                let lhs = read(&regs, a, offset)?;
+                let rhs = read(&regs, b, offset)?;
+                Some(value(&mut values, Type::Bits32, Op::ISub(lhs, rhs)))
+            } else if w & !0x000000000ff0ffff == 0x5c20000000070000 {
+                // IMUL: d = a * b
+                let lhs = read(&regs, a, offset)?;
+                let rhs = read(&regs, b, offset)?;
+                Some(value(&mut values, Type::Bits32, Op::IMul(lhs, rhs)))
+            } else if w & !0x000000000ff0ffff == 0x5c40000000070000 {
+                // LOP: bitwise logic
+                let lhs = read(&regs, a, offset)?;
+                let rhs = read(&regs, b, offset)?;
+                let logic_op = ((w >> 39) & 3) as u8;
+                let op = match logic_op {
+                    0 => Op::BitwiseAnd(lhs, rhs),
+                    1 => Op::BitwiseOr(lhs, rhs),
+                    _ => Op::BitwiseXor(lhs, rhs),
+                };
+                Some(value(&mut values, Type::Bits32, op))
+            } else if w & !0x000000000ff0ffff == 0x5c48000000070000 {
+                // SHL: shift left
+                let lhs = read(&regs, a, offset)?;
+                let rhs = read(&regs, b, offset)?;
+                Some(value(&mut values, Type::Bits32, Op::ShiftLeft(lhs, rhs)))
+            } else if w & !0x000000000ff0ffff == 0x5c4c000000070000 {
+                // SHR: shift right
+                let lhs = read(&regs, a, offset)?;
+                let rhs = read(&regs, b, offset)?;
+                Some(value(&mut values, Type::Bits32, Op::ShiftRight(lhs, rhs)))
+            } else if w & !0x000000000000ffff == 0x50b8000000070000 {
+                // BAR.SYNC: workgroup execution barrier
+                Some(value(&mut values, Type::Bits32, Op::WorkgroupBarrier))
+            } else if w & !0x000000000ff0ffff == 0xef90000000070000 {
+                // LDC: constant buffer read c[bank][offset]
+                let bank = ((w >> 24) & 0x1f) as u8;
+                let offset_val = (w >> 8) as usize;
+                Some(value(&mut values, Type::Bits32, Op::ConstantBuffer { bank, offset: offset_val }))
             } else if matches!(
                 w & !0x000180003ff000ff,
                 0xefd87f800007ff00 | 0xeff07f800007ff00
@@ -355,21 +500,26 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
     if !exit {
         return Err(Error::MissingExit);
     }
-    let [Some(x), Some(y), Some(z), Some(w)] = outputs else {
-        return Err(Error::MissingOutput);
-    };
-    let varying = if varying.iter().all(Option::is_none) {
-        None
+    let (resolved_outputs, varying) = if stage == Stage::Compute {
+        ([zero, zero, zero, zero], None)
     } else {
-        let [Some(x), Some(y), Some(z), Some(w)] = varying else {
+        let [Some(x), Some(y), Some(z), Some(w)] = outputs else {
             return Err(Error::MissingOutput);
         };
-        Some([x, y, z, w])
+        let varying = if varying.iter().all(Option::is_none) {
+            None
+        } else {
+            let [Some(x), Some(y), Some(z), Some(w)] = varying else {
+                return Err(Error::MissingOutput);
+            };
+            Some([x, y, z, w])
+        };
+        ([x, y, z, w], varying)
     };
     Ok(Program {
         stage,
         values,
-        outputs: [x, y, z, w],
+        outputs: resolved_outputs,
         varying,
         input_mask,
         texture_handle,
