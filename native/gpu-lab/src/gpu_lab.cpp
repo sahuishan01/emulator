@@ -7,6 +7,14 @@
 #ifdef __ANDROID__
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include <android/native_window.h>
+#include <android/log.h>
+#define GPU_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "EmulatorGpu", __VA_ARGS__)
+#define GPU_LOGW(...) __android_log_print(ANDROID_LOG_WARN, "EmulatorGpu", __VA_ARGS__)
+#define GPU_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "EmulatorGpu", __VA_ARGS__)
+#else
+#define GPU_LOGI(...) do {} while (0)
+#define GPU_LOGW(...) do {} while (0)
+#define GPU_LOGE(...) do {} while (0)
 #endif
 #include <vulkan/vulkan.h>
 #include <memory>
@@ -1436,7 +1444,26 @@ public:
         if(!(src.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) || !(dst.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT))
             throw std::runtime_error("Surface blit unsupported");
         extent=caps.currentExtent;
-        if(extent.width==UINT32_MAX || !extent.width || !extent.height)throw std::runtime_error("Surface extent unavailable");
+#ifdef __ANDROID__
+        if((extent.width==UINT32_MAX || !extent.width || !extent.height) && native_window) {
+            auto* win=static_cast<ANativeWindow*>(native_window);
+            int32_t w=ANativeWindow_getWidth(win), h=ANativeWindow_getHeight(win);
+            GPU_LOGI("ANativeWindow dimensions query: %dx%d", w, h);
+            if(w>0 && h>0) { extent.width=static_cast<uint32_t>(w); extent.height=static_cast<uint32_t>(h); }
+        }
+#endif
+        if(extent.width!=UINT32_MAX) {
+            extent.width=std::max(caps.minImageExtent.width,std::min(caps.maxImageExtent.width,extent.width));
+            extent.height=std::max(caps.minImageExtent.height,std::min(caps.maxImageExtent.height,extent.height));
+        }
+        if(extent.width==UINT32_MAX || !extent.width || !extent.height) {
+            GPU_LOGE("Surface extent unavailable: caps currentExtent=%ux%u min=%ux%u max=%ux%u",
+                     caps.currentExtent.width, caps.currentExtent.height,
+                     caps.minImageExtent.width, caps.minImageExtent.height,
+                     caps.maxImageExtent.width, caps.maxImageExtent.height);
+            throw std::runtime_error("Surface extent unavailable");
+        }
+        GPU_LOGI("Creating Vulkan swapchain: %ux%u format=%d", extent.width, extent.height, chosen->format);
         auto info=structure<VkSwapchainCreateInfoKHR>(VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR);
         info.surface=context.surface;info.minImageCount=std::max(2u,caps.minImageCount);
         if(caps.maxImageCount)info.minImageCount=std::min(info.minImageCount,caps.maxImageCount);
@@ -1454,6 +1481,46 @@ public:
         check(vkCreateSemaphore(context.device,&sem,nullptr,&acquired),"acquire semaphore");
         ready_images.resize(swap_images.size());
         for(auto& ready:ready_images)check(vkCreateSemaphore(context.device,&sem,nullptr,&ready),"per-image present semaphore");
+        clear_initial_frame();
+        GPU_LOGI("Vulkan swapchain created and primed with dark initial frame");
+    }
+    void clear_initial_frame() {
+        if(!swapchain || swap_images.empty()) return;
+        uint32_t index=0;
+        auto result=vkAcquireNextImageKHR(context.device,swapchain,1'000'000'000ull,acquired,VK_NULL_HANDLE,&index);
+        if(result!=VK_SUCCESS && result!=VK_SUBOPTIMAL_KHR) {
+            GPU_LOGW("clear_initial_frame: vkAcquireNextImageKHR returned %d", result);
+            return;
+        }
+        const auto ready=ready_images.at(index);
+        const auto command=context.begin();
+        auto barrier=structure<VkImageMemoryBarrier>(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
+        barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.image=swap_images[index];
+        barrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+        VkClearColorValue dark{};dark.float32[0]=10.0f/255.0f;dark.float32[1]=14.0f/255.0f;dark.float32[2]=20.0f/255.0f;dark.float32[3]=1.0f;
+        vkCmdClearColorImage(command,swap_images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&dark,1,&barrier.subresourceRange);
+        barrier.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=0;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+        check(vkEndCommandBuffer(command),"end clear initial frame command");
+        auto fence_info=structure<VkFenceCreateInfo>(VK_STRUCTURE_TYPE_FENCE_CREATE_INFO);VkFence fence{};
+        check(vkCreateFence(context.device,&fence_info,nullptr,&fence),"clear initial fence");
+        const VkPipelineStageFlags wait_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
+        auto submit=structure<VkSubmitInfo>(VK_STRUCTURE_TYPE_SUBMIT_INFO);
+        submit.waitSemaphoreCount=1;submit.pWaitSemaphores=&acquired;submit.pWaitDstStageMask=&wait_stage;
+        submit.commandBufferCount=1;submit.pCommandBuffers=&command;submit.signalSemaphoreCount=1;submit.pSignalSemaphores=&ready;
+        check(vkQueueSubmit(context.queue,1,&submit,fence),"submit clear initial transfer");
+        auto present_info=structure<VkPresentInfoKHR>(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR);
+        present_info.waitSemaphoreCount=1;present_info.pWaitSemaphores=&ready;present_info.swapchainCount=1;
+        present_info.pSwapchains=&swapchain;present_info.pImageIndices=&index;
+        result=vkQueuePresentKHR(context.queue,&present_info);
+        if(result!=VK_SUBOPTIMAL_KHR)check(result,"present clear initial image");
+        check(vkWaitForFences(context.device,1,&fence,VK_TRUE,5'000'000'000ull),"wait clear initial fence");
+        vkDestroyFence(context.device,fence,nullptr);
+        check(vkQueueWaitIdle(context.queue),"clear initial queue idle");
     }
     void present(const Image& source,uint32_t width,uint32_t height,VkFormat format) {
         VkFormatProperties properties{};vkGetPhysicalDeviceFormatProperties(context.physical,format,&properties);
@@ -1714,21 +1781,30 @@ uint32_t program_on_frame(uint32_t width, uint32_t height, uint32_t format, cons
 
 void program_set_surface(void* window) {
     try {
+        GPU_LOGI("program_set_surface window=%p", window);
         program_renderer.reset();
         if (window) {
             program_renderer = std::make_unique<LiveRenderer>();
             program_renderer->initialize(window);
             emulator_program_set_frame_callback_v1(program_on_frame);
+            GPU_LOGI("program_set_surface successfully initialized Vulkan swapchain and frame callback");
         } else {
             emulator_program_set_frame_callback_v1(nullptr);
+            GPU_LOGI("program_set_surface cleared surface");
         }
+    } catch (const std::exception& e) {
+        GPU_LOGE("program_set_surface exception: %s", e.what());
+        program_renderer.reset();
+        emulator_program_set_frame_callback_v1(nullptr);
     } catch (...) {
+        GPU_LOGE("program_set_surface unknown exception");
         program_renderer.reset();
         emulator_program_set_frame_callback_v1(nullptr);
     }
 }
 
 void program_clear_surface() {
+    GPU_LOGI("program_clear_surface");
     emulator_program_set_frame_callback_v1(nullptr);
     program_renderer.reset();
 }

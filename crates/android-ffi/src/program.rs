@@ -10,6 +10,7 @@ pub type ProgramFrameCallback =
 
 thread_local! {
     static FRAME_CALLBACK: RefCell<Option<ProgramFrameCallback>> = const { RefCell::new(None) };
+    static FRAMES_PRESENTED: RefCell<u64> = const { RefCell::new(0) };
 }
 
 #[derive(Debug)]
@@ -32,6 +33,7 @@ impl emulator_gpu::GraphicsBackend for ProgramGraphicsBackend {
                 if status != 0 {
                     return Err(format!("Program frame presentation failed: {status}"));
                 }
+                FRAMES_PRESENTED.with(|f| *f.borrow_mut() += 1);
             }
             Ok(())
         })
@@ -443,6 +445,7 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
         if p.session.is_some() || !p.last.is_empty() || p.bytes.len() != p.expected {
             return Err("Incomplete or already-started program".into());
         }
+        FRAMES_PRESENTED.with(|f| *f.borrow_mut() = 0);
         let graphics = Rc::new(ProgramGraphicsBackend);
         if p.bytes.starts_with(b"PFS0") || p.bytes.starts_with(b"HFS0") {
             let mut keys = discover_keys(p.source_dir.as_deref());
@@ -494,6 +497,7 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         };
         let pc = s.cpu().pc;
         let core = s.kernel().current_core();
+        let frames = FRAMES_PRESENTED.with(|f| *f.borrow());
         let total: usize = s.debug_records().iter().map(Vec::len).sum();
         let bytes: Vec<u8> = s
             .debug_records()
@@ -505,12 +509,13 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         let truncated = total > bytes.len() || decoded.chars().count() > 512;
         let output = decoded.chars().take(512).collect::<String>();
         let text = format!(
-            "{{\"ok\":{},\"state\":{},\"instructions\":{},\"pc\":{},\"core\":{},\"output\":{},\"outputTruncated\":{},\"error\":{}}}",
+            "{{\"ok\":{},\"state\":{},\"instructions\":{},\"pc\":{},\"core\":{},\"frames\":{},\"output\":{},\"outputTruncated\":{},\"error\":{}}}",
             message.is_empty(),
             quote(state),
             s.instructions(),
             pc,
             core,
+            frames,
             quote(&output),
             truncated,
             quote(&message.chars().take(512).collect::<String>())
@@ -528,6 +533,9 @@ pub extern "C" fn emulator_program_close_v1() -> u32 {
     std::panic::catch_unwind(|| {
         FRAME_CALLBACK.with(|cell| {
             *cell.borrow_mut() = None;
+        });
+        FRAMES_PRESENTED.with(|cell| {
+            *cell.borrow_mut() = 0;
         });
         PROGRAM.with(|cell| {
             let Ok(mut state) = cell.try_borrow_mut() else {

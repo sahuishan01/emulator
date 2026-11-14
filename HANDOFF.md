@@ -19,7 +19,14 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.28-dev` (versionCode 68).
+- **Latest Release**: `v0.28.29-dev` (versionCode 69).
+  - **Primed Dark Vulkan Presentation & Frame-Aware Boot Viewport**:
+    - Eliminated uninitialized white screen on surface attachment by implementing `clear_initial_frame()` in `LiveRenderer` (`gpu_lab.cpp`), immediately acquiring, clearing to solid `#0a0e14` OLED black, and presenting an initial frame upon swapchain creation.
+    - Implemented Android surface extent fallback query using `ANativeWindow_getWidth` / `ANativeWindow_getHeight` when `caps.currentExtent` returns `UINT32_MAX`, clamping dimensions to device-supported image extents and avoiding initialization panics.
+    - Added structured `EmulatorGpu` Android logging via `<android/log.h>` across `LiveRenderer`, `program_set_surface`, and frame presentation paths for diagnostics.
+    - Made `GameViewportView` frame-aware via `framesPresented`: retains authentic dark console display with scanlines, grid, and `"BOOTING GUEST RUNTIME…"` plus live instruction, core, and MIPS telemetry during early CRT/SDK initialization until real guest frames are delivered via `QUEUE_BUFFER`.
+    - Added `FRAMES_PRESENTED` counter in `crates/android-ffi/src/program.rs`, incremented on each completed frame callback and reported in `emulator_program_step_v1` JSON.
+- **Previous Release**: `v0.28.28-dev` (versionCode 68).
   - **Eliminated Cosmetic Waveform & Hooked Native Vulkan Display Presentation**:
     - Completely removed the synthetic oscilloscope / sine waveform animation placeholder from `ProgramActivity.kt` (`GameViewportView`).
     - Added 16:9 native display presentation surface (`GameTextureView`) embedded in `ProgramActivity`'s viewport hierarchy, backed by a rounded outline provider (`clipToOutline = true`).

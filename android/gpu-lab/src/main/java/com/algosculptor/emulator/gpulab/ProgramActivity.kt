@@ -79,6 +79,7 @@ class ProgramActivity : Activity() {
     private var currentPc: Long = 0
     private var currentCore: Int = 0
     private var currentMips: Double = 0.0
+    private var currentFramesPresented: Long = 0
     private var currentStateStr: String = "loading"
     private var lastErrorStr: String = ""
     private var sessionFinished: Boolean = false
@@ -496,6 +497,8 @@ class ProgramActivity : Activity() {
         viewportView.pc = 0
         viewportView.core = 0
         viewportView.mips = 0.0
+        currentFramesPresented = 0L
+        viewportView.framesPresented = 0L
         viewportView.postInvalidate()
 
         AppLog.i("ProgramActivity", "Starting program session: title='$title', mode=$mode, file=${file.absolutePath}")
@@ -585,6 +588,7 @@ class ProgramActivity : Activity() {
         currentPc = value.optLong("pc", 0L)
         currentCore = value.optInt("core", 0)
         currentMips = value.optDouble("mips", currentMips)
+        currentFramesPresented = value.optLong("frames", currentFramesPresented)
         sessionFinished = finished
 
         val needsKeys = error.contains("prod.keys") || error.contains("decryption keys")
@@ -636,6 +640,7 @@ class ProgramActivity : Activity() {
                 viewportView.pc = currentPc
                 viewportView.core = currentCore
                 viewportView.mips = currentMips
+                viewportView.framesPresented = currentFramesPresented
                 viewportView.isPaused = isPaused.get()
                 viewportView.statusText = if (finished) state.uppercase() else if (isPaused.get()) "PAUSED" else state.uppercase()
                 viewportView.postInvalidate()
@@ -799,6 +804,7 @@ class ProgramActivity : Activity() {
         var pc: Long = 0
         var core: Int = 0
         var mips: Double = 0.0
+        var framesPresented: Long = 0
         var statusText: String = "READY"
         var isPaused: Boolean = false
         var programTitle: String = ""
@@ -865,8 +871,8 @@ class ProgramActivity : Activity() {
             val path = Path().apply { addRoundRect(rect, cornerRadius, cornerRadius, Path.Direction.CW) }
             canvas.clipPath(path)
 
-            // When no frames have executed yet, draw dark standby background
-            if (instructions == 0L || statusText == "READY" || statusText == "STOPPED") {
+            // When no frames have presented yet, draw dark standby / boot background
+            if (framesPresented == 0L || statusText == "READY" || statusText == "STOPPED") {
                 canvas.drawRect(rect, backgroundPaint)
 
                 // Subtle grid pattern
@@ -889,10 +895,16 @@ class ProgramActivity : Activity() {
                     sY += 4f
                 }
 
-                // Central Ready / Standby text
-                textPaint.textSize = h * 0.08f
+                // Central Ready / Standby / Boot text
+                textPaint.textSize = h * 0.07f
                 textPaint.typeface = Typeface.DEFAULT_BOLD
-                val msg = if (statusText == "STOPPED") "SESSION STOPPED" else "READY TO PLAY"
+                val msg = if (statusText == "STOPPED") {
+                    "SESSION STOPPED"
+                } else if (instructions > 0L) {
+                    "BOOTING GUEST RUNTIME…"
+                } else {
+                    "READY TO PLAY"
+                }
                 val msgW = textPaint.measureText(msg)
                 canvas.drawText(msg, (w - msgW) / 2f, h * 0.52f, textPaint)
             }
@@ -903,7 +915,8 @@ class ProgramActivity : Activity() {
             // Live Telemetry Overlay
             if (instructions > 0L) {
                 accentPaint.textSize = h * 0.045f
-                canvas.drawText("SWITCH 720P · 60HZ", w * 0.04f, h * 0.10f, accentPaint)
+                val modeStr = if (framesPresented > 0L) "SWITCH 720P · 60HZ" else "INITIALIZING SDK…"
+                canvas.drawText(modeStr, w * 0.04f, h * 0.10f, accentPaint)
 
                 textPaint.textSize = h * 0.045f
                 val coreStr = "CORE $core"
