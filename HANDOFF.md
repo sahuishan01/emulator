@@ -19,7 +19,12 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.13-dev` (versionCode 53).
+- **Latest Release**: `v0.28.14-dev` (versionCode 54).
+  - Resolved `invalid loader input: invalid PFS0/HFS0 magic` on retail / commercial NSP game dumps.
+  - Added plaintext bypass for pre-decrypted ExeFS and RomFS sections in dumps where encryption type is marked 3 (AesCtr) but data is already unencrypted.
+  - Added multi-generation master key revision decryption for ticket title keys.
+  - Supported unextended module names (`main`, `rtld`, `sdk`, `subsdk0`) and fallback NSO0 magic scanning.
+  - Supported multi-partition iteration in NCAs, skipping non-executable Logo partitions.
 - **Physical Device Telemetry (Issue #15)**:
   - Latest report: `1794318272960-44c3d786`, app version `0.28.6-dev` on `Mali-G720-Immortalis MC12`.
   - Diagnostics: 269/275 checks passed, 65/66 visible patterns passed.

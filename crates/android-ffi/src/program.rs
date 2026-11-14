@@ -365,7 +365,7 @@ pub extern "C" fn emulator_program_inspect_v1() -> EngineReport {
         if p.bytes.len() != p.expected || p.session.is_some() || !p.last.is_empty() {
             return Err("Incomplete or already-started program".into());
         }
-        if p.bytes.starts_with(b"PFS0") {
+        if p.bytes.starts_with(b"PFS0") || p.bytes.starts_with(b"HFS0") {
             let _nsp = emulator_loader::nsp::NspArchive::parse(&p.bytes).map_err(|e| e.to_string())?;
             return Ok(format!(
                 "{{\"ok\":true,\"state\":\"ready\",\"format\":\"NSP\",\"fileBytes\":{},\"memoryBytes\":{},\"mode\":\"package\",\"error\":\"\"}}",
@@ -384,7 +384,7 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
         if p.session.is_some() || !p.last.is_empty() || p.bytes.len() != p.expected {
             return Err("Incomplete or already-started program".into());
         }
-        if p.bytes.starts_with(b"PFS0") {
+        if p.bytes.starts_with(b"PFS0") || p.bytes.starts_with(b"HFS0") {
             let mut keys = discover_keys(p.source_dir.as_deref());
             if keys.header_key().is_none() {
                 return Err("Nintendo Switch decryption keys (prod.keys) are required to decrypt and run NSP packages. Please install prod.keys in Settings -> Decryption Keys.".into());

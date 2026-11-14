@@ -237,6 +237,12 @@ impl KeyFile {
             .insert(id, SecretKey(title_key.to_vec()));
     }
 
+    /// Register the raw, potentially encrypted title key block directly from a ticket.
+    pub fn add_raw_title_key(&mut self, rights_id: &[u8; 16], raw_key: [u8; 16]) {
+        let id = encode_hex(rights_id);
+        let _ = self.add_key(&format!("raw_titlekey_{id}"), &raw_key);
+    }
+
     /// Merge all entries from another KeyFile into this one.
     pub fn merge(&mut self, other: &KeyFile) {
         for (name, key) in &other.entries {
@@ -308,6 +314,14 @@ impl KeyFile {
             .try_into()
             .ok()
     }
+
+    /// Look up the raw title key block registered for a 128-bit rights ID.
+    pub fn raw_title_key(&self, rights_id: &[u8; 16]) -> Option<&[u8; 16]> {
+        let id = encode_hex(rights_id);
+        self.get(&format!("raw_titlekey_{id}"))?
+            .try_into()
+            .ok()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -336,7 +350,7 @@ fn hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-fn encode_hex(bytes: &[u8]) -> String {
+pub fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

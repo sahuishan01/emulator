@@ -97,8 +97,12 @@ impl Ticket {
         self.title_key_type == 0
     }
 
-    /// Decrypt the 16-byte title key from a common ticket using the provided KeyFile.
-    pub fn decrypt_title_key(&self, keys: &KeyFile) -> Result<[u8; 16], LoadError> {
+    /// Decrypt the title key from a common ticket using a specified master key revision.
+    pub fn decrypt_with_revision(
+        &self,
+        keys: &KeyFile,
+        revision: u8,
+    ) -> Result<[u8; 16], LoadError> {
         if !self.is_common() {
             return Err(LoadError::Invalid(
                 "ticket is not a common ticket; personalized RSA title keys require console-unique certs",
@@ -106,7 +110,7 @@ impl Ticket {
         }
 
         let titlekek = keys
-            .title_kek(self.master_key_revision)
+            .title_kek(revision)
             .ok_or(LoadError::Invalid(
                 "titlekek for ticket master key revision is missing from key file",
             ))?;
@@ -120,10 +124,24 @@ impl Ticket {
         Ok(title_key)
     }
 
+    /// Decrypt the 16-byte title key from a common ticket using the provided KeyFile.
+    pub fn decrypt_title_key(&self, keys: &KeyFile) -> Result<[u8; 16], LoadError> {
+        self.decrypt_with_revision(keys, self.master_key_revision)
+    }
+
     /// Decrypt the title key if common, and register it directly into the KeyFile.
+    /// Also registers the raw title key block for deferred or multi-generation derivation.
     pub fn import_into(&self, keys: &mut KeyFile) -> Result<[u8; 16], LoadError> {
-        let title_key = self.decrypt_title_key(keys)?;
-        keys.add_title_key(&self.rights_id, title_key);
-        Ok(title_key)
+        let mut raw = [0u8; 16];
+        raw.copy_from_slice(&self.title_key_block[..16]);
+        keys.add_raw_title_key(&self.rights_id, raw);
+
+        if let Ok(title_key) = self.decrypt_title_key(keys) {
+            keys.add_title_key(&self.rights_id, title_key);
+            Ok(title_key)
+        } else {
+            keys.add_title_key(&self.rights_id, raw);
+            Ok(raw)
+        }
     }
 }

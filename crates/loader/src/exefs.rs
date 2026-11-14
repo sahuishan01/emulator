@@ -42,13 +42,35 @@ impl ExeFsProgram {
         ];
 
         for name in candidates {
-            let filename = format!("{name}.nso");
-            if let Some(nso_bytes) = archive.get_file(&filename) {
-                let image = NsoImage::parse(nso_bytes)?;
+            let nso_bytes = archive
+                .get_file(name)
+                .or_else(|| archive.get_file(&format!("{name}.nso")));
+            if let Some(bytes) = nso_bytes {
+                let image = NsoImage::parse(bytes)?;
                 modules.push(ExeFsModule {
                     name: name.to_string(),
                     image,
                 });
+            }
+        }
+
+        // Fallback: scan all files in the archive for NSO0 magic (excluding metadata and logo files)
+        if modules.is_empty() {
+            for file in archive.files() {
+                let lower = file.name.to_ascii_lowercase();
+                if lower == "main.npdm" || lower.ends_with(".png") || lower.ends_with(".gif") {
+                    continue;
+                }
+                if let Some(bytes) = archive.get_file(&file.name) {
+                    if bytes.len() >= 4 && &bytes[..4] == b"NSO0" {
+                        if let Ok(image) = NsoImage::parse(bytes) {
+                            modules.push(ExeFsModule {
+                                name: file.name.clone(),
+                                image,
+                            });
+                        }
+                    }
+                }
             }
         }
 
