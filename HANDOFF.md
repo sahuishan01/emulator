@@ -19,7 +19,15 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.20-dev` (versionCode 60).
+- **Latest Release**: `v0.28.21-dev` (versionCode 61).
+  - Resolved `unsupported A64 instruction 0x1a9f17e8 at 0x100338` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #944).
+  - Corrected conditional select decoding mask from `0x7fe0_0c00 == 0x1a80_0000` to `0x3fe0_0800 == 0x1a80_0000`, enabling full support for `CSINC`, `CSINV`, `CSNEG` and compiler aliases `CSET`, `CSETM`, `CINC`, `CINV`, `CNEG`.
+  - Implemented A64 add/subtract with extended register `ADD`, `ADDS`, `SUB`, `SUBS` (`0x0b20_0000`) supporting all extend types (`UXTB`, `UXTH`, `UXTW`, `UXTX`, `SXTB`, `SXTH`, `SXTW`, `SXTX`), immediate shifts 0..=4, SP destination/source handling, and compiler aliases `CMP` / `CMN` with extended register.
+  - Expanded load/store exclusive instructions to all operand sizes (8-bit, 16-bit, 32-bit, 64-bit) and added full acquire/release exclusive support (`LDAXR`, `STLXR`).
+  - Implemented load-acquire and store-release non-exclusive memory operations `LDAR`, `STLR`, `LDARB`, `STLRB`, `LDARH`, `STLRH` (`0x0880_fc00`).
+  - Implemented signed load pair instruction `LDPSW` (`opc == 1`) with 32-bit to 64-bit sign extension and corrected signed offset calculation in `LoadStorePair` and `FpLoadStorePair`.
+  - Maintained strict 16 KiB page alignment across `arm64-v8a` and `x86_64` architectures, verified all 22 native engine exports, and passed all 30 A64 unit tests.
+- **Previous Release**: `v0.28.20-dev` (versionCode 60).
   - Resolved `unsupported A64 instruction 0xdac001ae at 0x1017d0` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #362).
   - Implemented A64 Data-processing (1 source) instructions: `RBIT` (reverse bits, 32-bit and 64-bit), `REV16` (reverse bytes in 16-bit halfwords, 32-bit and 64-bit), `REV` / `REV32` (reverse bytes in 32-bit words), `REV` (reverse bytes in 64-bit doublewords), `CLZ` (count leading zeros, 32-bit and 64-bit), and `CLS` (count leading sign bits, 32-bit and 64-bit).
   - Implemented ARMv8 architectural `HINT` instructions (including `NOP`, `YIELD`, `WFE`, `WFI`, `SEV`, `SEVL`, `BTI`, `PACIASP`, `AUTIASP`, `PACIAZ`, `AUTIAZ`, `PACIBSP`, `AUTIBSP`, `PACIBZ`, `AUTIBZ`, `PACIA1716`, `AUTIA1716`, `PACIB1716`, `AUTIB1716`, `XPACLRI`), memory barriers (`DMB`, `DSB`, `ISB`), and exclusive monitor clearing (`CLREX`) under mask `0xffff_e01f == 0xd503_201f`.

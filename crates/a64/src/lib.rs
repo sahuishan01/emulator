@@ -106,6 +106,16 @@ enum Instruction {
         subtract: bool,
         flags: bool,
     },
+    AddSubExtended {
+        width: Width,
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        option: u8,
+        amount: u8,
+        subtract: bool,
+        flags: bool,
+    },
     LogicalRegister {
         width: Width,
         rd: u8,
@@ -154,7 +164,7 @@ enum Instruction {
         op: u8,
     },
     ExclusiveLoadStore {
-        width: Width,
+        size: u8,
         rt: u8,
         rn: u8,
         rs: u8, // status register for STXR
@@ -255,6 +265,7 @@ enum Instruction {
         rn: u8,
         offset: i64,
         load: bool,
+        sign_extend: bool,
         pre_index: bool,
         post_index: bool,
     },
@@ -557,6 +568,55 @@ impl Cpu {
                     self.write_zero(rd, result);
                 }
             }
+            Instruction::AddSubExtended {
+                width,
+                rd,
+                rn,
+                rm,
+                option,
+                amount,
+                subtract,
+                flags,
+            } => {
+                let lhs = self.read_sp(rn) & width.mask();
+                let rm_val = self.read_zero(rm);
+                let ext = match option {
+                    0 => (rm_val as u8) as u64,
+                    1 => (rm_val as u16) as u64,
+                    2 => (rm_val as u32) as u64,
+                    3 => rm_val,
+                    4 => (rm_val as u8 as i8 as i64) as u64,
+                    5 => (rm_val as u16 as i16 as i64) as u64,
+                    6 => (rm_val as u32 as i32 as i64) as u64,
+                    7 => rm_val,
+                    _ => unreachable!(),
+                };
+                let rhs = (ext << amount) & width.mask();
+                let result = if subtract {
+                    lhs.wrapping_sub(rhs)
+                } else {
+                    lhs.wrapping_add(rhs)
+                } & width.mask();
+                if flags {
+                    self.nzcv = Nzcv {
+                        negative: result & width.sign() != 0,
+                        zero: result == 0,
+                        carry: if subtract {
+                            lhs >= rhs
+                        } else {
+                            (lhs as u128 + rhs as u128) > width.mask() as u128
+                        },
+                        overflow: if subtract {
+                            ((lhs ^ rhs) & (lhs ^ result) & width.sign()) != 0
+                        } else {
+                            (!(lhs ^ rhs) & (lhs ^ result) & width.sign()) != 0
+                        },
+                    };
+                    self.write_zero(rd, result);
+                } else {
+                    self.write_sp(rd, result);
+                }
+            }
             Instruction::LogicalRegister {
                 width,
                 rd,
@@ -785,7 +845,7 @@ impl Cpu {
                 self.write_zero(rd, result);
             }
             Instruction::ExclusiveLoadStore {
-                width,
+                size,
                 rt,
                 rn,
                 rs,
@@ -793,16 +853,22 @@ impl Cpu {
             } => {
                 let address = self.read_sp(rn);
                 if load {
-                    let value = match width {
-                        Width::W32 => memory.read_u32(address)? as u64,
-                        Width::X64 => memory.read_u64(address)?,
+                    let value = match size {
+                        0 => memory.read_u8(address)? as u64,
+                        1 => memory.read_u16(address)? as u64,
+                        2 => memory.read_u32(address)? as u64,
+                        3 => memory.read_u64(address)?,
+                        _ => unreachable!(),
                     };
                     self.write_zero(rt, value);
                 } else {
                     let value = self.read_zero(rt);
-                    match width {
-                        Width::W32 => memory.write_u32(address, value as u32)?,
-                        Width::X64 => memory.write_u64(address, value)?,
+                    match size {
+                        0 => memory.write_u8(address, value as u8)?,
+                        1 => memory.write_u16(address, value as u16)?,
+                        2 => memory.write_u32(address, value as u32)?,
+                        3 => memory.write_u64(address, value)?,
+                        _ => unreachable!(),
                     }
                     // In single-threaded guest interpreter model, exclusive store always succeeds (status 0)
                     self.write_zero(rs, 0);
@@ -1172,24 +1238,34 @@ impl Cpu {
                 rn,
                 offset,
                 load,
+                sign_extend,
                 pre_index,
                 post_index,
             } => {
                 let base = self.read_sp(rn);
-                let address = if pre_index {
-                    base.wrapping_add_signed(offset)
-                } else {
+                let address = if post_index {
                     base
+                } else {
+                    base.wrapping_add_signed(offset)
                 };
-                let second_address = address.wrapping_add(width.bytes());
+                let second_address = address.wrapping_add(if sign_extend { 4 } else { width.bytes() });
                 if load {
-                    let v1 = match width {
-                        Width::W32 => memory.read_u32(address)? as u64,
-                        Width::X64 => memory.read_u64(address)?,
-                    };
-                    let v2 = match width {
-                        Width::W32 => memory.read_u32(second_address)? as u64,
-                        Width::X64 => memory.read_u64(second_address)?,
+                    let (v1, v2) = if sign_extend {
+                        (
+                            (memory.read_u32(address)? as i32 as i64) as u64,
+                            (memory.read_u32(second_address)? as i32 as i64) as u64,
+                        )
+                    } else {
+                        match width {
+                            Width::W32 => (
+                                memory.read_u32(address)? as u64,
+                                memory.read_u32(second_address)? as u64,
+                            ),
+                            Width::X64 => (
+                                memory.read_u64(address)?,
+                                memory.read_u64(second_address)?,
+                            ),
+                        }
                     };
                     self.write_zero(rt1, v1);
                     self.write_zero(rt2, v2);
@@ -1425,7 +1501,7 @@ impl Cpu {
             }
             Instruction::FpLoadStorePair { size, rt1, rt2, rn, offset, load, pre_index, post_index } => {
                 let base = self.read_sp(rn);
-                let address = if pre_index { base.wrapping_add_signed(offset) } else { base };
+                let address = if post_index { base } else { base.wrapping_add_signed(offset) };
                 let elem_bytes: u64 = match size {
                     2 => 4,
                     3 => 8,
@@ -1571,6 +1647,27 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             flags: word & (1 << 29) != 0,
         });
     }
+    // Add/subtract (extended register): ADD, ADDS, SUB, SUBS, CMP, CMN
+    if word & 0x1fe0_0000 == 0x0b20_0000 {
+        let amount = ((word >> 10) & 7) as u8;
+        if amount > 4 {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        let option = ((word >> 13) & 7) as u8;
+        if width == Width::W32 && (option == 3 || option == 7) {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        return Ok(Instruction::AddSubExtended {
+            width,
+            rd,
+            rn,
+            rm: ((word >> 16) & 31) as u8,
+            option,
+            amount,
+            subtract: word & (1 << 30) != 0,
+            flags: word & (1 << 29) != 0,
+        });
+    }
     // Logical (shifted register): AND, BIC, ORR, ORN, EOR, EON, ANDS, BICS
     // bits 28..24 must be 01010
     if word & 0x1f00_0000 == 0x0a00_0000 {
@@ -1638,30 +1735,40 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             lsb,
         });
     }
-    // Exclusive load/store: LDXR / STXR
-    // LDXR: 31: size[1], 30: size[0], 29-24: 001000, 23: 0, 22: L=1, 21: 0, 20-16: Rs (11111 for ldxr), 15-10: 011111, 9-5: Rn, 4-0: Rt
-    // STXR: 31: size[1], 30: size[0], 29-24: 001000, 23: 0, 22: L=0, 21: 0, 20-16: Rs, 15-10: 011111, 9-5: Rn, 4-0: Rt
-    // In ARMv8 load/store exclusive:
-    // size field is bits [31:30]: 10 is 32-bit word, 11 is 64-bit xword.
-    // bit 22 is L (1 for load, 0 for store), bit 23 is 0, bit 21 is 0.
-    // Mask out bits 31-30 (size) and bit 22 (L):
-    // 0x3fe0_fc00 has bit 22 set (0x400000). To ignore bit 22: 0x3fa0_fc00
-    if word & 0x3fa0_fc00 == 0x0800_7c00 {
-        let size = (word >> 30) & 3;
-        if size == 2 || size == 3 {
-            let width = if size == 3 { Width::X64 } else { Width::W32 };
-            let is_load = (word & (1 << 22)) != 0;
-            let rs = ((word >> 16) & 31) as u8;
-            let rt = (word & 31) as u8;
-            let rn = ((word >> 5) & 31) as u8;
-            return Ok(Instruction::ExclusiveLoadStore {
-                width,
-                rt,
-                rn,
-                rs,
-                load: is_load,
-            });
-        }
+    // Load / Store Exclusive: LDXR, STXR, LDAXR, STLXR (8-bit, 16-bit, 32-bit, 64-bit)
+    // 31:30 size, 29:24 001000, 23: 0, 22: L, 21: 0, 20:16 Rs, 15: o0, 14:10 11111, 9:5 Rn, 4:0 Rt
+    if word & 0x3fa0_7c00 == 0x0800_7c00 {
+        let size = ((word >> 30) & 3) as u8;
+        let is_load = (word & (1 << 22)) != 0;
+        let rs = ((word >> 16) & 31) as u8;
+        let rt = (word & 31) as u8;
+        let rn = ((word >> 5) & 31) as u8;
+        return Ok(Instruction::ExclusiveLoadStore {
+            size,
+            rt,
+            rn,
+            rs,
+            load: is_load,
+        });
+    }
+    // Load-Acquire / Store-Release (non-exclusive): LDAR, STLR, LDARB, STLRB, LDARH, STLRH
+    if word & 0x3fa0_fc00 == 0x0880_fc00 {
+        let size = ((word >> 30) & 3) as u8;
+        let is_load = (word & (1 << 22)) != 0;
+        let target_width = if size == 3 { Width::X64 } else { Width::W32 };
+        let rt = (word & 31) as u8;
+        let rn = ((word >> 5) & 31) as u8;
+        return Ok(Instruction::LoadStore {
+            size,
+            target_width,
+            rt,
+            rn,
+            offset: 0,
+            load: is_load,
+            sign_extend: false,
+            pre_index: false,
+            post_index: false,
+        });
     }
     if word & 0x1f80_0000 == 0x1100_0000 {
         return Ok(Instruction::AddSub {
@@ -1751,7 +1858,7 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
         });
     }
     // Conditional select: CSEL (00), CSINC (01), CSINV (10), CSNEG (11)
-    if word & 0x7fe0_0c00 == 0x1a80_0000 {
+    if word & 0x3fe0_0800 == 0x1a80_0000 {
         let rm = ((word >> 16) & 31) as u8;
         let cond = ((word >> 12) & 0xf) as u8;
         let op = ((((word >> 30) & 1) << 1) | ((word >> 10) & 1)) as u8;
@@ -1959,18 +2066,21 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             });
         }
     }
-    // LDP / STP (Load/Store Pair)
-    // opc: bits [31:30] (00 = 32-bit, 10 = 64-bit)
+    // LDP / STP / LDPSW (Load/Store Pair)
+    // opc: bits [31:30] (00 = 32-bit, 01 = LDPSW 64-bit signed, 10 = 64-bit)
     // V: bit 26 (0 = general-purpose registers)
     // L: bit 22 (1 = load, 0 = store)
     // mode: bits [24:23] (01 = post-index, 10 = signed offset, 11 = pre-index)
     if word & 0x3a00_0000 == 0x2800_0000 && word & (1 << 26) == 0 {
         let opc = (word >> 30) & 3;
         let mode = (word >> 23) & 3;
-        if (opc == 0 || opc == 2) && mode != 0 {
-            let width = if opc == 2 { Width::X64 } else { Width::W32 };
+        let is_load = (word & (1 << 22)) != 0;
+        if mode != 0 && (opc == 0 || opc == 2 || (opc == 1 && is_load)) {
+            let width = if opc == 0 { Width::W32 } else { Width::X64 };
+            let sign_extend = opc == 1;
+            let scale: i64 = if opc == 2 { 8 } else { 4 };
             let imm7 = signed_field((word >> 15) & 0x7f, 7);
-            let offset = imm7 * (width.bytes() as i64);
+            let offset = imm7 * scale;
             let rt1 = (word & 31) as u8;
             let rt2 = ((word >> 10) & 31) as u8;
             return Ok(Instruction::LoadStorePair {
@@ -1979,7 +2089,8 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
                 rt2,
                 rn,
                 offset,
-                load: word & (1 << 22) != 0,
+                load: is_load,
+                sign_extend,
                 pre_index: mode == 3,
                 post_index: mode == 1,
             });
