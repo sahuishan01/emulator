@@ -90,11 +90,15 @@ impl Service for ServiceManager {
                 let object: Box<dyn Service> = match &name {
                     b"emu:test" => Box::new(DiagnosticCounter::default()),
                     b"emu:gpu\0" => Box::new(DiagnosticGpu::default()),
-                    b"nvdrv\0\0\0" => Box::new(NvDriver::with_graphics(self.graphics.clone())),
+                    b"nvdrv\0\0\0" | b"nvdrv:a\0" | b"nvdrv:s\0" => {
+                        Box::new(NvDriver::with_graphics(self.graphics.clone()))
+                    }
                     b"fsp-srv\0" => Box::new(FspSrvService::with_romfs(self.romfs.clone())),
-                    b"set:sys\0" => Box::new(SetSysService::default()),
+                    b"set:sys\0" | b"set\0\0\0\0\0" => Box::new(SetSysService::default()),
                     b"time:s\0\0" | b"time:u\0\0" => Box::new(TimeService::default()),
-                    b"vi:m\0\0\0\0" => Box::new(ViManagerService::default()),
+                    b"vi:m\0\0\0\0" | b"vi:u\0\0\0\0" | b"vi:s\0\0\0\0" => {
+                        Box::new(ViManagerService::default())
+                    }
                     b"appletAE" | b"appletOE" => Box::new(AppletManagerService::default()),
                     b"hid\0\0\0\0\0" => Box::new(HidService::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),

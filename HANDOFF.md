@@ -19,7 +19,24 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.23-dev` (versionCode 63).
+- **Latest Release**: `v0.28.24-dev` (versionCode 64).
+  - Lifted the artificial 2,000,000 instruction limit for packages in `emulator-android-ffi`, allowing retail games (including Pokémon Legends: Z-A) and NSP packages to run continuously.
+  - Optimized step slice to 4096 instructions in `ProgramActivity.kt`, reducing JNI and serialization roundtrip overhead by 4x while maintaining smooth UI updates.
+  - Implemented Phase 3 Horizon supervisor calls:
+    - `SVC_SET_HEAP_SIZE` (0x01): Allocates, expands, or shrinks guest heap memory at `DEFAULT_HEAP_BASE` (`0x9000_0000`), page-aligned to 4 KiB, managing `AddressSpace` mappings with `MemoryState::Normal` (0x03) and Read/Write permissions.
+    - `SVC_SET_MEMORY_ATTRIBUTE` (0x03): Handles memory caching and attribute hints.
+    - `SVC_GET_CURRENT_PROCESSOR_NUMBER` (0x10): Returns active CPU core index.
+    - `SVC_GET_SYSTEM_TICK` (0x25): Returns monotonic system tick counter derived from scheduler clock.
+    - `SVC_GET_THREAD_ID` (0x29): Writes 64-bit thread ID to guest pointer for specified thread handle or current thread.
+    - `SVC_BREAK` (0x2C): Captures breakpoint and assertion diagnostics in kernel debug log without halting execution unexpectedly.
+    - Multi-thread futex synchronization: `SVC_ARBITRATE_LOCK` (0x1A), `SVC_ARBITRATE_UNLOCK` (0x1B), `SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC` (0x1C), `SVC_SIGNAL_PROCESS_WIDE_KEY` (0x1D) supporting non-deadlocking cooperative locking and condition variable waits.
+    - Advertised newly implemented SVCs in `homebrew_config()` SVC capability mask.
+  - Enhanced Horizon Visual Interface (`vi`) & presentation pipeline:
+    - Implemented `HosBinderDriver` relay service with `TransactParcel` supporting `IGraphicBufferProducer` state machine (`CONNECT`, `REQUEST_BUFFER`, `DEQUEUE_BUFFER`, `QUEUE_BUFFER`, `CANCEL_BUFFER`, `QUERY`).
+    - Expanded `DisplayService` to handle `GetRelayService` (100), `ListDisplays` (1000), `OpenDisplay` (1010), `CloseDisplay` (1011), `GetNaturalDisplayResolution` (1020), `CreateStrayLayer` (2020), `DestroyStrayLayer` (2030), `CreateManagedLayer` (2050), `DestroyManagedLayer` (2060), `SetLayerScalingMode` (2101), `ConvertScalingMode` (2102), `OpenSharedLayer` (5202).
+    - Registered service port aliases: `vi:u` and `vi:s` -> `ViManagerService`, `nvdrv:a` and `nvdrv:s` -> `NvDriver`, `set` -> `SetSysService`.
+  - Maintained strict 16 KiB page alignment across `arm64-v8a` and `x86_64` architectures, verified all 22 native engine exports, and passed all Rust and Android unit tests.
+- **Previous Release**: `v0.28.23-dev` (versionCode 63).
   - Resolved `unsupported guest SVC 0x6` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #1134).
   - Implemented 64-bit Horizon kernel supervisor call `SVC_QUERY_MEMORY` (0x06) adhering strictly to Horizon OS calling convention (register X0 = output MemoryInfo buffer in guest memory, register X2 = virtual address to query; returns X0 = 0 Result success, X1 = 0 PageInfo flags).
   - Added full virtual address space region query mechanism covering static codeset segments (R-X Code/Static, R-- RoData, RW- Data), Stack (0x0B), ThreadLocal (0x0C), Inaccessible (0x10), and unmapped gaps (0x00 Free).

@@ -151,6 +151,32 @@ fn test_vi_and_applet_services() {
     let height = u32::from_le_bytes(res_reply.data[4..8].try_into().unwrap());
     assert_eq!((width, height), (1280, 720));
 
+    // Relay service (IHOSBinderDriver)
+    let mut relay_reply = display.dispatch(&request(100, &[], None)).unwrap();
+    assert_eq!(relay_reply.result, 0);
+    assert_eq!(relay_reply.moved_objects.len(), 1);
+    let mut binder = relay_reply.moved_objects.remove(0);
+
+    // Binder Connect (code 10)
+    let connect_data = [1, 0, 0, 0, 10, 0, 0, 0];
+    let connect_reply = binder.dispatch(&request(0, &connect_data, None)).unwrap();
+    assert_eq!(connect_reply.result, 0);
+
+    // Binder DequeueBuffer (code 3)
+    let dequeue_data = [1, 0, 0, 0, 3, 0, 0, 0];
+    let dequeue_reply = binder.dispatch(&request(0, &dequeue_data, None)).unwrap();
+    assert_eq!(dequeue_reply.result, 0);
+
+    // Binder QueueBuffer (code 7)
+    let queue_data = [1, 0, 0, 0, 7, 0, 0, 0];
+    let queue_reply = binder.dispatch(&request(0, &queue_data, None)).unwrap();
+    assert_eq!(queue_reply.result, 0);
+
+    // Verify port aliases
+    assert!(sm.dispatch(&request(1, b"vi:u\0\0\0\0", None)).is_ok());
+    assert!(sm.dispatch(&request(1, b"vi:s\0\0\0\0", None)).is_ok());
+    assert!(sm.dispatch(&request(1, b"set\0\0\0\0\0", None)).is_ok());
+
     let mut applet = sm
         .dispatch(&request(1, b"appletAE", None))
         .unwrap()

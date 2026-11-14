@@ -125,6 +125,7 @@ struct Program {
     session: Option<Session>,
     last: String,
     source_dir: Option<std::path::PathBuf>,
+    is_package: bool,
 }
 thread_local! { static PROGRAM: RefCell<Option<Program>> = const { RefCell::new(None) }; }
 
@@ -274,6 +275,7 @@ pub extern "C" fn emulator_program_begin_v1(length: u32) -> u32 {
                 session: None,
                 last: String::new(),
                 source_dir: None,
+                is_package: false,
             });
             0
         })
@@ -346,6 +348,7 @@ pub extern "C" fn emulator_program_open_file_v1(path: *const std::os::raw::c_cha
                         session: None,
                         last: String::new(),
                         source_dir: src_dir.clone(),
+                        is_package: false,
                     });
                     return 0;
                 }
@@ -358,6 +361,7 @@ pub extern "C" fn emulator_program_open_file_v1(path: *const std::os::raw::c_cha
                         session: None,
                         last: String::new(),
                         source_dir: src_dir,
+                        is_package: false,
                     });
                     return 0;
                 }
@@ -398,8 +402,10 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
                 return Err("Nintendo Switch decryption keys (prod.keys) are required to decrypt and run NSP packages. Please install prod.keys in Settings -> Decryption Keys.".into());
             }
             p.session = Some(Session::from_nsp(&p.bytes, &mut keys).map_err(|e| e.to_string())?);
+            p.is_package = true;
         } else {
             p.session = Some(Session::from_nro(&p.bytes).map_err(|e| e.to_string())?);
+            p.is_package = false;
         }
         p.bytes = ProgramBacking::Heap(Vec::new());
         Ok(
@@ -417,16 +423,21 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         if !p.last.is_empty() {
             return Ok(p.last.clone());
         }
+        let is_package = p.is_package;
         let s = p
             .session
             .as_mut()
             .ok_or_else(|| "Program has not started".to_string())?;
-        let remaining = MAX_INSTRUCTIONS.saturating_sub(s.instructions());
-        let outcome = s.run(u64::from(budget).min(remaining));
+        let outcome = if is_package {
+            s.run(u64::from(budget))
+        } else {
+            let remaining = MAX_INSTRUCTIONS.saturating_sub(s.instructions());
+            s.run(u64::from(budget).min(remaining))
+        };
         let (state, message) = match outcome {
             Ok(RunOutcome::Exited) => ("exited", String::new()),
             Ok(RunOutcome::Blocked) => ("waiting", String::new()),
-            Ok(RunOutcome::BudgetExhausted) if s.instructions() >= MAX_INSTRUCTIONS => {
+            Ok(RunOutcome::BudgetExhausted) if !is_package && s.instructions() >= MAX_INSTRUCTIONS => {
                 ("limit", "Execution limit reached".into())
             }
             Ok(RunOutcome::BudgetExhausted) => ("running", String::new()),

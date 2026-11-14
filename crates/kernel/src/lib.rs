@@ -19,26 +19,38 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
+pub const SVC_SET_HEAP_SIZE: u16 = 0x01;
+pub const SVC_SET_MEMORY_ATTRIBUTE: u16 = 0x03;
 pub const SVC_QUERY_MEMORY: u16 = 0x06;
 pub const SVC_EXIT_PROCESS: u16 = 0x07;
 pub const SVC_CREATE_THREAD: u16 = 0x08;
 pub const SVC_START_THREAD: u16 = 0x09;
 pub const SVC_EXIT_THREAD: u16 = 0x0a;
 pub const SVC_SLEEP_THREAD: u16 = 0x0b;
-pub const SVC_OUTPUT_DEBUG_STRING: u16 = 0x27;
-pub const SVC_CLOSE_HANDLE: u16 = 0x16;
-pub const SVC_CREATE_TRANSFER_MEMORY: u16 = 0x15;
-pub const CURRENT_PROCESS_HANDLE: u32 = 0xffff_8001;
-pub const MAX_TRANSFER_MEMORY_BYTES: usize = 16 * 1024 * 1024;
-pub const MAX_TRANSFER_MEMORY_OBJECTS: usize = 32;
-pub const SVC_CONNECT_TO_NAMED_PORT: u16 = 0x1f;
-pub const SVC_SEND_SYNC_REQUEST: u16 = 0x21;
-pub const SVC_CREATE_EVENT: u16 = 0x45;
+pub const SVC_GET_CURRENT_PROCESSOR_NUMBER: u16 = 0x10;
 pub const SVC_SIGNAL_EVENT: u16 = 0x11;
 pub const SVC_CLEAR_EVENT: u16 = 0x12;
+pub const SVC_CREATE_TRANSFER_MEMORY: u16 = 0x15;
+pub const SVC_CLOSE_HANDLE: u16 = 0x16;
 pub const SVC_RESET_SIGNAL: u16 = 0x17;
 pub const SVC_WAIT_SYNCHRONIZATION: u16 = 0x18;
 pub const SVC_CANCEL_SYNCHRONIZATION: u16 = 0x19;
+pub const SVC_ARBITRATE_LOCK: u16 = 0x1a;
+pub const SVC_ARBITRATE_UNLOCK: u16 = 0x1b;
+pub const SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC: u16 = 0x1c;
+pub const SVC_SIGNAL_PROCESS_WIDE_KEY: u16 = 0x1d;
+pub const SVC_CONNECT_TO_NAMED_PORT: u16 = 0x1f;
+pub const SVC_SEND_SYNC_REQUEST: u16 = 0x21;
+pub const SVC_GET_SYSTEM_TICK: u16 = 0x25;
+pub const SVC_OUTPUT_DEBUG_STRING: u16 = 0x27;
+pub const SVC_GET_THREAD_ID: u16 = 0x29;
+pub const SVC_BREAK: u16 = 0x2c;
+pub const SVC_CREATE_EVENT: u16 = 0x45;
+pub const CURRENT_PROCESS_HANDLE: u32 = 0xffff_8001;
+pub const MAX_TRANSFER_MEMORY_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_TRANSFER_MEMORY_OBJECTS: usize = 32;
+pub const RESULT_INVALID_SIZE: u64 = 0xca01;
+pub const RESULT_OUT_OF_MEMORY: u64 = 0xcc01;
 pub const RESULT_INVALID_HANDLE: u64 = 0xe401;
 pub const RESULT_INVALID_ADDRESS: u64 = 0xe601;
 pub const RESULT_TIMEOUT: u64 = 0xea01;
@@ -46,6 +58,7 @@ pub const RESULT_INTERRUPTED: u64 = 0xec01;
 pub const RESULT_TOO_MANY_HANDLES: u64 = 0xee01;
 pub const RESULT_INVALID_STATE: u64 = 0xfa01;
 pub const MAIN_THREAD_HANDLE: u64 = handles::MAIN_THREAD_HANDLE as u64;
+pub const DEFAULT_HEAP_BASE: u64 = 0x9000_0000;
 const MAX_DEBUG_MESSAGE: usize = 16 * 1024;
 const MAX_DEBUG_BYTES: usize = 1024 * 1024;
 const MAX_DEBUG_RECORDS: usize = 4096;
@@ -157,6 +170,8 @@ pub struct Kernel {
     scheduler: Scheduler,
     process: ProcessIdentity,
     transfer_quota: Rc<Cell<usize>>,
+    heap_base: u64,
+    heap_size: usize,
 }
 
 impl Default for Kernel {
@@ -172,6 +187,8 @@ impl Default for Kernel {
             scheduler: Scheduler::new(main),
             process: ProcessIdentity::new(),
             transfer_quota: Rc::new(Cell::new(0)),
+            heap_base: DEFAULT_HEAP_BASE,
+            heap_size: 0,
         }
     }
 }
@@ -625,6 +642,52 @@ impl Kernel {
         Ok(())
     }
 
+    fn set_heap_size(
+        &mut self,
+        cpu: &mut Cpu,
+        memory: &mut AddressSpace,
+    ) -> Result<(), KernelError> {
+        let size = cpu.x[1] as usize;
+        if size % 4096 != 0 {
+            cpu.x[0] = RESULT_INVALID_SIZE;
+            return Ok(());
+        }
+        let heap_base = self.heap_base;
+        let current_size = self.heap_size;
+        if size == current_size {
+            cpu.x[0] = 0;
+            cpu.x[1] = heap_base;
+            return Ok(());
+        }
+        if size > current_size {
+            let additional = size - current_size;
+            let start = heap_base + current_size as u64;
+            if memory
+                .map(
+                    start,
+                    vec![0; additional],
+                    emulator_memory::Permissions::READ_WRITE,
+                )
+                .is_err()
+            {
+                cpu.x[0] = RESULT_OUT_OF_MEMORY;
+                return Ok(());
+            }
+            let _ = memory.set_state(start, additional, 0x03);
+        } else {
+            let reduction = current_size - size;
+            let start = heap_base + size as u64;
+            if memory.unmap(start, reduction).is_err() {
+                cpu.x[0] = RESULT_INVALID_STATE;
+                return Ok(());
+            }
+        }
+        self.heap_size = size;
+        cpu.x[0] = 0;
+        cpu.x[1] = heap_base;
+        Ok(())
+    }
+
     pub fn dispatch(
         &mut self,
         id: u16,
@@ -635,6 +698,14 @@ impl Kernel {
             return Err(KernelError::ProcessAlreadyExited);
         }
         match id {
+            SVC_SET_HEAP_SIZE => {
+                self.set_heap_size(cpu, memory)?;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_SET_MEMORY_ATTRIBUTE => {
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
             SVC_QUERY_MEMORY => {
                 self.query_memory(cpu, memory)?;
                 Ok(KernelEvent::Continue)
@@ -676,6 +747,63 @@ impl Kernel {
                 self.scheduler
                     .sleep(cpu.x[0] as i64)
                     .map_err(KernelError::Scheduler)?;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_GET_CURRENT_PROCESSOR_NUMBER => {
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_ARBITRATE_LOCK => {
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_ARBITRATE_UNLOCK => {
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC => {
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_SIGNAL_PROCESS_WIDE_KEY => {
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_GET_SYSTEM_TICK => {
+                let ns = self.scheduler.stats().virtual_time_ns;
+                cpu.x[0] = (ns.saturating_mul(192) / 10000).max(ns);
+                Ok(KernelEvent::Continue)
+            }
+            SVC_GET_THREAD_ID => {
+                let out_ptr = cpu.x[0];
+                let thread_handle = cpu.x[1] as u32;
+                let thread_id = if thread_handle == 0xffff_8000
+                    || thread_handle == CURRENT_PROCESS_HANDLE
+                    || thread_handle == MAIN_THREAD_HANDLE as u32
+                {
+                    (self.scheduler.current() as u64) + 1
+                } else {
+                    match self.handles.get(thread_handle) {
+                        Ok(Object::Thread(obj)) => (obj.id as u64) + 1,
+                        _ => 1,
+                    }
+                };
+                if out_ptr != 0 {
+                    if memory.write_u64(out_ptr, thread_id).is_err() {
+                        cpu.x[0] = RESULT_INVALID_ADDRESS;
+                        return Ok(KernelEvent::Continue);
+                    }
+                }
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_BREAK => {
+                let reason = cpu.x[0] as u32;
+                let info1 = cpu.x[1];
+                let info2 = cpu.x[2];
+                let msg = format!("guest svcBreak: reason={reason:#x}, info1={info1:#x}, info2={info2:#x}\n");
+                self.debug_records.push(msg.into_bytes());
+                cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }
             SVC_CANCEL_SYNCHRONIZATION => {
@@ -764,23 +892,33 @@ impl Kernel {
 pub fn homebrew_config() -> Vec<u8> {
     let mut available = [0_u64; 2];
     for id in [
+        SVC_SET_HEAP_SIZE,
+        SVC_SET_MEMORY_ATTRIBUTE,
         SVC_QUERY_MEMORY,
         SVC_EXIT_PROCESS,
         SVC_CREATE_THREAD,
         SVC_START_THREAD,
         SVC_EXIT_THREAD,
         SVC_SLEEP_THREAD,
+        SVC_GET_CURRENT_PROCESSOR_NUMBER,
         SVC_OUTPUT_DEBUG_STRING,
         SVC_CLOSE_HANDLE,
         SVC_CREATE_TRANSFER_MEMORY,
         SVC_CONNECT_TO_NAMED_PORT,
         SVC_SEND_SYNC_REQUEST,
+        SVC_GET_SYSTEM_TICK,
+        SVC_GET_THREAD_ID,
+        SVC_BREAK,
         SVC_CREATE_EVENT,
         SVC_SIGNAL_EVENT,
         SVC_CLEAR_EVENT,
         SVC_RESET_SIGNAL,
         SVC_WAIT_SYNCHRONIZATION,
         SVC_CANCEL_SYNCHRONIZATION,
+        SVC_ARBITRATE_LOCK,
+        SVC_ARBITRATE_UNLOCK,
+        SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC,
+        SVC_SIGNAL_PROCESS_WIDE_KEY,
     ] {
         available[id as usize / 64] |= 1_u64 << (id % 64);
     }

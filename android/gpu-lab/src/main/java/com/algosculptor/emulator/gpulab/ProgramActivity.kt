@@ -91,7 +91,7 @@ class ProgramActivity : Activity() {
                     store.recordLaunch(id)
                     var lastShow = 0L
                     while (!stop.get() && result.optString("state") == "running") {
-                        result = JSONObject(String(NativePrograms.step(1024), Charsets.UTF_8))
+                        result = JSONObject(String(NativePrograms.step(4096), Charsets.UTF_8))
                         if (System.currentTimeMillis() - lastShow > 1600 || result.optString("state") != "running") {
                             show(result); lastShow = System.currentTimeMillis()
                         }

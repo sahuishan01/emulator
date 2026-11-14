@@ -222,3 +222,158 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
     assert!(visited_code);
     assert!(visited_data);
 }
+
+#[test]
+fn set_heap_size_allocates_and_queries_memory_state() {
+    use emulator_kernel::{DEFAULT_HEAP_BASE, RESULT_INVALID_SIZE, SVC_SET_HEAP_SIZE};
+    let mut memory = AddressSpace::default();
+    memory.map(0x1000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
+
+    let mut kernel = Kernel::default();
+    let mut cpu = Cpu::new(0, 0);
+
+    // Initial query at HEAP_BASE -> free (state 0)
+    cpu.x[0] = 0x1000;
+    cpu.x[2] = DEFAULT_HEAP_BASE;
+    assert_eq!(
+        kernel.dispatch(SVC_QUERY_MEMORY, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    let state = memory.read_u32(0x1010).unwrap();
+    assert_eq!(state, 0); // Free unmapped gap
+
+    // Invalid non-page-aligned size
+    cpu.x[1] = 4095;
+    assert_eq!(
+        kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], RESULT_INVALID_SIZE);
+
+    // Allocate 2 MiB heap
+    cpu.x[1] = 0x20_0000;
+    assert_eq!(
+        kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], DEFAULT_HEAP_BASE);
+
+    // Query allocated heap memory
+    cpu.x[0] = 0x1000;
+    cpu.x[2] = DEFAULT_HEAP_BASE + 0x1000;
+    assert_eq!(
+        kernel.dispatch(SVC_QUERY_MEMORY, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    let base = memory.read_u64(0x1000).unwrap();
+    let size = memory.read_u64(0x1008).unwrap();
+    let state = memory.read_u32(0x1010).unwrap();
+    let perm = memory.read_u32(0x1018).unwrap();
+    assert_eq!(base, DEFAULT_HEAP_BASE);
+    assert_eq!(size, 0x20_0000);
+    assert_eq!(state, 0x03); // MemoryState::Normal / Heap
+    assert_eq!(perm, 3); // Read | Write
+
+    // Write to heap
+    assert!(memory.write_u32(DEFAULT_HEAP_BASE, 0x12345678).is_ok());
+    assert_eq!(memory.read_u32(DEFAULT_HEAP_BASE).unwrap(), 0x12345678);
+
+    // Shrink heap to 1 MiB
+    cpu.x[1] = 0x10_0000;
+    assert_eq!(
+        kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], DEFAULT_HEAP_BASE);
+}
+
+#[test]
+fn system_tick_thread_id_futex_and_processor_primitives() {
+    use emulator_kernel::{
+        SVC_ARBITRATE_LOCK, SVC_ARBITRATE_UNLOCK, SVC_BREAK,
+        SVC_GET_CURRENT_PROCESSOR_NUMBER, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID,
+        SVC_SET_MEMORY_ATTRIBUTE, SVC_SIGNAL_PROCESS_WIDE_KEY,
+        SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC,
+    };
+    let mut memory = AddressSpace::default();
+    memory.map(0x1000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
+
+    let mut kernel = Kernel::default();
+    let mut cpu = Cpu::new(0, 0);
+
+    // Current processor number
+    assert_eq!(
+        kernel.dispatch(SVC_GET_CURRENT_PROCESSOR_NUMBER, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+
+    // System tick
+    assert_eq!(
+        kernel.dispatch(SVC_GET_SYSTEM_TICK, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+
+    // Set memory attribute
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 4096;
+    cpu.x[2] = 0;
+    cpu.x[3] = 0;
+    assert_eq!(
+        kernel.dispatch(SVC_SET_MEMORY_ATTRIBUTE, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+
+    // Thread ID
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 0xffff_8000; // current thread
+    assert_eq!(
+        kernel.dispatch(SVC_GET_THREAD_ID, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(memory.read_u64(0x1000).unwrap(), 1);
+
+    // Futex lock / unlock
+    cpu.x[0] = 1;
+    cpu.x[1] = 0x1000;
+    cpu.x[2] = 0;
+    assert_eq!(
+        kernel.dispatch(SVC_ARBITRATE_LOCK, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(
+        kernel.dispatch(SVC_ARBITRATE_UNLOCK, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+
+    // Condition variable wait / signal
+    assert_eq!(
+        kernel.dispatch(SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(
+        kernel.dispatch(SVC_SIGNAL_PROCESS_WIDE_KEY, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+
+    // Break
+    cpu.x[0] = 0x42;
+    cpu.x[1] = 0x100;
+    cpu.x[2] = 0x200;
+    assert_eq!(
+        kernel.dispatch(SVC_BREAK, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert!(kernel.debug_records().iter().any(|r| String::from_utf8_lossy(r).contains("svcBreak")));
+}
