@@ -170,6 +170,28 @@ impl Session {
         Self::from_exefs_with_services(&exefs, service_manager)
     }
 
+    pub fn from_nsp(
+        archive: &[u8],
+        keys: &mut emulator_crypto::keys::KeyFile,
+    ) -> Result<Self, SessionError> {
+        Self::from_nsp_with_services(archive, keys, emulator_services::ServiceManager::default())
+    }
+
+    pub fn from_nsp_with_services(
+        archive: &[u8],
+        keys: &mut emulator_crypto::keys::KeyFile,
+        mut service_manager: emulator_services::ServiceManager,
+    ) -> Result<Self, SessionError> {
+        let nsp = emulator_loader::nsp::NspArchive::parse(archive)
+            .map_err(SessionError::Load)?;
+        let (header, prog_nca) = nsp.open_program(keys).map_err(SessionError::Load)?;
+        if let Ok(romfs) = header.open_romfs(prog_nca, keys) {
+            service_manager.set_romfs(romfs);
+        }
+        let exefs = header.open_exefs(prog_nca, keys).map_err(SessionError::Load)?;
+        Self::from_exefs_with_services(&exefs, service_manager)
+    }
+
     pub fn from_nso_program_with_services(
         program: &NsoProgram,
         service_manager: emulator_services::ServiceManager,

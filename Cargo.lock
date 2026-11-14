@@ -13,6 +13,7 @@ dependencies = [
 name = "emulator-android-ffi"
 version = "0.1.0"
 dependencies = [
+ "emulator-crypto",
  "emulator-gpu",
  "emulator-loader",
  "emulator-memory",

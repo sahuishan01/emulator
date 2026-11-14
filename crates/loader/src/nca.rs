@@ -346,9 +346,10 @@ impl NcaDecryptedHeader {
     }
 }
 
-/// Decrypt the NCA3 0xC00-byte header using six independent 0x200-byte XTS
-/// data units. Nintendo encodes each sector index as a big-endian 128-bit
-/// tweak.
+/// Decrypt or parse the NCA3 0xC00-byte header. If the header is already
+/// plaintext (magic NCA3 at 0x200), it parses directly. Otherwise, it
+/// decrypts using six independent 0x200-byte XTS data units using the
+/// header key.
 pub fn decrypt_nca3_header(
     archive: &[u8],
     keys: &KeyFile,
@@ -356,17 +357,23 @@ pub fn decrypt_nca3_header(
     if archive.len() < NCA_ENCRYPTED_HEADER_SIZE {
         return Err(LoadError::Invalid("NCA3 encrypted header is truncated"));
     }
-    let key = keys.header_key().ok_or(LoadError::Invalid(
-        "NCA3 header key is missing or malformed",
-    ))?;
+
     let mut plaintext = [0; NCA_ENCRYPTED_HEADER_SIZE];
-    plaintext.copy_from_slice(&archive[..NCA_ENCRYPTED_HEADER_SIZE]);
-    for sector_index in 0..NCA_ENCRYPTED_HEADER_SIZE / NCA_MEDIA_UNIT_SIZE as usize {
-        let start = sector_index * NCA_MEDIA_UNIT_SIZE as usize;
-        let end = start + NCA_MEDIA_UNIT_SIZE as usize;
-        let tweak = (sector_index as u128).to_be_bytes();
-        aes128_xts_decrypt(key, tweak, &mut plaintext[start..end])
-            .map_err(|_| LoadError::Invalid("NCA3 XTS sector has an invalid length"))?;
+    if &archive[NCA_MAGIC_OFFSET..NCA_MAGIC_OFFSET + 4] == b"NCA3" {
+        // Header is already plaintext
+        plaintext.copy_from_slice(&archive[..NCA_ENCRYPTED_HEADER_SIZE]);
+    } else {
+        let key = keys.header_key().ok_or(LoadError::Invalid(
+            "NCA3 header key is missing or malformed",
+        ))?;
+        plaintext.copy_from_slice(&archive[..NCA_ENCRYPTED_HEADER_SIZE]);
+        for sector_index in 0..NCA_ENCRYPTED_HEADER_SIZE / NCA_MEDIA_UNIT_SIZE as usize {
+            let start = sector_index * NCA_MEDIA_UNIT_SIZE as usize;
+            let end = start + NCA_MEDIA_UNIT_SIZE as usize;
+            let tweak = (sector_index as u128).to_be_bytes();
+            aes128_xts_decrypt(key, tweak, &mut plaintext[start..end])
+                .map_err(|_| LoadError::Invalid("NCA3 XTS sector has an invalid length"))?;
+        }
     }
 
     let metadata = NcaHeader::parse_decrypted(&plaintext[..NCA_HEADER_SIZE], archive.len() as u64)?;

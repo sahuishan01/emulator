@@ -151,6 +151,22 @@ pub fn aes128_ecb_decrypt(
     Ok(())
 }
 
+/// Encrypt one or more 16-byte blocks using AES-128 in ECB mode.
+pub fn aes128_ecb_encrypt(
+    key: &[u8; 16],
+    data: &mut [u8],
+) -> Result<(), CryptoError> {
+    if data.is_empty() || data.len() % 16 != 0 {
+        return Err(CryptoError::EcbInputMustContainWholeBlocks);
+    }
+    let aes = Aes128::new(key);
+    for chunk in data.chunks_exact_mut(16) {
+        let block: &mut [u8; 16] = chunk.try_into().expect("16-byte block");
+        aes.encrypt_block(block);
+    }
+    Ok(())
+}
+
 /// Transform one XTS data unit using two AES-128 keys and a caller-provided
 /// 128-bit tweak input. Data units must be at least one full block and a
 /// multiple of 16 bytes; ciphertext stealing is intentionally unsupported.

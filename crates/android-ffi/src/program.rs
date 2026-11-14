@@ -109,6 +109,13 @@ pub extern "C" fn emulator_program_inspect_v1() -> EngineReport {
         if p.bytes.len() != p.expected || p.session.is_some() || !p.last.is_empty() {
             return Err("Incomplete or already-started program".into());
         }
+        if p.bytes.starts_with(b"PFS0") {
+            let _nsp = emulator_loader::nsp::NspArchive::parse(&p.bytes).map_err(|e| e.to_string())?;
+            return Ok(format!(
+                "{{\"ok\":true,\"state\":\"ready\",\"format\":\"NSP\",\"fileBytes\":{},\"memoryBytes\":{},\"mode\":\"package\",\"error\":\"\"}}",
+                p.expected, p.expected
+            ));
+        }
         let image = NroImage::parse(&p.bytes).map_err(|e| e.to_string())?;
         let memory: usize = image.segments().iter().map(|s| s.memory_size).sum();
         Ok(format!("{{\"ok\":true,\"state\":\"ready\",\"format\":\"NRO0\",\"fileBytes\":{},\"memoryBytes\":{},\"mode\":{},\"error\":\"\"}}",
@@ -121,7 +128,20 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
         if p.session.is_some() || !p.last.is_empty() || p.bytes.len() != p.expected {
             return Err("Incomplete or already-started program".into());
         }
-        p.session = Some(Session::from_nro(&p.bytes).map_err(|e| e.to_string())?);
+        if p.bytes.starts_with(b"PFS0") {
+            let mut keys = emulator_crypto::keys::KeyFile::default();
+            for pth in ["prod.keys", "/sdcard/switch/prod.keys", "/data/local/tmp/prod.keys"] {
+                if let Ok(data) = std::fs::read(pth) {
+                    if let Ok(kf) = emulator_crypto::keys::KeyFile::parse(&data) {
+                        keys.merge(&kf);
+                        break;
+                    }
+                }
+            }
+            p.session = Some(Session::from_nsp(&p.bytes, &mut keys).map_err(|e| e.to_string())?);
+        } else {
+            p.session = Some(Session::from_nro(&p.bytes).map_err(|e| e.to_string())?);
+        }
         p.bytes = Vec::new();
         Ok(
             "{\"ok\":true,\"state\":\"running\",\"instructions\":0,\"output\":\"\",\"error\":\"\"}"
@@ -275,6 +295,15 @@ mod tests {
         );
         upload(CATCH);
         assert!(text(emulator_program_inspect_v1()).contains("\"mode\":\"catch\""));
+        emulator_program_close_v1();
+
+        // NSP package inspection
+        let mut pfs0 = vec![0u8; 128];
+        pfs0[..4].copy_from_slice(b"PFS0");
+        upload(&pfs0);
+        let nsp_report = text(emulator_program_inspect_v1());
+        assert!(nsp_report.contains("\"format\":\"NSP\""), "{nsp_report}");
+        assert!(nsp_report.contains("\"mode\":\"package\""), "{nsp_report}");
         emulator_program_close_v1();
     }
     #[test]

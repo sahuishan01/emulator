@@ -82,6 +82,14 @@
    - SIMD & FP pair operations: `LDP` / `STP` for S, D, and Q registers with pre/post-indexing.
    - NEON 128-bit vector bitwise logic: `AND`, `BIC`, `ORR`, `ORN`, and `EOR`.
 
+8. **NSP Package Container & Decryption Engine**:
+   - Clean-room NSP (Nintendo Submission Package / PFS0) parser in [`crates/loader/src/nsp.rs`](file:///root/projects/emulator/crates/loader/src/nsp.rs).
+   - Ticket (`.tik`) parser in [`crates/loader/src/ticket.rs`](file:///root/projects/emulator/crates/loader/src/ticket.rs) supporting RSA-2048, RSA-4096, and ECDSA signature types.
+   - Common title key unwrapping via AES-128-ECB decryption using `titlekek` matching master key revision; dynamic key registration into `KeyFile`.
+   - CNMT (`PackagedContentMeta`) parser in [`crates/loader/src/cnmt.rs`](file:///root/projects/emulator/crates/loader/src/cnmt.rs) extracting Content IDs and mapping Program/Control/LegalInformation NCAs from `.cnmt.nca`.
+   - Full package execution via `Session::from_nsp`: ticket import, CNMT program resolution, NCA3 header XTS decryption, ExeFS CTR decryption, RomFS mounting, and guest code execution.
+   - CLI command `run-nsp` in `crates/cli` with `--keys` and `--titlekeys` support. Details: [`docs/nsp-parser.md`](docs/nsp-parser.md).
+
 ---
 
 ## Canonical Pokémon Legends: Z-A Execution Roadmap

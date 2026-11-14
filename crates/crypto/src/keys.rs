@@ -137,8 +137,60 @@ impl KeyFile {
             .map(|key| key.0.as_slice())
     }
 
+    /// Add or update a key by name. Key must be 16 or 32 bytes.
+    pub fn add_key(&mut self, name: &str, key: &[u8]) -> Result<(), KeyFileError> {
+        if key.len() != 16 && key.len() != 32 {
+            return Err(KeyFileError::UnsupportedKeyLength(0));
+        }
+        if name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        {
+            return Err(KeyFileError::InvalidName(0));
+        }
+        self.entries
+            .insert(name.to_ascii_lowercase(), SecretKey(key.to_vec()));
+        Ok(())
+    }
+
+    /// Explicitly register a 16-byte title key under its 16-byte rights ID.
+    pub fn add_title_key(&mut self, rights_id: &[u8; 16], title_key: [u8; 16]) {
+        let id = encode_hex(rights_id);
+        self.entries
+            .insert(format!("titlekey_{id}"), SecretKey(title_key.to_vec()));
+        self.entries
+            .insert(id, SecretKey(title_key.to_vec()));
+    }
+
+    /// Merge all entries from another KeyFile into this one.
+    pub fn merge(&mut self, other: &KeyFile) {
+        for (name, key) in &other.entries {
+            self.entries
+                .insert(name.clone(), SecretKey(key.0.clone()));
+        }
+    }
+
+    /// Number of distinct key entries currently stored.
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Load and parse a key file from disk.
+    pub fn load_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+        let data = std::fs::read(path)?;
+        let key_file = Self::parse(&data)?;
+        Ok(key_file)
+    }
+
     pub fn header_key(&self) -> Option<&[u8; 32]> {
         self.get("header_key")?.try_into().ok()
+    }
+
+    pub fn master_key(&self, generation: u8) -> Option<&[u8; 16]> {
+        let name = format!("master_key_{generation:02x}");
+        self.get(&name)?.try_into().ok()
     }
 
     pub fn key_area_key(&self, area: KeyArea, generation: u8) -> Option<&[u8; 16]> {
