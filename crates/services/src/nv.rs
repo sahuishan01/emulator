@@ -19,6 +19,7 @@ pub(crate) const ZBC_SET_TABLE: u32 = 0x80044703;
 pub(crate) const ZBC_QUERY_TABLE: u32 = 0x80044704;
 pub(crate) const GET_CHARACTERISTICS: u32 = 0x80044705;
 pub(crate) const GET_TPC_MASKS: u32 = 0x80044706;
+pub(crate) const SYNC_INCR: u32 = 0xc0040015;
 #[derive(Clone, Debug)]
 pub struct NvDriver {
     arena: Option<Rc<TransferMemory>>,
@@ -231,7 +232,7 @@ impl NvDriver {
             .push(Box::new(crate::event::EventHandle::new(false)));
         Ok(response)
     }
-    fn control(&self, code: u32, input: &[u8]) -> Result<Vec<u8>, u32> {
+    fn control(&mut self, code: u32, input: &[u8]) -> Result<Vec<u8>, u32> {
         let mut output = input.to_vec();
         match code {
             SYNC_READ => {
@@ -256,6 +257,14 @@ impl NvDriver {
                 }
                 output[12..16].copy_from_slice(&value.to_le_bytes());
             }
+            SYNC_INCR | 0x80040015 => {
+                let id = nvchannel::word(input, 0);
+                let p = self
+                    .syncpoints
+                    .get_mut(id.checked_sub(1).ok_or(BAD_PARAMETER)? as usize)
+                    .ok_or(BAD_PARAMETER)?;
+                *p = p.wrapping_add(1);
+            }
             GET_CHARACTERISTICS => {
                 if output.len() >= 40 {
                     output[0..4].copy_from_slice(&0x120u32.to_le_bytes()); // NVGPU_GPU_ARCH_GM200
@@ -269,13 +278,41 @@ impl NvDriver {
                     output[32..36].copy_from_slice(&0x1_0000u32.to_le_bytes()); // compression_page_size
                     output[36..40].copy_from_slice(&27u32.to_le_bytes()); // pde_coverage_bit_count
                 }
+                if output.len() >= 104 {
+                    output[40..44].copy_from_slice(&0x1_0000u32.to_le_bytes()); // available_big_page_sizes
+                    output[44..48].copy_from_slice(&1u32.to_le_bytes()); // flags
+                    output[48..52].copy_from_slice(&0x902du32.to_le_bytes()); // twod_class (FERMI_TWOD_A)
+                    output[52..56].copy_from_slice(&0xb197u32.to_le_bytes()); // threed_class (MAXWELL_B)
+                    output[56..60].copy_from_slice(&0xb1c0u32.to_le_bytes()); // compute_class (MAXWELL_COMPUTE_B)
+                    output[60..64].copy_from_slice(&0xb06fu32.to_le_bytes()); // gpfifo_class (MAXWELL_CHANNEL_GPFIFO_A)
+                    output[64..68].copy_from_slice(&0xa140u32.to_le_bytes()); // inline_to_memory_class (KEPLER_INLINE_TO_MEMORY_B)
+                    output[68..72].copy_from_slice(&0xb0b5u32.to_le_bytes()); // dma_copy_class (MAXWELL_DMA_COPY_A)
+                    output[72..76].copy_from_slice(&1u32.to_le_bytes()); // max_fbps_count
+                    output[76..80].copy_from_slice(&1u32.to_le_bytes()); // fbp_en_mask
+                    output[80..84].copy_from_slice(&2u32.to_le_bytes()); // max_ltc_per_fbp
+                    output[84..88].copy_from_slice(&1u32.to_le_bytes()); // max_lts_per_ltc
+                    output[88..92].copy_from_slice(&0u32.to_le_bytes()); // max_tex_per_tpc
+                    output[92..96].copy_from_slice(&1u32.to_le_bytes()); // max_gpc_count
+                    output[96..100].copy_from_slice(&1u32.to_le_bytes()); // rop_l2_en_mask_0
+                    output[100..104].copy_from_slice(&0u32.to_le_bytes()); // rop_l2_en_mask_1
+                }
             }
             ZCULL_GET_CTX_SIZE => {
                 if output.len() >= 4 {
                     output[0..4].copy_from_slice(&1u32.to_le_bytes());
                 }
             }
-            ZCULL_GET_INFO | ZBC_SET_TABLE | ZBC_QUERY_TABLE | GET_TPC_MASKS => {}
+            GET_TPC_MASKS | 0x800c4706 | 0xc00c4706 => {
+                if output.len() >= 4 {
+                    output[0..4].copy_from_slice(&0x3u32.to_le_bytes());
+                }
+                if output.len() >= 12 {
+                    output[0..4].copy_from_slice(&4u32.to_le_bytes());
+                    output[4..8].copy_from_slice(&0u32.to_le_bytes());
+                    output[8..12].copy_from_slice(&0x3u32.to_le_bytes());
+                }
+            }
+            ZCULL_GET_INFO | ZBC_SET_TABLE | ZBC_QUERY_TABLE => {}
             _ => return Err(NOT_SUPPORTED),
         }
         Ok(output)
@@ -325,7 +362,7 @@ impl NvDriver {
         if input.len() < 24 {
             return Err(BAD_PARAMETER);
         }
-        if ![2, 3].contains(&nvchannel::word(input, 12)) {
+        if nvchannel::word(input, 12) > 3 {
             return Err(NOT_SUPPORTED);
         }
         if nvchannel::word(input, 12) & 1 != 0 {
@@ -394,12 +431,15 @@ impl NvDriver {
             DeviceObject::Control => match code {
                 SYNC_READ => Some(8),
                 SYNC_WAIT => Some(16),
+                SYNC_INCR | 0x80040015 => Some(4),
                 ZCULL_GET_CTX_SIZE => Some(4),
                 ZCULL_GET_INFO => Some(40),
                 ZBC_SET_TABLE => Some(44),
                 ZBC_QUERY_TABLE => Some(44),
                 GET_CHARACTERISTICS => Some(160),
-                GET_TPC_MASKS => Some(12),
+                GET_TPC_MASKS | 0x800c4706 | 0xc00c4706 => {
+                    Some(if code & 0x3fff_0000 == 0x0004_0000 { 4 } else { 12 })
+                }
                 _ => None,
             },
         };

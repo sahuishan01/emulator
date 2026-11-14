@@ -19,7 +19,22 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.33-dev` (versionCode 73).
+- **Latest Release**: `v0.28.34-dev` (versionCode 74).
+  - **NVIDIA Tegra X1 Maxwell Architecture Discovery & Characteristics**:
+    - Completed full 160-byte `GET_CHARACTERISTICS` ioctl (`0x80044705`) on `/dev/nvhost-ctrl-gpu`: reports GM20B architecture (`arch: 0x120`, `impl: 0x0B`, `rev: 0xA1`), `threed_class` (`0xB197` MAXWELL_B), `compute_class` (`0xB1C0` MAXWELL_COMPUTE_B), `gpfifo_class` (`0xB06F`), `inline_to_memory_class` (`0xA140`), `dma_copy_class` (`0xB0B5` MAXWELL_DMA_COPY_A), big pages (64 KiB), and multi-processor counts. Resolves NVN runtime initialization failure when querying 3D and compute engine classes.
+    - Implemented `GET_TPC_MASKS` (`0x800c4706` / `0x80044706`) returning active TPC bitmask `0x3` (both TPCs active on Tegra X1).
+    - Implemented `SYNCPT_INCR` (`0xc0040015` / `0x80040015`) on `/dev/nvhost-ctrl` for direct guest syncpoint increments.
+  - **Maxwell Compute Class & Flexible GPFIFO Submissions**:
+    - Added `MAXWELL_COMPUTE_B` (`0xB1C0`) constant in `crates/gpu`, supporting compute engine context allocations (`ALLOC_CONTEXT`) and subchannel engine bindings (`EngineState`).
+    - Relaxed GPFIFO submission flags in `nvchannel.rs`: supports flags `0` (none), `1` (wait only), `2` (get only), and `3` (wait + get), with conditional syncpoint advancement strictly when `fence_get` (bit 1) is active.
+  - **Horizon Applet Proxy & System Settings Extensions**:
+    - Aligned `IApplicationProxy::GetSelfController` (command 1) to always deliver `ISelfController` in `moved_objects`, while preserving `user_id = 1u64` in `data` for legacy compatibility.
+    - Extended `set:sys` with `GetColorSetId` (3) returning `BasicBlack` (0) and `GetNotificationVolume` (13) returning `1.0f32`.
+  - **Invariants & Verification**:
+    - Maintained strict 16 KiB page-alignment across `arm64-v8a` and `x86_64` native libraries in APK builds.
+    - Exported and verified all 22 required engine symbols.
+    - 100% pass rate across entire Rust workspace test suite and Android unit/verification tests.
+- **Previous Release**: `v0.28.33-dev` (versionCode 73).
   - **Horizon OS Applet Manager (`appletOE` / `appletAE`) Controller Architecture**:
     - Implemented full clean-room `IApplicationProxy` sub-interface hierarchy (`CommonStateGetter`, `SelfController`, `WindowController`, `AudioController`, `DisplayController`, `LibraryAppletCreator`, `ApplicationFunctions`, `DebugFunctions`), resolving startup crashes when official Nintendo SDK CRT calls `OpenApplicationProxy` (command 200) and attempts to query child controllers.
     - `ICommonStateGetter`: Implemented `GetEventHandle` (0) returning kernel readable event handle, `ReceiveMessage` (1) returning focus change message `0x0F`, `GetOperationMode` (5) returning Handheld (0), `GetPerformanceMode` (6) returning Handheld (0), and `GetCurrentFocusState` (9) returning InFocus (1).

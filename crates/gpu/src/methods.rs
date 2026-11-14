@@ -4,6 +4,7 @@ use crate::{GpuAddressSpace, GpuMemoryError, GpuMemoryRange, GpuVa, MethodWrite}
 use emulator_memory::{Access, BackingRange};
 
 pub const MAXWELL_DMA_COPY_A: u32 = 0xb0b5;
+pub const MAXWELL_COMPUTE_B: u32 = 0xb1c0;
 /// NON_PIPELINED transfer, pitch source/destination, virtual addresses, one line.
 pub const LINEAR_DMA_LAUNCH: u32 = 0x182;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -266,7 +267,7 @@ impl MethodState {
             if offset == 0 {
                 let engine = match write.data {
                     MAXWELL_DMA_COPY_A => EngineState::Dma(DmaRegisters::default()),
-                    crate::MAXWELL_B => {
+                    crate::MAXWELL_B | MAXWELL_COMPUTE_B => {
                         EngineState::Color(crate::clear::ColorRegisters::default(), Box::default())
                     }
                     _ => return Err(ExecutionError::UnsupportedClass(write.data)),

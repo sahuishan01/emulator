@@ -61,7 +61,12 @@ impl Channel {
                 if self.context.is_some() {
                     return Err(8);
                 }
-                if ![MAXWELL_DMA_COPY_A, emulator_gpu::MAXWELL_B].contains(&word(input, 0))
+                if ![
+                    MAXWELL_DMA_COPY_A,
+                    emulator_gpu::MAXWELL_B,
+                    emulator_gpu::MAXWELL_COMPUTE_B,
+                ]
+                .contains(&word(input, 0))
                     || word(input, 4) != 0
                 {
                     return Err(NOT_SUPPORTED);
@@ -109,11 +114,15 @@ impl Channel {
         if count == 0 || count > capacity {
             return Err(BAD_PARAMETER);
         }
-        // Only fence_get and already-satisfied fence_wait are modeled by caller.
-        if ![2, 3].contains(&word(input, 12)) {
+        let flags = word(input, 12);
+        if flags > 3 {
             return Err(NOT_SUPPORTED);
         }
-        let next_value = completed.checked_add(1).ok_or(NO_MEMORY)?;
+        let next_value = if flags & 2 != 0 {
+            completed.checked_add(1).ok_or(NO_MEMORY)?
+        } else {
+            completed
+        };
 
         let entries_bytes: Vec<u8> = if input.len() >= 24 + count * 8 {
             input[24..24 + count * 8].to_vec()

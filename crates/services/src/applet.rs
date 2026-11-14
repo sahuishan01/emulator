@@ -321,20 +321,13 @@ impl Service for ApplicationProxy {
                 moved_objects: vec![Box::new(CommonStateGetter::default())],
                 effect: None,
             }),
-            // GetSelfController (command 1) -> ISelfController
-            1 if request.data.is_empty() => Ok(ServiceReply {
-                result: 0,
-                data: Vec::new(),
-                moved_objects: vec![Box::new(SelfController::default())],
-                effect: None,
-            }),
-            // Legacy GetAppletResourceUserId (command 1 with non-empty or fallback)
+            // GetSelfController (command 1) -> ISelfController (also includes user_id in data for legacy compatibility)
             1 => {
                 let user_id = 1u64;
                 Ok(ServiceReply {
                     result: 0,
                     data: user_id.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
+                    moved_objects: vec![Box::new(SelfController::default())],
                     effect: None,
                 })
             }

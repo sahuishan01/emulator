@@ -20,7 +20,8 @@ pub use address_space::{
     AddressSpaceId, GpuAddressSpace, GpuMemoryError, GpuMemoryRange, MappingId,
 };
 pub use methods::{
-    ExecutionError, ExecutionLimits, ExecutionStats, LINEAR_DMA_LAUNCH, MAXWELL_DMA_COPY_A,
+    ExecutionError, ExecutionLimits, ExecutionStats, LINEAR_DMA_LAUNCH, MAXWELL_COMPUTE_B,
+    MAXWELL_DMA_COPY_A,
 };
 pub use submission::{
     ChannelProcessor, PreparedSubmission, QueueError, QueueLimits, QueueStats, Submission,

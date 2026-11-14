@@ -799,12 +799,65 @@ fn test_nv_ctrl_gpu_and_characteristics() {
         Some((0x6000, 160)),
     ));
     assert!(reply.is_ok());
-    let mut out = [0u8; 40];
+    let mut out = [0u8; 104];
     r.m.read(0x6000, &mut out).unwrap();
     let arch = u32::from_le_bytes(out[0..4].try_into().unwrap());
     let impl_id = u32::from_le_bytes(out[4..8].try_into().unwrap());
+    let threed_class = u32::from_le_bytes(out[52..56].try_into().unwrap());
+    let compute_class = u32::from_le_bytes(out[56..60].try_into().unwrap());
+    let gpfifo_class = u32::from_le_bytes(out[60..64].try_into().unwrap());
+    let dma_copy_class = u32::from_le_bytes(out[68..72].try_into().unwrap());
     assert_eq!(arch, 0x120);
     assert_eq!(impl_id, 0x0b);
+    assert_eq!(threed_class, 0xb197);
+    assert_eq!(compute_class, 0xb1c0);
+    assert_eq!(gpfifo_class, 0xb06f);
+    assert_eq!(dma_copy_class, 0xb0b5);
+
+    // Test GET_TPC_MASKS
+    let tpc_code = 0x800c4706u32;
+    r.m.write(0x6000, &[0u8; 12]).unwrap();
+    let tpc_reply = r.call(&message(
+        1,
+        &[ctrl_fd, tpc_code],
+        None,
+        Some((0x6000, 12)),
+    ));
+    assert!(tpc_reply.is_ok());
+    let mut tpc_out = [0u8; 12];
+    r.m.read(0x6000, &mut tpc_out).unwrap();
+    let mask = u32::from_le_bytes(tpc_out[8..12].try_into().unwrap());
+    assert_eq!(mask, 0x3);
+
+    // Open channel to allocate syncpoint 1
+    let (gpu_fd, res) = r.open_device(b"/dev/nvhost-gpu", 0);
+    assert_eq!(res, 0);
+    assert!(gpu_fd > 0);
+
+    // Test /dev/nvhost-ctrl SYNC_INCR
+    let (ctrl_sync_fd, res) = r.open_device(b"/dev/nvhost-ctrl", 0);
+    assert_eq!(res, 0);
+    assert!(ctrl_sync_fd > 0);
+    let sync_read_code = 0xc0080014u32;
+    let sync_incr_code = 0xc0040015u32;
+
+    // Read initial syncpoint 1 value
+    r.m.write(0x6000, &[1u8, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    r.call(&message(1, &[ctrl_sync_fd, sync_read_code], Some((0x6000, 8)), Some((0x6000, 8)))).unwrap();
+    let mut sync_buf = [0u8; 8];
+    r.m.read(0x6000, &mut sync_buf).unwrap();
+    let val_before = u32::from_le_bytes(sync_buf[4..8].try_into().unwrap());
+
+    // Increment syncpoint 1
+    r.m.write(0x6000, &[1u8, 0, 0, 0]).unwrap();
+    r.call(&message(1, &[ctrl_sync_fd, sync_incr_code], Some((0x6000, 4)), Some((0x6000, 4)))).unwrap();
+
+    // Read new syncpoint 1 value
+    r.m.write(0x6000, &[1u8, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    r.call(&message(1, &[ctrl_sync_fd, sync_read_code], Some((0x6000, 8)), Some((0x6000, 8)))).unwrap();
+    r.m.read(0x6000, &mut sync_buf).unwrap();
+    let val_after = u32::from_le_bytes(sync_buf[4..8].try_into().unwrap());
+    assert_eq!(val_after, val_before + 1);
 }
 
 #[test]

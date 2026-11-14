@@ -307,6 +307,12 @@ fn test_applet_subcontrollers_and_extended_services() {
     let nickname = setsys.dispatch(&request(11, &[], None)).unwrap();
     assert_eq!(&nickname.data[..6], b"Switch");
 
+    let theme = setsys.dispatch(&request(3, &[], None)).unwrap();
+    assert_eq!(u32::from_le_bytes(theme.data.try_into().unwrap()), 0); // BasicBlack
+
+    let notif = setsys.dispatch(&request(13, &[], None)).unwrap();
+    assert_eq!(f32::from_le_bytes(notif.data.try_into().unwrap()), 1.0);
+
     let fw = setsys.dispatch(&request(14, &[], None)).unwrap();
     assert_eq!(fw.data[0], 18);
     assert_eq!(fw.data[1], 1);
@@ -370,6 +376,7 @@ fn test_applet_subcontrollers_and_extended_services() {
     // 2. GetSelfController (command 1)
     let mut sc_reply = proxy.dispatch(&request(1, &[], None)).unwrap();
     assert_eq!(sc_reply.result, 0);
+    assert_eq!(u64::from_le_bytes(sc_reply.data.try_into().unwrap()), 1);
     let mut sc = sc_reply.moved_objects.remove(0);
 
     assert_eq!(sc.dispatch(&request(0, &[], None)).unwrap().result, 0);

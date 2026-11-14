@@ -45,6 +45,15 @@ impl Service for SetSysService {
                     effect: None,
                 })
             }
+            // GetColorSetId: 0 = BasicBlack (Dark Theme), 1 = BasicWhite
+            3 => {
+                Ok(ServiceReply {
+                    result: 0,
+                    data: 0u32.to_le_bytes().to_vec(),
+                    moved_objects: Vec::new(),
+                    effect: None,
+                })
+            }
             // GetPrimaryAlbumStorage: 1 = SdCard
             5 => {
                 Ok(ServiceReply {
@@ -70,6 +79,16 @@ impl Service for SetSysService {
                 Ok(ServiceReply {
                     result: 0,
                     data: name,
+                    moved_objects: Vec::new(),
+                    effect: None,
+                })
+            }
+            // GetNotificationVolume: returns 1.0f32
+            13 => {
+                let vol = 1.0f32;
+                Ok(ServiceReply {
+                    result: 0,
+                    data: vol.to_le_bytes().to_vec(),
                     moved_objects: Vec::new(),
                     effect: None,
                 })
