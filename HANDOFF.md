@@ -19,7 +19,15 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.29-dev` (versionCode 69).
+- **Latest Release**: `v0.28.30-dev` (versionCode 70).
+  - **Horizon OS Futex Arbitration & Condvar Signaling Fixes**:
+    - Fixed critical ABI register mapping in `SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC` (0x1C): aligned X0 (`mutex_addr`), X1 (`key_addr`), X2 (`tag`), and X3 (`timeout_ns`), eliminating inverted queue lookups that previously prevented `SignalProcessWideKey` from matching and waking condition variable waiters.
+    - Enhanced `SVC_SIGNAL_PROCESS_WIDE_KEY` (0x1D) with proper mutex requeue semantics: when signaling condition variables, threads waiting on contested mutexes are requeued to the mutex FIFO queue with the contention flag (`0x4000_0000`) set, or granted immediate ownership if the mutex is unheld.
+    - Updated `Waiter` and `FutexArbitrator` in `crates/kernel/src/sync.rs` with `tag: u32` preservation, ensuring correct owner thread tags are written to guest memory on `SVC_ARBITRATE_UNLOCK` and wake events.
+    - Added dedicated test `test_condvar_wait_signal_requeue_cycle` in `crates/kernel/tests/svc.rs` validating multi-thread condvar wait, signal, mutex requeue, and ownership handover.
+  - **Single-Region Fast-Path Memory Access**:
+    - Added fast paths in `crates/memory/src/lib.rs` for `AddressSpace::read` and `AddressSpace::write` for single-region spans, avoiding iterator allocations and slicing overhead on every guest load/store.
+- **Previous Release**: `v0.28.29-dev` (versionCode 69).
   - **Primed Dark Vulkan Presentation & Frame-Aware Boot Viewport**:
     - Eliminated uninitialized white screen on surface attachment by implementing `clear_initial_frame()` in `LiveRenderer` (`gpu_lab.cpp`), immediately acquiring, clearing to solid `#0a0e14` OLED black, and presenting an initial frame upon swapchain creation.
     - Implemented Android surface extent fallback query using `ANativeWindow_getWidth` / `ANativeWindow_getHeight` when `caps.currentExtent` returns `UINT32_MAX`, clamping dimensions to device-supported image extents and avoiding initialization panics.

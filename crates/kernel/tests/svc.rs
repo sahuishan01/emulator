@@ -360,9 +360,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     assert_eq!(memory.read_u32(0x1000).unwrap(), 0); // unlocked
 
     // Condition variable wait (timeout 0) / signal
-    cpu.x[0] = 0x2000; // key_addr
-    cpu.x[1] = 0x1000; // mutex_addr
-    cpu.x[2] = 1;      // thread_handle
+    cpu.x[0] = 0x1000; // mutex_addr
+    cpu.x[1] = 0x2000; // key_addr
+    cpu.x[2] = 1;      // thread_handle / tag
     cpu.x[3] = 0;      // timeout_ns = 0 -> immediate timeout
     assert_eq!(
         kernel.dispatch(SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC, &mut cpu, &mut memory).unwrap(),
@@ -388,4 +388,95 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     );
     assert_eq!(cpu.x[0], 0);
     assert!(kernel.debug_records().iter().any(|r| String::from_utf8_lossy(r).contains("svcBreak")));
+}
+
+#[test]
+fn test_condvar_wait_signal_requeue_cycle() {
+    let mut memory = AddressSpace::default();
+    memory.map(0x1000, vec![0; 4096], Permissions::READ_EXECUTE).unwrap();
+    memory.map(0x4000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
+    let mut kernel = Kernel::default();
+    let mut cpu0 = Cpu::new(0x1000, 0x5000);
+
+    // Create a second thread
+    cpu0.x[1] = 0x1000; // entry
+    cpu0.x[2] = 42; // arg
+    cpu0.x[3] = 0x5000; // stack
+    cpu0.x[4] = 44; // priority (same as main)
+    cpu0.x[5] = 0; // core
+    assert_eq!(
+        kernel.dispatch(emulator_kernel::SVC_CREATE_THREAD, &mut cpu0, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    let child_handle = cpu0.x[1] as u32;
+    cpu0.x[0] = child_handle as u64;
+    assert_eq!(
+        kernel.dispatch(emulator_kernel::SVC_START_THREAD, &mut cpu0, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+
+    // Thread 0 locks mutex at 0x4000
+    cpu0.x[0] = 1; // owner tag
+    cpu0.x[1] = 0x4000; // mutex_addr
+    cpu0.x[2] = 1; // tag
+    assert_eq!(
+        kernel.dispatch(emulator_kernel::SVC_ARBITRATE_LOCK, &mut cpu0, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(memory.read_u32(0x4000).unwrap(), 1);
+
+    // Thread 0 waits on condvar at 0x4010 releasing mutex at 0x4000
+    cpu0.x[0] = 0x4000; // mutex_addr
+    cpu0.x[1] = 0x4010; // key_addr
+    cpu0.x[2] = 1; // tag
+    cpu0.x[3] = u64::MAX; // -1 (infinite timeout)
+    assert_eq!(
+        kernel.dispatch(emulator_kernel::SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC, &mut cpu0, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    // Mutex should now be unlocked (0)
+    assert_eq!(memory.read_u32(0x4000).unwrap(), 0);
+
+    // Thread 0 is blocked waiting on condvar, so scheduler runs Thread 1
+    let mut cpu1 = Cpu::default();
+    assert_eq!(kernel.prepare_execution(&mut cpu1), emulator_kernel::ScheduleOutcome::Ready);
+    assert_eq!(kernel.current_thread_id(), 1);
+
+    // Thread 1 locks mutex at 0x4000
+    cpu1.x[0] = 2; // owner tag
+    cpu1.x[1] = 0x4000; // mutex_addr
+    cpu1.x[2] = 2; // tag
+    assert_eq!(
+        kernel.dispatch(emulator_kernel::SVC_ARBITRATE_LOCK, &mut cpu1, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(memory.read_u32(0x4000).unwrap(), 2);
+
+    // Thread 1 signals condvar at 0x4010
+    // Since mutex 0x4000 is held by Thread 1 (tag 2), Thread 0 should be requeued to mutex 0x4000
+    // and mutex 0x4000 should get the waiter flag (0x4000_0000)
+    cpu1.x[0] = 0x4010;
+    cpu1.x[1] = 1; // wake 1
+    assert_eq!(
+        kernel.dispatch(emulator_kernel::SVC_SIGNAL_PROCESS_WIDE_KEY, &mut cpu1, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(memory.read_u32(0x4000).unwrap(), 2 | 0x4000_0000);
+
+    // Thread 1 unlocks mutex at 0x4000
+    // Thread 0 should be unblocked and assigned ownership of mutex 0x4000!
+    cpu1.x[0] = 0x4000;
+    assert_eq!(
+        kernel.dispatch(emulator_kernel::SVC_ARBITRATE_UNLOCK, &mut cpu1, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(memory.read_u32(0x4000).unwrap(), 1); // Mutex owned by Thread 0
+
+    // Switch to Thread 0
+    // Thread 1 yields or quantum exhausted
+    for _ in 0..64 {
+        kernel.instruction_completed().unwrap();
+    }
+    assert_eq!(kernel.prepare_execution(&mut cpu0), emulator_kernel::ScheduleOutcome::Ready);
+    assert_eq!(kernel.current_thread_id(), 0);
 }

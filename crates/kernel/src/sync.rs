@@ -7,6 +7,7 @@ use std::rc::Rc;
 #[derive(Clone, Debug)]
 pub struct Waiter {
     pub thread_index: usize,
+    pub tag: u32,
     pub ticket: u64,
     pub signal: Rc<Cell<bool>>,
     pub mutex_addr: u64,
@@ -23,6 +24,7 @@ impl FutexArbitrator {
     pub fn wait_condition(
         &mut self,
         thread_index: usize,
+        tag: u32,
         key_addr: u64,
         mutex_addr: u64,
     ) -> (Rc<Cell<bool>>, u64) {
@@ -31,6 +33,7 @@ impl FutexArbitrator {
         let signal = Rc::new(Cell::new(false));
         let waiter = Waiter {
             thread_index,
+            tag,
             ticket,
             signal: Rc::clone(&signal),
             mutex_addr,
@@ -42,8 +45,8 @@ impl FutexArbitrator {
         (signal, ticket)
     }
 
-    pub fn signal_condition(&mut self, key_addr: u64, count: i32) -> usize {
-        let mut woken = 0;
+    pub fn signal_condition(&mut self, key_addr: u64, count: i32) -> Vec<Waiter> {
+        let mut woken = Vec::new();
         if let Some(queue) = self.condvar_queues.get_mut(&key_addr) {
             let to_wake = if count <= 0 {
                 queue.len()
@@ -52,8 +55,7 @@ impl FutexArbitrator {
             };
             for _ in 0..to_wake {
                 if let Some(waiter) = queue.pop_front() {
-                    waiter.signal.set(true);
-                    woken += 1;
+                    woken.push(waiter);
                 }
             }
             if queue.is_empty() {
@@ -63,9 +65,17 @@ impl FutexArbitrator {
         woken
     }
 
+    pub fn requeue_to_mutex(&mut self, waiter: Waiter) {
+        self.mutex_queues
+            .entry(waiter.mutex_addr)
+            .or_default()
+            .push_back(waiter);
+    }
+
     pub fn lock_mutex(
         &mut self,
         thread_index: usize,
+        tag: u32,
         mutex_addr: u64,
     ) -> (Rc<Cell<bool>>, u64) {
         let ticket = self.next_ticket;
@@ -73,6 +83,7 @@ impl FutexArbitrator {
         let signal = Rc::new(Cell::new(false));
         let waiter = Waiter {
             thread_index,
+            tag,
             ticket,
             signal: Rc::clone(&signal),
             mutex_addr,

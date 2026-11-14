@@ -707,6 +707,23 @@ impl AddressSpace {
         output: &mut [u8],
         access: Access,
     ) -> Result<(), MemoryError> {
+        let end = checked_end(address, output.len())?;
+        for region in &self.regions {
+            if region.start <= address && end <= region.end {
+                if !region.effective_permissions().allows(access) {
+                    return Err(MemoryError::PermissionDenied { address, access });
+                }
+                if let Some(ref bytes) = region.bytes {
+                    let offset = (address - region.start) as usize;
+                    bytes.read(offset, output);
+                    return Ok(());
+                }
+                break;
+            }
+            if region.start > address {
+                break;
+            }
+        }
         let spans = self.covered(address, output.len(), Some(access))?;
         let mut written = 0;
         for (index, offset, size) in spans {
@@ -723,6 +740,26 @@ impl AddressSpace {
     pub fn write(&mut self, address: u64, input: &[u8]) -> Result<(), MemoryError> {
         if input.is_empty() {
             return Ok(());
+        }
+        let end = checked_end(address, input.len())?;
+        for region in &mut self.regions {
+            if region.start <= address && end <= region.end {
+                if !region.effective_permissions().allows(Access::Write) {
+                    return Err(MemoryError::PermissionDenied {
+                        address,
+                        access: Access::Write,
+                    });
+                }
+                if let Some(ref mut bytes) = region.bytes {
+                    let offset = (address - region.start) as usize;
+                    bytes.write(offset, input);
+                    return Ok(());
+                }
+                break;
+            }
+            if region.start > address {
+                break;
+            }
         }
         let spans = self.covered(address, input.len(), Some(Access::Write))?;
         let mut consumed = 0;
