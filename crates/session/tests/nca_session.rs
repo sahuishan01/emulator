@@ -1,7 +1,8 @@
 use emulator_crypto::keys::KeyFile;
 use emulator_crypto::sha256::Sha256;
 use emulator_loader::nca::{
-    NcaFsType, NcaHashType, NCA_ENCRYPTED_HEADER_SIZE, NCA_FS_HEADER_SIZE, NCA_HEADER_SIZE,
+    NcaEncryptionType, NcaFsType, NcaHashType, NCA_ENCRYPTED_HEADER_SIZE, NCA_FS_HEADER_SIZE,
+    NCA_HEADER_SIZE,
 };
 use emulator_loader::romfs::build_romfs_image;
 use emulator_session::{RunOutcome, Session};
@@ -170,13 +171,13 @@ fn test_session_from_nca_execution_and_lifecycle() {
     fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes()); // version
     fs_headers[0][2] = NcaFsType::PartitionFs as u8;
     fs_headers[0][3] = NcaHashType::Auto as u8;
-    fs_headers[0][4] = 2; // Encryption None
+    fs_headers[0][4] = NcaEncryptionType::None as u8;
 
     // FS Header 1: RomFS
     fs_headers[1][0..2].copy_from_slice(&2u16.to_le_bytes());
     fs_headers[1][2] = NcaFsType::RomFs as u8;
     fs_headers[1][3] = NcaHashType::Auto as u8;
-    fs_headers[1][4] = 2; // Encryption None
+    fs_headers[1][4] = NcaEncryptionType::None as u8;
 
     let hash0 = Sha256::digest(&fs_headers[0]);
     let hash1 = Sha256::digest(&fs_headers[1]);

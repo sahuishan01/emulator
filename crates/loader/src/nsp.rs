@@ -207,6 +207,7 @@ impl<'a> NspArchive<'a> {
         // Fallback: scan all .nca files in the NSP
         let mut header_decrypt_failed = false;
         let mut found_non_program = false;
+        let mut last_header_error: Option<LoadError> = None;
         for file in &nca_files {
             if let Some(data) = self.pfs0.get_file(&file.name) {
                 match decrypt_nca3_header(data, keys) {
@@ -217,8 +218,9 @@ impl<'a> NspArchive<'a> {
                             found_non_program = true;
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
                         header_decrypt_failed = true;
+                        last_header_error = Some(e);
                     }
                 }
             }
@@ -231,9 +233,17 @@ impl<'a> NspArchive<'a> {
         }
 
         if header_decrypt_failed {
-            return Err(LoadError::Invalid(
-                "NSP archive contains NCA files but header decryption failed (NCA3 magic missing). Verify your prod.keys header_key or check if the ROM file is corrupted.",
-            ));
+            let detail = match &last_header_error {
+                Some(LoadError::Invalid(msg)) if *msg == "NCA3 magic is missing" => "NCA3 magic missing",
+                Some(LoadError::Invalid(msg)) => *msg,
+                _ => "decryption error",
+            };
+            return Err(LoadError::Invalid(Box::leak(
+                format!(
+                    "NSP archive contains NCA files but header decryption failed ({detail}). Verify your prod.keys header_key or check if the ROM file is corrupted."
+                )
+                .into_boxed_str(),
+            )));
         }
 
         if found_non_program {

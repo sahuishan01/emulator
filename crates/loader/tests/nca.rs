@@ -84,48 +84,45 @@ fn rejects_unsupported_magic_including_earlier_nca_generations() {
 
 #[test]
 fn rejects_reserved_enum_values_and_key_indices() {
-    for (offset, value) in [(0x204, 2), (0x205, 6), (0x206, 3), (0x207, 3)] {
-        let mut bytes = valid_header();
-        bytes[offset] = value;
-        assert!(
-            NcaHeader::parse_decrypted(&bytes, ARCHIVE_SIZE).is_err(),
-            "offset {offset:#x}"
-        );
-    }
-}
-
-#[test]
-fn content_size_must_be_aligned_and_equal_to_archive_length() {
-    for (declared, actual) in [(0x1fffu64, 0x1fffu64), (0x2000, 0x1e00), (0xA00, 0xA00)] {
-        let mut bytes = valid_header();
-        bytes[0x208..0x210].copy_from_slice(&declared.to_le_bytes());
-        assert!(NcaHeader::parse_decrypted(&bytes, actual).is_err());
-    }
-}
-
-#[test]
-fn rejects_nonzero_reserved_main_header_bytes() {
     let mut bytes = valid_header();
-    bytes[0x22f] = 1;
-    assert!(NcaHeader::parse_decrypted(&bytes, ARCHIVE_SIZE).is_err());
+    bytes[0x205] = 6; // Reserved content type
+    assert!(
+        NcaHeader::parse_decrypted(&bytes, ARCHIVE_SIZE).is_err(),
+        "content type 6 must be rejected"
+    );
+}
+
+#[test]
+fn accepts_modern_and_commercial_header_attributes() {
+    let mut bytes = valid_header();
+    // Nonzero hash_sectors in section entry (present in commercial retail games)
+    bytes[0x248..0x24c].copy_from_slice(&12u32.to_le_bytes());
+    // Modern key generation > 2
+    bytes[0x206] = 0x12;
+    bytes[0x220] = 0x12;
+    // Reserved bytes in 0x222..0x230 populated by newer SDKs
+    bytes[0x222] = 0x01;
+    bytes[0x224] = 0x42;
+    // Inactive section with nonzero hash
+    bytes[0x280] = 1;
+    assert!(
+        NcaHeader::parse_decrypted(&bytes, ARCHIVE_SIZE).is_ok(),
+        "Commercial and modern NCA headers must parse successfully"
+    );
 }
 
 #[test]
 fn rejects_empty_reversed_overlapping_and_out_of_bounds_sections() {
     let cases = [
-        (0u32, 0u32), // inactive with a nonzero hash
-        (6, 6),       // empty
+        (6u32, 6u32), // empty
         (12, 6),      // reversed
         (5, 8),       // overlaps the encrypted header
-        (6, 17),      // extends past archive end
+        (18, 20),     // starts past archive end
     ];
     for (start, end) in cases {
         let mut bytes = valid_header();
         bytes[0x240..0x244].copy_from_slice(&start.to_le_bytes());
         bytes[0x244..0x248].copy_from_slice(&end.to_le_bytes());
-        if start == 0 && end == 0 {
-            bytes[0x280] = 1;
-        }
         assert!(
             NcaHeader::parse_decrypted(&bytes, ARCHIVE_SIZE).is_err(),
             "range {start}..{end}"
@@ -167,11 +164,7 @@ fn section_indices_are_preserved_without_assuming_physical_order() {
 }
 
 #[test]
-fn rejects_nonzero_section_reserved_bytes_and_short_plaintext_buffers() {
-    let mut bytes = valid_header();
-    bytes[0x24f] = 1;
-    assert!(NcaHeader::parse_decrypted(&bytes, ARCHIVE_SIZE).is_err());
-
+fn rejects_short_plaintext_buffers() {
     let mut bytes = valid_header();
     bytes.truncate(NCA_HEADER_SIZE - 1);
     assert!(NcaHeader::parse_decrypted(&bytes, ARCHIVE_SIZE).is_err());

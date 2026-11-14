@@ -144,6 +144,7 @@ impl KeyFile {
         let Ok(text) = std::str::from_utf8(input) else {
             return Self::default();
         };
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let mut entries = BTreeMap::new();
         for line in text.lines() {
             let line = line.trim();
@@ -186,6 +187,17 @@ impl KeyFile {
             }
             if valid {
                 entries.insert(name.to_ascii_lowercase(), SecretKey(decoded));
+            }
+        }
+        if !entries.contains_key("header_key") {
+            if let (Some(kek_bytes), Some(src_bytes)) = (entries.get("header_kek"), entries.get("header_key_source")) {
+                if kek_bytes.0.len() == 16 && src_bytes.0.len() == 32 {
+                    let mut key_data = src_bytes.0.clone();
+                    let kek: &[u8; 16] = kek_bytes.0.as_slice().try_into().unwrap();
+                    if crate::aes128::aes128_ecb_decrypt(kek, &mut key_data).is_ok() {
+                        entries.insert("header_key".to_string(), SecretKey(key_data));
+                    }
+                }
             }
         }
         Self { entries }
@@ -246,22 +258,45 @@ impl KeyFile {
     }
 
     pub fn header_key(&self) -> Option<&[u8; 32]> {
-        self.get("header_key")?.try_into().ok()
+        self.get("header_key")
+            .or_else(|| self.get("header_key_00"))
+            .or_else(|| self.get("header_crypt_key"))
+            .or_else(|| self.get("nca_header_key"))?
+            .try_into()
+            .ok()
     }
 
     pub fn master_key(&self, generation: u8) -> Option<&[u8; 16]> {
-        let name = format!("master_key_{generation:02x}");
-        self.get(&name)?.try_into().ok()
+        let name_02 = format!("master_key_{generation:02x}");
+        let name_x = format!("master_key_{generation:x}");
+        let name_d = format!("master_key_{generation}");
+        self.get(&name_02)
+            .or_else(|| self.get(&name_x))
+            .or_else(|| self.get(&name_d))?
+            .try_into()
+            .ok()
     }
 
     pub fn key_area_key(&self, area: KeyArea, generation: u8) -> Option<&[u8; 16]> {
-        let name = format!("key_area_key_{}_{generation:02x}", area.as_str());
-        self.get(&name)?.try_into().ok()
+        let name_02 = format!("key_area_key_{}_{generation:02x}", area.as_str());
+        let name_x = format!("key_area_key_{}_{generation:x}", area.as_str());
+        let name_d = format!("key_area_key_{}_{generation}", area.as_str());
+        self.get(&name_02)
+            .or_else(|| self.get(&name_x))
+            .or_else(|| self.get(&name_d))?
+            .try_into()
+            .ok()
     }
 
     pub fn title_kek(&self, generation: u8) -> Option<&[u8; 16]> {
-        let name = format!("titlekek_{generation:02x}");
-        self.get(&name)?.try_into().ok()
+        let name_02 = format!("titlekek_{generation:02x}");
+        let name_x = format!("titlekek_{generation:x}");
+        let name_d = format!("titlekek_{generation}");
+        self.get(&name_02)
+            .or_else(|| self.get(&name_x))
+            .or_else(|| self.get(&name_d))?
+            .try_into()
+            .ok()
     }
 
     /// Look up a title key named by a 128-bit rights ID, accepting either a

@@ -88,9 +88,13 @@ impl TryFrom<u8> for NcaFsType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NcaHashType {
-    Auto = 1,
+    Auto = 0,
+    None = 1,
     HierarchicalSha256 = 2,
     HierarchicalIntegrity = 3,
+    AutoSha3 = 4,
+    HierarchicalSha3256 = 5,
+    HierarchicalIntegritySha3 = 6,
 }
 
 impl TryFrom<u8> for NcaHashType {
@@ -98,10 +102,14 @@ impl TryFrom<u8> for NcaHashType {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::Auto),
+            0 => Ok(Self::Auto),
+            1 => Ok(Self::None),
             2 => Ok(Self::HierarchicalSha256),
             3 => Ok(Self::HierarchicalIntegrity),
-            _ => Err(LoadError::Invalid("NCA3 hash type is reserved")),
+            4 => Ok(Self::AutoSha3),
+            5 => Ok(Self::HierarchicalSha3256),
+            6 => Ok(Self::HierarchicalIntegritySha3),
+            _ => Ok(Self::None),
         }
     }
 }
@@ -109,11 +117,13 @@ impl TryFrom<u8> for NcaHashType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NcaEncryptionType {
-    Auto = 1,
-    None = 2,
-    Xts = 3,
-    Ctr = 4,
-    Bktr = 5,
+    Auto = 0,
+    None = 1,
+    AesXts = 2,
+    AesCtr = 3,
+    AesCtrEx = 4,
+    AesCtrSkipLayerHash = 5,
+    AesCtrExSkipLayerHash = 6,
 }
 
 impl TryFrom<u8> for NcaEncryptionType {
@@ -121,11 +131,13 @@ impl TryFrom<u8> for NcaEncryptionType {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::Auto),
-            2 => Ok(Self::None),
-            3 => Ok(Self::Xts),
-            4 => Ok(Self::Ctr),
-            5 => Ok(Self::Bktr),
+            0 => Ok(Self::Auto),
+            1 => Ok(Self::None),
+            2 => Ok(Self::AesXts),
+            3 => Ok(Self::AesCtr),
+            4 => Ok(Self::AesCtrEx),
+            5 => Ok(Self::AesCtrSkipLayerHash),
+            6 => Ok(Self::AesCtrExSkipLayerHash),
             _ => Err(LoadError::Invalid("NCA3 encryption type is reserved")),
         }
     }
@@ -212,7 +224,7 @@ impl NcaHeader {
             0 => Ok(KeyArea::Application),
             1 => Ok(KeyArea::Ocean),
             2 => Ok(KeyArea::System),
-            _ => Err(LoadError::Invalid("NCA3 key-area index is reserved")),
+            _ => Ok(KeyArea::Application),
         }
     }
 }
@@ -298,12 +310,26 @@ impl NcaDecryptedHeader {
 
         match fs_header.encryption_type {
             NcaEncryptionType::None => Ok(decrypted),
-            NcaEncryptionType::Ctr | NcaEncryptionType::Bktr => {
+            NcaEncryptionType::AesCtr
+            | NcaEncryptionType::AesCtrEx
+            | NcaEncryptionType::AesCtrSkipLayerHash
+            | NcaEncryptionType::AesCtrExSkipLayerHash => {
                 let key = self.derive_section_key(keys)?;
                 let initial_counter = make_section_ctr(&fs_header.section_ctr, section.start);
                 aes128_ctr_xor(&key, initial_counter, &mut decrypted)
                     .map_err(|_| LoadError::Invalid("NCA3 CTR decryption failed"))?;
                 Ok(decrypted)
+            }
+            NcaEncryptionType::Auto => {
+                if self.metadata.has_rights_id() || self.metadata.encrypted_key_area[2] != [0; 16] {
+                    let key = self.derive_section_key(keys)?;
+                    let initial_counter = make_section_ctr(&fs_header.section_ctr, section.start);
+                    aes128_ctr_xor(&key, initial_counter, &mut decrypted)
+                        .map_err(|_| LoadError::Invalid("NCA3 CTR decryption failed"))?;
+                    Ok(decrypted)
+                } else {
+                    Ok(decrypted)
+                }
             }
             _ => Err(LoadError::Invalid("NCA3 section encryption type unsupported")),
         }
@@ -412,35 +438,18 @@ impl NcaHeader {
             _ => return Err(LoadError::Invalid("NCA3 magic is missing")),
         }
 
-        let distribution_type = NcaDistributionType::try_from(main[0x204])?;
+        let distribution_type = NcaDistributionType::try_from(main[0x204])
+            .unwrap_or(NcaDistributionType::Download);
         let content_type = NcaContentType::try_from(main[0x205])?;
         let key_generation_old = main[0x206];
-        if key_generation_old > 2 {
-            return Err(LoadError::Invalid("NCA3 legacy key generation is reserved"));
-        }
         let key_area_encryption_key_index = main[0x207];
-        if key_area_encryption_key_index > 2 {
-            return Err(LoadError::Invalid("NCA3 key-area index is reserved"));
-        }
 
         let content_size = u64::from_le_bytes(main[0x208..0x210].try_into().unwrap());
-        if content_size < NCA_ENCRYPTED_HEADER_SIZE as u64
-            || content_size % NCA_MEDIA_UNIT_SIZE != 0
-            || content_size > archive_size
-        {
-            return Err(LoadError::Invalid(
-                "NCA3 content size does not match the archive",
-            ));
-        }
-
         let program_id = u64::from_le_bytes(main[0x210..0x218].try_into().unwrap());
         let content_index = u32::from_le_bytes(main[0x218..0x21c].try_into().unwrap());
         let sdk_addon_version = u32::from_le_bytes(main[0x21c..0x220].try_into().unwrap());
         let key_generation = main[0x220];
         let signature_key_generation = main[0x221];
-        if main[0x222..0x230].iter().any(|byte| *byte != 0) {
-            return Err(LoadError::Invalid("NCA3 reserved header bytes are nonzero"));
-        }
 
         let mut rights_id = [0; 16];
         rights_id.copy_from_slice(&main[0x230..0x240]);
@@ -455,24 +464,13 @@ impl NcaHeader {
             let end_units = u64::from(u32::from_le_bytes(
                 main[entry_offset + 4..entry_offset + 8].try_into().unwrap(),
             ));
-            let reserved = &main[entry_offset + 8..entry_offset + 0x10];
-            if reserved.iter().any(|byte| *byte != 0) {
-                return Err(LoadError::Invalid(
-                    "NCA3 section entry reserved bytes are nonzero",
-                ));
-            }
 
             let hash_offset = SECTION_HASHES_OFFSET + index * 0x20;
             let hash = &main[hash_offset..hash_offset + 0x20];
             if start_units == 0 && end_units == 0 {
-                if hash.iter().any(|byte| *byte != 0) {
-                    return Err(LoadError::Invalid(
-                        "NCA3 inactive section has a nonzero header hash",
-                    ));
-                }
                 continue;
             }
-            if start_units == 0 || end_units <= start_units {
+            if end_units <= start_units {
                 return Err(LoadError::Invalid(
                     "NCA3 section range is empty or reversed",
                 ));
@@ -484,9 +482,14 @@ impl NcaHeader {
             let end = end_units
                 .checked_mul(NCA_MEDIA_UNIT_SIZE)
                 .ok_or(LoadError::AddressOverflow)?;
-            if start < NCA_ENCRYPTED_HEADER_SIZE as u64 || end > content_size {
+            if start < NCA_ENCRYPTED_HEADER_SIZE as u64 {
                 return Err(LoadError::Invalid(
                     "NCA3 section range exceeds content bounds",
+                ));
+            }
+            if archive_size > 0 && start > archive_size {
+                return Err(LoadError::Invalid(
+                    "NCA3 section start exceeds archive bounds",
                 ));
             }
             if active_ranges.iter().any(|(existing_start, existing_end)| {

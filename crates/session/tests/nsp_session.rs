@@ -3,8 +3,8 @@ use emulator_crypto::keys::KeyFile;
 use emulator_crypto::sha256::Sha256;
 use emulator_loader::cnmt::{CnmtContentType, ContentMetaType};
 use emulator_loader::nca::{
-    make_section_ctr, NcaFsType, NcaHashType, NCA_ENCRYPTED_HEADER_SIZE, NCA_FS_HEADER_SIZE,
-    NCA_HEADER_SIZE,
+    make_section_ctr, NcaEncryptionType, NcaFsType, NcaHashType, NCA_ENCRYPTED_HEADER_SIZE,
+    NCA_FS_HEADER_SIZE, NCA_HEADER_SIZE,
 };
 use emulator_loader::nsp::NspArchive;
 use emulator_loader::romfs::build_romfs_image;
@@ -227,14 +227,14 @@ fn test_session_from_nsp_full_decryption_and_execution() {
     fs_header_0[0..2].copy_from_slice(&2u16.to_le_bytes());
     fs_header_0[2] = NcaFsType::PartitionFs as u8;
     fs_header_0[3] = NcaHashType::Auto as u8;
-    fs_header_0[4] = 4; // CTR
+    fs_header_0[4] = NcaEncryptionType::AesCtr as u8; // CTR
     fs_header_0[0x140..0x148].copy_from_slice(&exefs_ctr_seed);
 
     let mut fs_header_1 = vec![0u8; NCA_FS_HEADER_SIZE];
     fs_header_1[0..2].copy_from_slice(&2u16.to_le_bytes());
     fs_header_1[2] = NcaFsType::RomFs as u8;
     fs_header_1[3] = NcaHashType::Auto as u8;
-    fs_header_1[4] = 2; // None
+    fs_header_1[4] = NcaEncryptionType::None as u8; // None
 
     let hash_0 = Sha256::digest(&fs_header_0);
     let hash_1 = Sha256::digest(&fs_header_1);
@@ -286,7 +286,7 @@ fn test_session_from_nsp_full_decryption_and_execution() {
     meta_fs_0[0..2].copy_from_slice(&2u16.to_le_bytes());
     meta_fs_0[2] = NcaFsType::PartitionFs as u8;
     meta_fs_0[3] = NcaHashType::Auto as u8;
-    meta_fs_0[4] = 2; // None
+    meta_fs_0[4] = NcaEncryptionType::None as u8;
 
     let meta_hash_0 = Sha256::digest(&meta_fs_0);
     meta_main_header[0x280..0x2a0].copy_from_slice(&meta_hash_0);
