@@ -3,6 +3,40 @@ use crate::{quote, EngineReport, REPORT_CAPACITY};
 use emulator_loader::NroImage;
 use emulator_session::{RunOutcome, Session};
 use std::cell::RefCell;
+use std::rc::Rc;
+
+pub type ProgramFrameCallback =
+    extern "C" fn(width: u32, height: u32, format: u32, pixels: *const u8, len: u32) -> u32;
+
+thread_local! {
+    static FRAME_CALLBACK: RefCell<Option<ProgramFrameCallback>> = const { RefCell::new(None) };
+}
+
+#[derive(Debug)]
+struct ProgramGraphicsBackend;
+
+impl emulator_gpu::GraphicsBackend for ProgramGraphicsBackend {
+    fn render(&self, frame: &emulator_gpu::GraphicsFrame) -> Result<(), String> {
+        FRAME_CALLBACK.with(|cb| {
+            if let Some(callback) = *cb.borrow() {
+                let width = frame.background.width;
+                let height = frame.background.height;
+                let format = if frame.background.format == 0xcf { 1 } else { 0 };
+                let status = callback(
+                    width,
+                    height,
+                    format,
+                    frame.pixels.as_ptr(),
+                    frame.pixels.len() as u32,
+                );
+                if status != 0 {
+                    return Err(format!("Program frame presentation failed: {status}"));
+                }
+            }
+            Ok(())
+        })
+    }
+}
 const MAX_FILE: usize = 32 * 1024 * 1024;
 const MAX_INSTRUCTIONS: u64 = 2_000_000;
 const CATCH: &[u8] = include_bytes!("../../../examples/homebrew/catch.nro");
@@ -391,20 +425,35 @@ pub extern "C" fn emulator_program_inspect_v1() -> EngineReport {
     })
 }
 #[no_mangle]
+pub extern "C" fn emulator_program_set_frame_callback_v1(
+    callback: Option<ProgramFrameCallback>,
+) -> u32 {
+    std::panic::catch_unwind(|| {
+        FRAME_CALLBACK.with(|cell| {
+            *cell.borrow_mut() = callback;
+        });
+        0
+    })
+    .unwrap_or(1)
+}
+
+#[no_mangle]
 pub extern "C" fn emulator_program_start_v1() -> EngineReport {
     access(|p| {
         if p.session.is_some() || !p.last.is_empty() || p.bytes.len() != p.expected {
             return Err("Incomplete or already-started program".into());
         }
+        let graphics = Rc::new(ProgramGraphicsBackend);
         if p.bytes.starts_with(b"PFS0") || p.bytes.starts_with(b"HFS0") {
             let mut keys = discover_keys(p.source_dir.as_deref());
             if keys.header_key().is_none() {
                 return Err("Nintendo Switch decryption keys (prod.keys) are required to decrypt and run NSP packages. Please install prod.keys in Settings -> Decryption Keys.".into());
             }
-            p.session = Some(Session::from_nsp(&p.bytes, &mut keys).map_err(|e| e.to_string())?);
+            let service_manager = emulator_services::ServiceManager::with_graphics(graphics);
+            p.session = Some(Session::from_nsp_with_services(&p.bytes, &mut keys, service_manager).map_err(|e| e.to_string())?);
             p.is_package = true;
         } else {
-            p.session = Some(Session::from_nro(&p.bytes).map_err(|e| e.to_string())?);
+            p.session = Some(Session::from_nro_with_graphics(&p.bytes, graphics).map_err(|e| e.to_string())?);
             p.is_package = false;
         }
         p.bytes = ProgramBacking::Heap(Vec::new());
@@ -477,6 +526,9 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
 #[no_mangle]
 pub extern "C" fn emulator_program_close_v1() -> u32 {
     std::panic::catch_unwind(|| {
+        FRAME_CALLBACK.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
         PROGRAM.with(|cell| {
             let Ok(mut state) = cell.try_borrow_mut() else {
                 return 1;

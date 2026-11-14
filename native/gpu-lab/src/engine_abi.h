@@ -131,3 +131,5 @@ extern "C" EngineReport emulator_program_inspect_v1();
 extern "C" EngineReport emulator_program_start_v1();
 extern "C" EngineReport emulator_program_step_v1(std::uint32_t budget);
 extern "C" std::uint32_t emulator_program_close_v1();
+typedef std::uint32_t (*ProgramFrameCallback)(std::uint32_t width, std::uint32_t height, std::uint32_t format, const std::uint8_t* pixels, std::uint32_t len);
+extern "C" std::uint32_t emulator_program_set_frame_callback_v1(ProgramFrameCallback callback);

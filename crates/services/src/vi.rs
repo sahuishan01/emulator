@@ -3,6 +3,7 @@
 
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BufferState {
@@ -36,7 +37,15 @@ impl Default for BufferSlot {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ViManagerService;
+pub struct ViManagerService {
+    graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>,
+}
+
+impl ViManagerService {
+    pub fn with_graphics(graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>) -> Self {
+        Self { graphics }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct HosBinderDriver {
@@ -45,17 +54,25 @@ pub struct HosBinderDriver {
     current_slot: usize,
     num_pending: u32,
     slots: Vec<BufferSlot>,
+    graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>,
 }
 
-impl Default for HosBinderDriver {
-    fn default() -> Self {
+impl HosBinderDriver {
+    pub fn with_graphics(graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>) -> Self {
         Self {
             connected: false,
             connected_api: 0,
             current_slot: 0,
             num_pending: 0,
             slots: vec![BufferSlot::default(); 3],
+            graphics,
         }
+    }
+}
+
+impl Default for HosBinderDriver {
+    fn default() -> Self {
+        Self::with_graphics(None)
     }
 }
 
@@ -132,6 +149,26 @@ impl Service for HosBinderDriver {
                             slot.state = BufferState::Queued;
                         }
                         self.num_pending = self.num_pending.saturating_add(1);
+
+                        if let Some(backend) = &self.graphics {
+                            let slot = self.slots.get(slot_idx).cloned().unwrap_or_default();
+                            let bg = emulator_gpu::ColorClear {
+                                address: emulator_gpu::GpuVa(0),
+                                width: slot.width,
+                                height: slot.height,
+                                pitch: slot.stride * 4,
+                                format: slot.format,
+                                rect: [0, 0, slot.width, slot.height],
+                                color: [0; 4],
+                                mask: 15,
+                            };
+                            let frame = emulator_gpu::GraphicsFrame {
+                                background: bg,
+                                draws: Vec::new(),
+                                pixels: vec![0u8; (slot.width * slot.height * 4) as usize],
+                            };
+                            let _ = backend.render(&frame);
+                        }
 
                         reply_data.extend_from_slice(&0u32.to_le_bytes()); // status OK
                         reply_data.extend_from_slice(&1280u32.to_le_bytes()); // width
@@ -220,7 +257,15 @@ impl Service for HosBinderDriver {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct DisplayService;
+pub struct DisplayService {
+    graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>,
+}
+
+impl DisplayService {
+    pub fn with_graphics(graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>) -> Self {
+        Self { graphics }
+    }
+}
 
 impl Service for DisplayService {
     fn clone_for_request(&self) -> Box<dyn Service> {
@@ -234,7 +279,7 @@ impl Service for DisplayService {
                 Ok(ServiceReply {
                     result: 0,
                     data: Vec::new(),
-                    moved_objects: vec![Box::new(HosBinderDriver::default())],
+                    moved_objects: vec![Box::new(HosBinderDriver::with_graphics(self.graphics.clone()))],
                     effect: None,
                 })
             }
@@ -388,7 +433,7 @@ impl Service for ViManagerService {
                 Ok(ServiceReply {
                     result: 0,
                     data: Vec::new(),
-                    moved_objects: vec![Box::new(DisplayService::default())],
+                    moved_objects: vec![Box::new(DisplayService::with_graphics(self.graphics.clone()))],
                     effect: None,
                 })
             }

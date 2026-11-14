@@ -16,3 +16,5 @@ std::string step_homebrew(unsigned x,unsigned reset);
 std::string stop_homebrew();
 std::string start_texture_scene(void* window,unsigned variant);
 std::string stop_texture_scene();
+void program_set_surface(void* window);
+void program_clear_surface();

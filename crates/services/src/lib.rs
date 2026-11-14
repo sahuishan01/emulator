@@ -103,7 +103,7 @@ impl Service for ServiceManager {
                     b"set:sys\0" | b"set\0\0\0\0\0" => Box::new(SetSysService::default()),
                     b"time:s\0\0" | b"time:u\0\0" => Box::new(TimeService::default()),
                     b"vi:m\0\0\0\0" | b"vi:u\0\0\0\0" | b"vi:s\0\0\0\0" => {
-                        Box::new(ViManagerService::default())
+                        Box::new(ViManagerService::with_graphics(self.graphics.clone()))
                     }
                     b"appletAE" | b"appletOE" => Box::new(AppletManagerService::default()),
                     b"hid\0\0\0\0\0" | b"hid:sys\0" | b"hid:dbg\0" => Box::new(HidService::default()),

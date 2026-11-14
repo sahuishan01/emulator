@@ -1504,6 +1504,46 @@ public:
         check(vkQueueWaitIdle(context.queue),"presentation queue idle");
         ++presented;
     }
+    void present_frame(const uint8_t* pixels, uint32_t width, uint32_t height, VkFormat format) {
+        if (!swapchain || !pixels || !width || !height) return;
+        context.clear_workloads();
+        check(vkResetCommandPool(context.device, context.command_pool, 0), "reset live frame command pool");
+        const auto bytes = static_cast<size_t>(width) * height * 4;
+        const auto staging = context.buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        context.write(staging, pixels, bytes);
+        const auto img = context.image(format, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT, width, height);
+        const auto command = context.begin();
+        auto barrier = structure<VkImageMemoryBarrier>(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.image = img.handle;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {width, height, 1};
+        vkCmdCopyBufferToImage(command, staging.handle, img.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        check(vkEndCommandBuffer(command), "end copy command");
+        auto fence_info = structure<VkFenceCreateInfo>(VK_STRUCTURE_TYPE_FENCE_CREATE_INFO);
+        VkFence fence{};
+        check(vkCreateFence(context.device, &fence_info, nullptr, &fence), "copy fence");
+        auto submit = structure<VkSubmitInfo>(VK_STRUCTURE_TYPE_SUBMIT_INFO);
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &command;
+        check(vkQueueSubmit(context.queue, 1, &submit, fence), "submit copy transfer");
+        check(vkWaitForFences(context.device, 1, &fence, VK_TRUE, 5'000'000'000ull), "wait copy fence");
+        vkDestroyFence(context.device, fence, nullptr);
+        present(img, width, height, format);
+        ++completed;
+    }
     template<class Replay> uint32_t render(const Replay& draw,const DepthReplay* depth=nullptr,const DepthClearReplay* clears=nullptr) noexcept {
         try {
             context.clear_workloads();
@@ -1655,6 +1695,42 @@ std::string step_homebrew(uint32_t x,uint32_t reset) {
 }
 std::string stop_homebrew() {
     const auto s=emulator_demo_stop_v1();const auto result=demo_json(s,false,s.status ? std::string(s.error,strnlen(s.error,sizeof(s.error))) : "");live.reset();return result;
+}
+
+namespace {
+thread_local std::unique_ptr<LiveRenderer> program_renderer;
+
+uint32_t program_on_frame(uint32_t width, uint32_t height, uint32_t format, const uint8_t* pixels, uint32_t) {
+    if (!program_renderer || !pixels || !width || !height) return 0;
+    try {
+        const VkFormat vk_fmt = (format == 1) ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+        program_renderer->present_frame(pixels, width, height, vk_fmt);
+        return 0;
+    } catch (...) {
+        return 1;
+    }
+}
+} // namespace
+
+void program_set_surface(void* window) {
+    try {
+        program_renderer.reset();
+        if (window) {
+            program_renderer = std::make_unique<LiveRenderer>();
+            program_renderer->initialize(window);
+            emulator_program_set_frame_callback_v1(program_on_frame);
+        } else {
+            emulator_program_set_frame_callback_v1(nullptr);
+        }
+    } catch (...) {
+        program_renderer.reset();
+        emulator_program_set_frame_callback_v1(nullptr);
+    }
+}
+
+void program_clear_surface() {
+    emulator_program_set_frame_callback_v1(nullptr);
+    program_renderer.reset();
 }
 
 namespace {

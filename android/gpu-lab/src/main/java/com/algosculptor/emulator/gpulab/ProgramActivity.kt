@@ -10,16 +10,21 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.SurfaceTexture
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.Surface
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -31,7 +36,6 @@ import java.text.NumberFormat
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.sin
 
 /**
  * Full emulator GUI for running Switch homebrew NROs and retail NSP packages.
@@ -52,7 +56,9 @@ class ProgramActivity : Activity() {
     private lateinit var statusBadge: TextView
     private lateinit var titleText: TextView
     private lateinit var subtitleText: TextView
+    private lateinit var gameSurfaceView: GameTextureView
     private lateinit var viewportView: GameViewportView
+    private var activeSurface: Surface? = null
     private lateinit var pauseButton: Button
     private lateinit var stopButton: Button
     private lateinit var restartButton: Button
@@ -142,6 +148,32 @@ class ProgramActivity : Activity() {
         val viewportContainer = FrameLayout(this).apply {
             setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(4))
         }
+
+        gameSurfaceView = GameTextureView(this).apply {
+            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                    val s = Surface(surfaceTexture)
+                    activeSurface = s
+                    worker.execute { NativePrograms.setSurface(s) }
+                }
+                override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                    val s = Surface(surfaceTexture)
+                    activeSurface = s
+                    worker.execute { NativePrograms.setSurface(s) }
+                }
+                override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
+                    activeSurface = null
+                    worker.execute {
+                        NativePrograms.setSurface(null)
+                        surfaceTexture.release()
+                    }
+                    return false
+                }
+                override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {}
+            }
+        }
+        viewportContainer.addView(gameSurfaceView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
         viewportView = GameViewportView(this).apply {
             onResumeRequested = { resumeSession() }
         }
@@ -472,6 +504,7 @@ class ProgramActivity : Activity() {
             if (isStopped.get()) return@execute
             var result = JSONObject()
             try {
+                activeSurface?.let { NativePrograms.setSurface(it) }
                 result = JSONObject(String(NativePrograms.start(file.absolutePath), Charsets.UTF_8))
                 AppLog.i("ProgramActivity", "NativePrograms.start returned: ok=${result.optBoolean("ok")}, state=${result.optString("state")}")
                 if (result.optBoolean("ok")) {
@@ -725,9 +758,39 @@ class ProgramActivity : Activity() {
     }
 
     /**
-     * 16:9 Aspect Ratio Display Viewport Canvas.
-     * Draws Switch native 720p presentation, live CPU telemetry HUD,
-     * instruction counter, activity waveforms, and interactive Pause overlay.
+     * 16:9 Aspect Ratio Native Vulkan Presentation View.
+     * Backed by an ANativeWindow swapchain displaying real guest framebuffers.
+     */
+    class GameTextureView(context: Context) : TextureView(context) {
+        init {
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, 24f)
+                }
+            }
+            clipToOutline = true
+        }
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val width = MeasureSpec.getSize(widthMeasureSpec)
+            val heightFromWidth = (width * 9) / 16
+            val heightMode = MeasureSpec.getMode(heightMeasureSpec)
+            val heightSize = MeasureSpec.getSize(heightMeasureSpec)
+            val finalHeight = if (heightMode == MeasureSpec.EXACTLY) {
+                heightSize
+            } else if (heightMode == MeasureSpec.AT_MOST) {
+                minOf(heightFromWidth, heightSize)
+            } else {
+                heightFromWidth
+            }
+            setMeasuredDimension(width, finalHeight)
+        }
+    }
+
+    /**
+     * 16:9 Aspect Ratio Display Viewport Overlay.
+     * Overlays live CPU telemetry HUD, bezel stroke, standby screen, and interactive Pause overlay
+     * on top of the native Vulkan presentation swapchain.
      */
     class GameViewportView(context: Context) : View(context) {
         var onResumeRequested: (() -> Unit)? = null
@@ -764,11 +827,6 @@ class ProgramActivity : Activity() {
             color = Color.rgb(46, 204, 113)
             typeface = Typeface.MONOSPACE
         }
-        private val waveformPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(160, 46, 204, 113)
-            strokeWidth = 3f
-            style = Paint.Style.STROKE
-        }
         private val overlayPaint = Paint().apply {
             color = Color.argb(210, 5, 8, 14)
         }
@@ -776,7 +834,6 @@ class ProgramActivity : Activity() {
             color = Color.rgb(39, 174, 96)
         }
 
-        private var animPhase: Float = 0f
         private val resumeRect = RectF()
 
         init {
@@ -804,78 +861,63 @@ class ProgramActivity : Activity() {
             val h = height.toFloat()
             val cornerRadius = 24f
 
-            // 1. Clip rounded viewport and draw background
             val rect = RectF(0f, 0f, w, h)
             val path = Path().apply { addRoundRect(rect, cornerRadius, cornerRadius, Path.Direction.CW) }
             canvas.clipPath(path)
-            canvas.drawRect(rect, backgroundPaint)
 
-            // 2. Subtle grid pattern
-            val step = 40f
-            var x = step
-            while (x < w) {
-                canvas.drawLine(x, 0f, x, h, gridPaint)
-                x += step
-            }
-            var y = step
-            while (y < h) {
-                canvas.drawLine(0f, y, w, y, gridPaint)
-                y += step
-            }
+            // When no frames have executed yet, draw dark standby background
+            if (instructions == 0L || statusText == "READY" || statusText == "STOPPED") {
+                canvas.drawRect(rect, backgroundPaint)
 
-            // 3. Scanline effect
-            var sY = 0f
-            while (sY < h) {
-                canvas.drawLine(0f, sY, w, sY, scanlinePaint)
-                sY += 4f
-            }
-
-            // 4. Top Telemetry Header
-            accentPaint.textSize = h * 0.055f
-            canvas.drawText("SWITCH 720P · 1280×720 · 60HZ", w * 0.04f, h * 0.12f, accentPaint)
-
-            textPaint.textSize = h * 0.055f
-            val coreStr = "CORE $core"
-            canvas.drawText(coreStr, w * 0.96f - textPaint.measureText(coreStr), h * 0.12f, textPaint)
-
-            // 5. Active Oscilloscope / CPU Waveform
-            if (!isPaused && instructions > 0) {
-                animPhase += 0.2f
-                val wavePath = Path()
-                val waveY = h * 0.48f
-                val waveAmp = h * 0.08f
-                wavePath.moveTo(w * 0.1f, waveY)
-                var wx = w * 0.1f
-                while (wx <= w * 0.9f) {
-                    val progress = (wx - w * 0.1f) / (w * 0.8f)
-                    val wy = waveY + (sin(progress * 16.0 + animPhase) * waveAmp * (1.0 - progress * 0.5)).toFloat()
-                    wavePath.lineTo(wx, wy)
-                    wx += 12f
+                // Subtle grid pattern
+                val step = 40f
+                var x = step
+                while (x < w) {
+                    canvas.drawLine(x, 0f, x, h, gridPaint)
+                    x += step
                 }
-                canvas.drawPath(wavePath, waveformPaint)
+                var y = step
+                while (y < h) {
+                    canvas.drawLine(0f, y, w, y, gridPaint)
+                    y += step
+                }
+
+                // Scanline effect
+                var sY = 0f
+                while (sY < h) {
+                    canvas.drawLine(0f, sY, w, sY, scanlinePaint)
+                    sY += 4f
+                }
+
+                // Central Ready / Standby text
+                textPaint.textSize = h * 0.08f
+                textPaint.typeface = Typeface.DEFAULT_BOLD
+                val msg = if (statusText == "STOPPED") "SESSION STOPPED" else "READY TO PLAY"
+                val msgW = textPaint.measureText(msg)
+                canvas.drawText(msg, (w - msgW) / 2f, h * 0.52f, textPaint)
             }
 
-            // 6. Central Telemetry Readout
-            textPaint.textSize = h * 0.11f
-            textPaint.typeface = Typeface.DEFAULT_BOLD
-            val formattedInst = NumberFormat.getNumberInstance(Locale.US).format(instructions)
-            canvas.drawText(formattedInst, w * 0.08f, h * 0.72f, textPaint)
-
-            textPaint.textSize = h * 0.045f
-            textPaint.typeface = Typeface.MONOSPACE
-            canvas.drawText("INSTRUCTIONS EXECUTED", w * 0.08f, h * 0.80f, accentPaint)
-
-            // Right side stats: PC and MIPS
-            val pcStr = String.format("PC: 0x%010X", pc)
-            canvas.drawText(pcStr, w * 0.92f - textPaint.measureText(pcStr), h * 0.68f, textPaint)
-
-            val mipsStr = String.format(Locale.US, "SPEED: %.2f MIPS", mips)
-            canvas.drawText(mipsStr, w * 0.92f - textPaint.measureText(mipsStr), h * 0.78f, textPaint)
-
-            // 7. Outer Bezel Stroke
+            // Outer Bezel Stroke
             canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bezelPaint)
 
-            // 8. Frosted Pause Overlay with Centered "▶ RESUME" Button
+            // Live Telemetry Overlay
+            if (instructions > 0L) {
+                accentPaint.textSize = h * 0.045f
+                canvas.drawText("SWITCH 720P · 60HZ", w * 0.04f, h * 0.10f, accentPaint)
+
+                textPaint.textSize = h * 0.045f
+                val coreStr = "CORE $core"
+                canvas.drawText(coreStr, w * 0.96f - textPaint.measureText(coreStr), h * 0.10f, textPaint)
+
+                val mipsStr = String.format(Locale.US, "%.1f MIPS", mips)
+                canvas.drawText(mipsStr, w * 0.96f - textPaint.measureText(mipsStr), h * 0.92f, textPaint)
+
+                val pcStr = String.format("PC: 0x%08X", pc)
+                val instStr = "${NumberFormat.getNumberInstance(Locale.US).format(instructions)} inst · $pcStr"
+                canvas.drawText(instStr, w * 0.04f, h * 0.92f, accentPaint)
+            }
+
+            // Frosted Pause Overlay with Centered "▶ RESUME" Button
             if (isPaused) {
                 canvas.drawRect(rect, overlayPaint)
 
@@ -903,7 +945,6 @@ class ProgramActivity : Activity() {
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (isPaused && event.action == MotionEvent.ACTION_UP) {
-                // Tapping anywhere on the paused screen or the resume button resumes!
                 performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                 onResumeRequested?.invoke()
                 return true

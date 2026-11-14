@@ -121,7 +121,20 @@ Java_com_algosculptor_emulator_gpulab_NativePrograms_start(JNIEnv* env,jobject,j
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_algosculptor_emulator_gpulab_NativePrograms_step(JNIEnv* env,jobject,jint budget) { return copy_engine_report(env,emulator_program_step_v1(static_cast<uint32_t>(budget))); }
 extern "C" JNIEXPORT void JNICALL
-Java_com_algosculptor_emulator_gpulab_NativePrograms_stop(JNIEnv*,jobject) { (void)emulator_program_close_v1(); }
+Java_com_algosculptor_emulator_gpulab_NativePrograms_setSurface(JNIEnv* env, jobject, jobject surface) {
+    if (surface) {
+        auto* window = ANativeWindow_fromSurface(env, surface);
+        program_set_surface(window);
+        if (window) ANativeWindow_release(window);
+    } else {
+        program_clear_surface();
+    }
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_algosculptor_emulator_gpulab_NativePrograms_stop(JNIEnv*,jobject) {
+    program_clear_surface();
+    (void)emulator_program_close_v1();
+}
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_algosculptor_emulator_gpulab_NativeScenes_start(JNIEnv* env,jobject,jobject surface,jint variant) {

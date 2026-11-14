@@ -3,7 +3,7 @@
 use emulator_session::{RunOutcome, Session, LOAD_BASE};
 use std::fmt::Write;
 mod program;
-pub use program::ProgramChunk;
+pub use program::{ProgramChunk, ProgramFrameCallback};
 mod demo;
 pub use demo::{DemoStatus, LiveDraw};
 mod depth;

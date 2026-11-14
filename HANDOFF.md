@@ -19,7 +19,18 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.27-dev` (versionCode 67).
+- **Latest Release**: `v0.28.28-dev` (versionCode 68).
+  - **Eliminated Cosmetic Waveform & Hooked Native Vulkan Display Presentation**:
+    - Completely removed the synthetic oscilloscope / sine waveform animation placeholder from `ProgramActivity.kt` (`GameViewportView`).
+    - Added 16:9 native display presentation surface (`GameTextureView`) embedded in `ProgramActivity`'s viewport hierarchy, backed by a rounded outline provider (`clipToOutline = true`).
+    - Connected `ANativeWindow` lifecycle via `NativePrograms.setSurface(surface)`: automatically creates and tears down a `LiveRenderer` Vulkan swapchain targeting the Android presentation window.
+  - **Real Framebuffer Delivery Pipeline via Maxwell 3D & Horizon BufferQueue**:
+    - Implemented `ProgramGraphicsBackend` in `crates/android-ffi/src/program.rs`, bridging both `.nro` homebrew and retail `.nsp` program sessions with graphics capability.
+    - Exported `emulator_program_set_frame_callback_v1` in `android-ffi`, allowing the engine to deliver rendered guest framebuffers synchronously to the C++ host renderer without large stack copies.
+    - Implemented `present_frame` in `LiveRenderer` (`gpu_lab.cpp`), uploading guest framebuffers (RGBA/BGRA) into staging buffers and blitting them to the Vulkan swapchain with aspect-ratio letterboxing.
+    - Connected `vi:m` BufferQueue `QUEUE_BUFFER` in `crates/services/src/vi.rs`, routing queued buffer presentations through `HosBinderDriver` to the active graphics backend.
+    - Converted `GameViewportView` into a sleek translucent HUD and pause overlay: standby/ready state draws clean display background without fake animation, live execution displays transparent viewport with non-intrusive corner telemetry, and background/pause displays frosted overlay with prominent resume button.
+- **Previous Release**: `v0.28.27-dev` (versionCode 67).
   - **Full Mobile Emulator GUI for Program Execution**:
     - Replaced the headless text-mode view in `ProgramActivity` with a full-fledged Switch emulator GUI.
     - Implemented 16:9 Switch display viewport canvas (`GameViewportView`) with 720p presentation (`1280×720 · 60Hz`), active CPU oscilloscope waveform, real-time instruction counters, execution rate telemetry (`MIPS`), program counter (`PC`), and simulated active core (`Core 0..2`).
