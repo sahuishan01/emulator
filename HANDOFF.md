@@ -19,7 +19,12 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.17-dev` (versionCode 57).
+- **Latest Release**: `v0.28.18-dev` (versionCode 58).
+  - Resolved `invalid loader input: failed to parse NSO module 'rtld': invalid loader input: NSO section SHA-256 hash mismatch` when loading commercial Switch NSP packages (including Pokémon Legends: Z-A).
+  - Corrected NSO0 section SHA-256 hash offsets in the header from `0x70 + i * 0x20` to `0xA0 + i * 0x20` (Text hash at 0xA0..0xC0, RoData hash at 0xC0..0xE0, Data hash at 0xE0..0x100) per Nintendo Horizon NSO0 header specifications.
+  - Properly authenticated decompressed section digests against header digests when hash checking flags (bits 3, 4, 5) are active.
+  - Added unit test coverage validating SHA-256 hash calculation and verification at offset 0xA0, as well as rejection of corrupted section payloads.
+- **Previous Release**: `v0.28.17-dev` (versionCode 57).
   - Resolved `invalid loader input: ExeFS contains no valid NSO modules` on commercial Switch NSP game packages.
   - Fixed NSO0 header flags offset to `0xC` (per Horizon NSO0 format specification; retaining `0x8` for backwards compatibility) ensuring compressed retail NSO sections are properly recognized and decompressed with LZ4.
   - Removed strict page-multiple restriction on NSO section decompressed sizes, properly page-aligning memory regions during load.

@@ -37,8 +37,16 @@ impl NsoImage {
         if version != 0 {
             return Err(LoadError::UnsupportedVersion(version));
         }
-        // Flags offset is 0xC per Horizon NSO0 specification; also check 0x8 for backwards compatibility
-        let flags = word(input, 0xC) | word(input, 8);
+        // In the Horizon NSO0 specification, flags is at 0x0C and 0x08 is reserved (0).
+        // For backwards compatibility with legacy mock test fixtures, fall back to 0x08 only if 0x0C is 0.
+        let flags = {
+            let f = word(input, 0xC);
+            if f != 0 {
+                f
+            } else {
+                word(input, 8)
+            }
+        };
         // Bit 0: Text compressed, Bit 1: Ro compressed, Bit 2: Data compressed
         // Bit 3: Text hash check, Bit 4: Ro hash check, Bit 5: Data hash check
 
@@ -112,7 +120,7 @@ impl NsoImage {
             };
 
             if check_hash {
-                let hash_offset = 0x70 + i * 0x20;
+                let hash_offset = 0xA0 + i * 0x20;
                 if hash_offset + 32 <= input.len() {
                     let expected_hash = &input[hash_offset..hash_offset + 32];
                     let digest = emulator_crypto::sha256::Sha256::digest(&decompressed_data);

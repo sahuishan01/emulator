@@ -136,3 +136,52 @@ fn test_nso_horizon_flags_at_0xc_and_non_page_aligned_sizes() {
     assert_eq!(image.segments()[0].memory_size, 0x2000); // rounded up to page size
 }
 
+#[test]
+fn test_nso_section_sha256_verification_at_offset_0xa0() {
+    let mut data = vec![0u8; 0x100 + 0x3000];
+    data[0..4].copy_from_slice(b"NSO0");
+    data[4..8].copy_from_slice(&0u32.to_le_bytes()); // version
+    data[8..12].copy_from_slice(&0u32.to_le_bytes()); // reserved = 0
+    // Flags at 0xC: enable hash checking for text (bit 3 = 0x8), ro (bit 4 = 0x10), data (bit 5 = 0x20) -> 0x38
+    data[0xC..0x10].copy_from_slice(&0x38u32.to_le_bytes());
+
+    // Text: file offset 0x100, size 0x1000
+    data[0x10..0x14].copy_from_slice(&0x100u32.to_le_bytes());
+    data[0x14..0x18].copy_from_slice(&0x0u32.to_le_bytes());
+    data[0x18..0x1c].copy_from_slice(&0x1000u32.to_le_bytes());
+
+    // Ro: file offset 0x1100, size 0x1000
+    data[0x20..0x24].copy_from_slice(&0x1100u32.to_le_bytes());
+    data[0x24..0x28].copy_from_slice(&0x1000u32.to_le_bytes());
+    data[0x28..0x2c].copy_from_slice(&0x1000u32.to_le_bytes());
+
+    // Data: file offset 0x2100, size 0x1000
+    data[0x30..0x34].copy_from_slice(&0x2100u32.to_le_bytes());
+    data[0x34..0x38].copy_from_slice(&0x2000u32.to_le_bytes());
+    data[0x38..0x3c].copy_from_slice(&0x1000u32.to_le_bytes());
+
+    // Distinct payloads
+    data[0x100..0x108].copy_from_slice(b"TEXTDATA");
+    data[0x1100..0x1108].copy_from_slice(b"ROD_DATA");
+    data[0x2100..0x2108].copy_from_slice(b"DATASECT");
+
+    // Compute expected SHA256 hashes
+    let text_hash = emulator_crypto::sha256::Sha256::digest(&data[0x100..0x1100]);
+    let ro_hash = emulator_crypto::sha256::Sha256::digest(&data[0x1100..0x2100]);
+    let data_hash = emulator_crypto::sha256::Sha256::digest(&data[0x2100..0x3100]);
+
+    // Place hashes in NSO header at 0xA0, 0xC0, 0xE0
+    data[0xA0..0xC0].copy_from_slice(&text_hash);
+    data[0xC0..0xE0].copy_from_slice(&ro_hash);
+    data[0xE0..0x100].copy_from_slice(&data_hash);
+
+    let image = NsoImage::parse(&data).expect("NSO with correct SHA-256 hashes at 0xA0/0xC0/0xE0 should succeed");
+    assert_eq!(image.segments()[0].file_size, 0x1000);
+
+    // Now corrupt the text hash at 0xA0 and verify rejection
+    data[0xA0] ^= 0xFF;
+    let err = NsoImage::parse(&data).expect_err("corrupted SHA-256 hash must be rejected");
+    assert!(err.to_string().contains("NSO section SHA-256 hash mismatch"));
+}
+
+
