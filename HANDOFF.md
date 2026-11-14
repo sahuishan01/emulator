@@ -19,7 +19,7 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.8-dev` (versionCode 48).
+- **Latest Release**: `v0.28.9-dev` (versionCode 49).
 - **Physical Device Telemetry (Issue #15)**:
   - Latest report: `1794318272960-44c3d786`, app version `0.28.6-dev` on `Mali-G720-Immortalis MC12`.
   - Diagnostics: 269/275 checks passed, 65/66 visible patterns passed.

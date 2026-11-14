@@ -26,7 +26,9 @@ class EmulatorApplication : Application() {
     internal val updates by lazy { UpdateManager(this) }
     internal val reportUploads by lazy { ReportUploads(this) }
     override fun onCreate() {
-        super.onCreate(); UpdateSchedule.sync(this)
+        super.onCreate()
+        AppLog.init(this)
+        UpdateSchedule.sync(this)
         if (getSharedPreferences("report-uploads", MODE_PRIVATE).getBoolean("automatic", false)) reportUploads
         else ReportUploadSchedule.sync(this)
     }
@@ -64,13 +66,13 @@ class LibraryStore(private val app: Context) {
             db.writableDatabase.execSQL("INSERT OR IGNORE INTO titles(id,title,filename,bytes,mode) VALUES('builtin:textures','Texture scene','',0,'textures')")
             val indexed = entries().map { it.filename }.toSet()
             directory.listFiles()?.forEach { file ->
-                if (file.name.startsWith(".import-") || (file.name.matches(Regex("[0-9a-f]{64}\\.nro")) && file.name !in indexed)) file.delete()
+                if (file.name.startsWith(".import-") || (file.name.matches(Regex("[0-9a-f]{64}\\.(nro|nsp)")) && file.name !in indexed)) file.delete()
             }
         }
     }
     fun observe(observer: (ImportStatus) -> Unit) { observers.add(observer); observer(status) }
     fun unobserve(observer: (ImportStatus) -> Unit) { observers.remove(observer) }
-    private fun publish(value: ImportStatus) { main.post { status = if (activeImport.get() != null) ImportStatus(true, "Importing homebrew…") else value.copy(busy = false); observers.toList().forEach { it(status) } } }
+    private fun publish(value: ImportStatus) { main.post { status = if (activeImport.get() != null) ImportStatus(true, "Importing…") else value.copy(busy = false); observers.toList().forEach { it(status) } } }
     fun dismissStatus() { if (!status.busy) { status = ImportStatus(); observers.toList().forEach { it(status) } } }
     private fun entries(): List<LibraryEntry> = db.readableDatabase.query("titles", null, null, null, null, null, "last_played DESC, title COLLATE NOCASE").use { c ->
         buildList { while (c.moveToNext()) add(LibraryEntry(c.getString(c.getColumnIndexOrThrow("id")), c.getString(c.getColumnIndexOrThrow("title")),
@@ -79,7 +81,7 @@ class LibraryStore(private val app: Context) {
     }
     fun list(callback: (List<LibraryEntry>) -> Unit) { worker.execute { val result = entries(); main.post { callback(result) } } }
     fun find(id: String, callback: (LibraryEntry?) -> Unit) { worker.execute { val result = entries().firstOrNull { it.id == id }; main.post { callback(result) } } }
-    fun file(entry: LibraryEntry): File? = if (entry.filename.matches(Regex("[0-9a-f]{64}\\.nro"))) File(directory, entry.filename).takeIf { it.isFile } else null
+    fun file(entry: LibraryEntry): File? = if (entry.filename.matches(Regex("[0-9a-f]{64}\\.(nro|nsp)"))) File(directory, entry.filename).takeIf { it.isFile } else null
     fun recordLaunch(id: String) { worker.execute { db.writableDatabase.execSQL("UPDATE titles SET last_played=?, launches=launches+1 WHERE id=?", arrayOf(System.currentTimeMillis(), id)) } }
     fun recordResult(id: String, result: String) { worker.execute { db.writableDatabase.update("titles", ContentValues().apply { put("result", result.take(512)) }, "id=?", arrayOf(id)) } }
     fun remove(entry: LibraryEntry) {
@@ -89,6 +91,7 @@ class LibraryStore(private val app: Context) {
             val file = file(entry)
             if (file != null && !file.delete()) { publish(ImportStatus(message = "Could not remove this file.", error = true)); return@execute }
             db.writableDatabase.delete("titles", "id=?", arrayOf(entry.id))
+            AppLog.i("LibraryStore", "Removed title: ${entry.title} (${entry.id})")
             publish(ImportStatus(message = "Removed from library."))
         }
     }
@@ -113,8 +116,10 @@ class LibraryStore(private val app: Context) {
                 val used = current.sumOf { it.bytes }
                 val name = app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null, cancellation)?.use { c ->
                     if (c.moveToFirst()) c.getString(0) else null
-                }?.replace(Regex("\\s+"), " ")?.trim()?.take(100) ?: "Homebrew.nro"
-                require(name.endsWith(".nro", ignoreCase = true)) { "Choose a .nro homebrew file. Commercial game loading is still in development." }
+                }?.replace(Regex("\\s+"), " ")?.trim()?.take(100) ?: "Program.nro"
+                val ext = name.substringAfterLast('.', "").lowercase()
+                require(ext in listOf("nro", "nsp")) { "Choose a .nro homebrew or .nsp package file." }
+                AppLog.i("LibraryStore", "Importing file $name (extension: $ext)")
                 val digest = MessageDigest.getInstance("SHA-256")
                 var size = 0L
                 app.contentResolver.openAssetFileDescriptor(uri, "r", cancellation)?.use { descriptor ->
@@ -130,7 +135,7 @@ class LibraryStore(private val app: Context) {
                                 if (count == 0) { check(++emptyReads <= 16) { "The document provider did not return data." }; continue }
                                 emptyReads = 0
                                 size += count
-                                require(size <= MAX_FILE) { "Homebrew files can be up to 32 MiB." }
+                                require(size <= MAX_FILE) { "Files can be up to 32 MiB." }
                                 require(used + size <= MAX_LIBRARY) { "The library storage limit is 256 MiB. Remove a title before importing more." }
                                 output.write(buffer, 0, count); digest.update(buffer, 0, count)
                             }
@@ -140,23 +145,27 @@ class LibraryStore(private val app: Context) {
                 } ?: error("Could not open this document.")
                 if (job.cancelled.get()) throw CancellationException()
                 val metadata = JSONObject(String(NativePrograms.inspect(temporary.absolutePath), Charsets.UTF_8))
-                require(metadata.optBoolean("ok")) { metadata.optString("error", "This homebrew format is not supported yet.") }
+                require(metadata.optBoolean("ok")) { metadata.optString("error", "This file format is not supported yet.") }
                 if (job.cancelled.get()) throw CancellationException()
                 val id = digest.digest().joinToString("") { "%02x".format(it) }
-                if (metadata.optString("mode") == "catch" || current.any { it.id == id }) {
-                    outcome = ImportStatus(message = if (metadata.optString("mode") == "catch") "Catch is already included." else "This homebrew is already in your library.")
+                val mode = metadata.optString("mode", if (ext == "nsp") "package" else "static")
+                AppLog.i("LibraryStore", "Inspected metadata for $name: format=${metadata.optString("format")}, mode=$mode, size=$size bytes")
+                if (mode == "catch" || current.any { it.id == id }) {
+                    outcome = ImportStatus(message = if (mode == "catch") "Catch is already included." else "This title is already in your library.")
                     return@execute
                 }
-                val destination = File(directory, "$id.nro")
+                val destination = File(directory, "$id.$ext")
                 check(!destination.exists()) { "An unfinished copy exists. Restart the app and try again." }
-                check(temporary.renameTo(destination)) { "Could not save this homebrew." }; published = destination
+                check(temporary.renameTo(destination)) { "Could not save this title." }; published = destination
                 db.writableDatabase.insertOrThrow("titles", null, ContentValues().apply {
-                    put("id", id); put("title", name); put("filename", destination.name); put("bytes", size); put("mode", "static")
+                    put("id", id); put("title", name); put("filename", destination.name); put("bytes", size); put("mode", mode)
                 })
                 published = null
+                AppLog.i("LibraryStore", "Successfully added title $name (mode=$mode, id=$id)")
                 outcome = ImportStatus(message = "Added $name")
             } catch (e: Exception) {
                 published?.delete()
+                AppLog.e("LibraryStore", "Import failed for $uri: ${e.message}", e)
                 outcome = ImportStatus(message = if (job.cancelled.get()) "Import cancelled." else (e.message ?: "Import failed.").take(512), error = !job.cancelled.get())
             } finally {
                 job.stream.set(null); temporary.delete()

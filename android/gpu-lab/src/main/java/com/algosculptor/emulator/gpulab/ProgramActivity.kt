@@ -31,20 +31,29 @@ class ProgramActivity : Activity() {
         ui.space(root, 20)
         stopButton = ui.button("Stop session") { stop.set(true) }; root.addView(stopButton)
         root.addView(ui.button("Copy output") { getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Homebrew output", output.text)) })
+        ui.space(root, 10)
+        root.addView(ui.button("Share logs", true) { AppLog.showLogDialog(this) })
         ui.space(root, 16)
         root.addView(ui.text("Program output only. General homebrew graphics and commercial game loading are still in development.", 13f, ui.muted))
         ui.install(ScrollView(this).apply { addView(root) })
         val id = intent.getStringExtra("entryId") ?: ""
         store.find(id) { entry ->
             if (isDestroyed || isFinishing || stop.get()) return@find
-            title.text = entry?.title ?: "Homebrew unavailable"
+            title.text = entry?.title ?: "Program unavailable"
             val file = entry?.let { store.file(it) }
-            if (entry == null || file == null || entry.mode != "static") { state.text = "The imported file is unavailable."; stopButton.isEnabled = false; return@find }
+            if (entry == null || file == null || (entry.mode != "static" && entry.mode != "package")) {
+                state.text = "The imported file is unavailable."
+                stopButton.isEnabled = false
+                AppLog.w("ProgramActivity", "File unavailable or unsupported mode: entry=$entry")
+                return@find
+            }
+            AppLog.i("ProgramActivity", "Starting program session: title='${entry.title}', mode=${entry.mode}, file=${file.absolutePath}")
             worker.execute {
                 if (stop.get()) return@execute
                 var result = JSONObject()
                 try {
                     result = JSONObject(String(NativePrograms.start(file.absolutePath), Charsets.UTF_8))
+                    AppLog.i("ProgramActivity", "NativePrograms.start returned: ok=${result.optBoolean("ok")}, state=${result.optString("state")}")
                     if (result.optBoolean("ok")) {
                         store.recordLaunch(id)
                         var lastShow = 0L
@@ -56,13 +65,18 @@ class ProgramActivity : Activity() {
                         }
                     }
                     if (stop.get()) result.put("state", "stopped")
-                    store.recordResult(id, when (result.optString("state")) {
+                    val finalState = result.optString("state")
+                    AppLog.i("ProgramActivity", "Session finished: state=$finalState, instructions=${result.optLong("instructions")}, error='${result.optString("error")}'")
+                    store.recordResult(id, when (finalState) {
                         "exited" -> "Exited normally"
                         "stopped" -> "Session stopped"
                         "waiting" -> "Stopped while waiting for guest events"
                         else -> "Needs more runtime support"
                     })
-                } catch (e: Exception) { result = JSONObject().put("state", "error").put("error", e.message ?: "Could not run this homebrew.") }
+                } catch (e: Exception) {
+                    AppLog.e("ProgramActivity", "Error executing program: ${e.message}", e)
+                    result = JSONObject().put("state", "error").put("error", e.message ?: "Could not run this program.")
+                }
                 finally { NativePrograms.stop() }
                 show(result, finished = true)
             }

@@ -62,7 +62,7 @@ class HomeActivity : Activity() {
         }
         root.addView(importButton)
         ui.space(root, 10)
-        root.addView(ui.text("Static .nro homebrew · up to 32 MiB per file. Commercial game loading is in development.", 12f, ui.muted))
+        root.addView(ui.text("Static .nro homebrew & .nsp packages · up to 32 MiB per file.", 12f, ui.muted))
         ui.space(root, 14)
         search = EditText(this).apply { hint = "Search library"; isSingleLine = true; setTextColor(ui.ink); setHintTextColor(ui.muted); textSize = 16f }
         root.addView(search)

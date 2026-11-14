@@ -71,6 +71,10 @@ class MainActivity : Activity() {
         })
         layout.addView(runButton)
         layout.addView(exportButton)
+        layout.addView(Button(this).apply {
+            text = "View & share logs"
+            setOnClickListener { AppLog.showLogDialog(this@MainActivity) }
+        })
         output = TextView(this).apply {
             text = "Ready. Run all checks once, then export one report."
             textSize = 13f
