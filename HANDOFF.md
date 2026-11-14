@@ -19,7 +19,17 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.31-dev` (versionCode 71).
+- **Latest Release**: `v0.28.32-dev` (versionCode 72).
+  - **Dynamic Surface Lifecycle & Worker Thread Handover**:
+    - Replaced asynchronous executor-task queueing in `ProgramActivity.kt` (`onSurfaceTextureAvailable`, `onSurfaceTextureSizeChanged`, `onSurfaceTextureDestroyed`) with lock-free atomic handover (`pendingSurface` / `surfaceNeedsUpdate`).
+    - Resolved critical issue where `NativePrograms.setSurface` was starved from executing because `worker` was occupied by the continuous execution loop: surface changes are now dynamically applied by the worker thread itself at the top of each execution step.
+    - Updated `onSurfaceTextureDestroyed` to return `true`, allowing Android to synchronously and safely reclaim the `SurfaceTexture` without asynchronous release tasks or uncaught `RejectedExecutionException` during Activity destruction.
+  - **Live Boot Telemetry & Instruction Counter HUD**:
+    - Updated `GameViewportView.onDraw`: dynamically displays the live instruction count and MIPS rate beneath `BOOTING GUEST RUNTIME…` during the initial guest boot phase before frames are presented, making execution progress immediately visible to the user.
+    - Added periodic `AppLog.i` status logging every 2.5 seconds during execution (logging state, instructions, PC, MIPS, and presented frames) so diagnostic captures reflect live CPU activity.
+  - **Diagnostic Crash Log Management**:
+    - In `AppLog.kt`, clarified historical crash reports as `--- LAST CRASH REPORT (prior session) ---` and added an in-dialog button to clear the stored crash file once inspected.
+- **Previous Release**: `v0.28.31-dev` (versionCode 71).
   - **Horizon OS NSO Memory Classification Fix for `rtld` Module Discovery**:
     - Corrected memory state classifications in `crates/memory/src/lib.rs` and `crates/loader/src/nso.rs`: set `.text` and `.rodata` segment memory states to `0x03` (`MemType_CodeStatic`) and `.data` / `.bss` to `0x04` (`MemType_CodeMutable`), matching exact Nintendo Switch Horizon OS kernel definitions.
     - Resolved critical infinite hang in Nintendo SDK runtime linker (`rtld`): `rtld` scans virtual address space via `svcQueryMemory` specifically filtering for `CodeStatic` (0x03) with `R-X` (5) permissions to discover non-rtld modules (`main.nso`, `subsdk*.nso`, etc.). The prior fallback of `0x02` (`MemType_Normal`) caused `rtld` to find zero modules and spin indefinitely without booting.

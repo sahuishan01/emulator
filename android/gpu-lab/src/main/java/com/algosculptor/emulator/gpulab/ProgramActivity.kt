@@ -53,6 +53,9 @@ class ProgramActivity : Activity() {
     private val isStopped = AtomicBoolean(false)
     private val pauseLock = Object()
 
+    private val pendingSurface = java.util.concurrent.atomic.AtomicReference<Surface?>()
+    private val surfaceNeedsUpdate = AtomicBoolean(false)
+
     private fun runWorkerTask(task: () -> Unit) {
         try {
             if (!worker.isShutdown && !worker.isTerminated) {
@@ -184,23 +187,20 @@ class ProgramActivity : Activity() {
                 override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                     val s = Surface(surfaceTexture)
                     activeSurface = s
-                    runWorkerTask { NativePrograms.setSurface(s) }
+                    pendingSurface.set(s)
+                    surfaceNeedsUpdate.set(true)
                 }
                 override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                     val s = Surface(surfaceTexture)
                     activeSurface = s
-                    runWorkerTask { NativePrograms.setSurface(s) }
+                    pendingSurface.set(s)
+                    surfaceNeedsUpdate.set(true)
                 }
                 override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
                     activeSurface = null
-                    runWorkerTask {
-                        try {
-                            NativePrograms.setSurface(null)
-                        } finally {
-                            surfaceTexture.release()
-                        }
-                    }
-                    return false
+                    pendingSurface.set(null)
+                    surfaceNeedsUpdate.set(true)
+                    return true
                 }
                 override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {}
             }
@@ -538,17 +538,43 @@ class ProgramActivity : Activity() {
         worker.execute {
             if (isStopped.get()) return@execute
             var result = JSONObject()
+            var attachedSurface: Surface? = null
             try {
-                activeSurface?.let { NativePrograms.setSurface(it) }
+                val initSurface = pendingSurface.get() ?: activeSurface
+                if (initSurface != null) {
+                    attachedSurface = initSurface
+                    try {
+                        NativePrograms.setSurface(initSurface)
+                        AppLog.i("ProgramActivity", "Initial native surface attached")
+                    } catch (t: Throwable) {
+                        AppLog.w("ProgramActivity", "Failed to set initial surface: ${t.message}")
+                    }
+                    surfaceNeedsUpdate.set(false)
+                }
                 result = JSONObject(String(NativePrograms.start(file.absolutePath), Charsets.UTF_8))
                 AppLog.i("ProgramActivity", "NativePrograms.start returned: ok=${result.optBoolean("ok")}, state=${result.optString("state")}")
                 if (result.optBoolean("ok")) {
                     store.recordLaunch(id)
                     var lastShow = 0L
+                    var lastLog = System.currentTimeMillis()
                     var lastInstructionCount = 0L
                     var lastRateTime = System.currentTimeMillis()
 
                     while (!isStopped.get()) {
+                        // Dynamically attach/detach native surface on worker thread
+                        if (surfaceNeedsUpdate.getAndSet(false)) {
+                            val nextSurface = pendingSurface.get()
+                            if (nextSurface != attachedSurface) {
+                                attachedSurface = nextSurface
+                                try {
+                                    NativePrograms.setSurface(nextSurface)
+                                    AppLog.i("ProgramActivity", "Surface updated on worker: ${if (nextSurface != null) "attached" else "cleared"}")
+                                } catch (t: Throwable) {
+                                    AppLog.w("ProgramActivity", "Failed updating surface on worker: ${t.message}")
+                                }
+                            }
+                        }
+
                         // Background / User Pause wait loop
                         while (isPaused.get() && !isStopped.get()) {
                             synchronized(pauseLock) {
@@ -580,6 +606,14 @@ class ProgramActivity : Activity() {
                             lastShow = now
                         }
 
+                        if (now - lastLog >= 2500 || state != "running") {
+                            AppLog.i(
+                                "ProgramActivity",
+                                "Guest execution: state=$state, inst=$instructions, pc=0x${java.lang.Long.toHexString(result.optLong("pc"))}, mips=${String.format(Locale.US, "%.1f", result.optDouble("mips", 0.0))}, frames=${result.optLong("frames")}"
+                            )
+                            lastLog = now
+                        }
+
                         if (state != "running" && state != "waiting") {
                             // Completed, faulted, or hit limit
                             break
@@ -604,6 +638,10 @@ class ProgramActivity : Activity() {
                 AppLog.e("ProgramActivity", "Error executing program: ${e.message}", e)
                 result = JSONObject().put("state", "error").put("error", e.message ?: "Could not run this program.")
             } finally {
+                if (attachedSurface != null) {
+                    try { NativePrograms.setSurface(null) } catch (_: Throwable) {}
+                    attachedSurface = null
+                }
                 NativePrograms.stop()
             }
             show(result, finished = true)
@@ -938,7 +976,15 @@ class ProgramActivity : Activity() {
                     "READY TO PLAY"
                 }
                 val msgW = textPaint.measureText(msg)
-                canvas.drawText(msg, (w - msgW) / 2f, h * 0.52f, textPaint)
+                canvas.drawText(msg, (w - msgW) / 2f, if (instructions > 0L && statusText != "STOPPED") h * 0.49f else h * 0.52f, textPaint)
+
+                if (instructions > 0L && statusText != "STOPPED") {
+                    accentPaint.textSize = h * 0.04f
+                    accentPaint.typeface = Typeface.MONOSPACE
+                    val subMsg = "${NumberFormat.getNumberInstance(Locale.US).format(instructions)} inst · ${String.format(Locale.US, "%.1f", mips)} MIPS"
+                    val subW = accentPaint.measureText(subMsg)
+                    canvas.drawText(subMsg, (w - subW) / 2f, h * 0.57f, accentPaint)
+                }
             }
 
             // Outer Bezel Stroke

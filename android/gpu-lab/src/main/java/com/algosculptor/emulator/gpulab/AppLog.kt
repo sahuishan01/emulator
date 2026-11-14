@@ -10,7 +10,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.util.Log
+import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -192,7 +194,7 @@ object AppLog {
             if (crashFile?.exists() == true) {
                 val crashText = crashFile?.readText(Charsets.UTF_8) ?: ""
                 if (crashText.isNotEmpty()) {
-                    append("--- LAST CRASH REPORT ---\n")
+                    append("--- LAST CRASH REPORT (prior session) ---\n")
                     append(crashText.trimEnd())
                     append("\n\n")
                 }
@@ -233,6 +235,28 @@ object AppLog {
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
+        }
+
+        if (crashFile?.exists() == true) {
+            val clearCrashButton = Button(activity).apply {
+                text = "🗑 Clear Saved Crash Log"
+                textSize = 12f
+                isAllCaps = false
+                setTextColor(Color.rgb(180, 40, 40))
+                setOnClickListener {
+                    try {
+                        crashFile?.delete()
+                        Toast.makeText(activity, "Saved crash log cleared", Toast.LENGTH_SHORT).show()
+                        isEnabled = false
+                        text = "Saved Crash Log Cleared"
+                    } catch (_: Exception) {}
+                }
+            }
+            root.addView(clearCrashButton)
+            val spacer = View(activity).apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8))
+            }
+            root.addView(spacer)
         }
 
         val textView = TextView(activity).apply {
