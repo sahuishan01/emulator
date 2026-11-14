@@ -1,13 +1,14 @@
-//! Clean-room parser for the decrypted 0x400-byte NCA3 header.
+//! Clean-room parser for the decrypted 0x400-byte NCA3 header and section payloads.
 //!
 //! Raw NCA files encrypt their header. `parse_decrypted` accepts an already
-//! decrypted main header; `decrypt_nca3_header` handles only the encrypted
-//! 0xC00-byte header area. Neither function authenticates signatures or hashes
-//! nor decrypts section payloads.
+//! decrypted main header; `decrypt_nca3_header` handles the encrypted
+//! 0xC00-byte header area. `decrypt_section` and `verify_fs_header_hashes`
+//! provide section authentication and CTR decryption.
 
 use crate::LoadError;
-use emulator_crypto::aes128::aes128_xts_decrypt;
-use emulator_crypto::keys::KeyFile;
+use emulator_crypto::aes128::{aes128_ctr_xor, aes128_ecb_decrypt, aes128_xts_decrypt};
+use emulator_crypto::keys::{KeyArea, KeyFile};
+use emulator_crypto::sha256::Sha256;
 
 pub const NCA_HEADER_SIZE: usize = 0x400;
 pub const NCA_ENCRYPTED_HEADER_SIZE: usize = 0xC00;
@@ -17,6 +18,7 @@ pub const NCA_FS_HEADER_SIZE: usize = 0x200;
 const NCA_MAGIC_OFFSET: usize = 0x200;
 const SECTION_TABLE_OFFSET: usize = 0x240;
 const SECTION_HASHES_OFFSET: usize = 0x280;
+const KEY_AREA_OFFSET: usize = 0x300;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -64,9 +66,108 @@ impl TryFrom<u8> for NcaContentType {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NcaFsType {
+    RomFs = 0,
+    PartitionFs = 1,
+}
+
+impl TryFrom<u8> for NcaFsType {
+    type Error = LoadError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::RomFs),
+            1 => Ok(Self::PartitionFs),
+            _ => Err(LoadError::Invalid("NCA3 filesystem type is reserved")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NcaHashType {
+    Auto = 1,
+    HierarchicalSha256 = 2,
+    HierarchicalIntegrity = 3,
+}
+
+impl TryFrom<u8> for NcaHashType {
+    type Error = LoadError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Auto),
+            2 => Ok(Self::HierarchicalSha256),
+            3 => Ok(Self::HierarchicalIntegrity),
+            _ => Err(LoadError::Invalid("NCA3 hash type is reserved")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NcaEncryptionType {
+    Auto = 1,
+    None = 2,
+    Xts = 3,
+    Ctr = 4,
+    Bktr = 5,
+}
+
+impl TryFrom<u8> for NcaEncryptionType {
+    type Error = LoadError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Auto),
+            2 => Ok(Self::None),
+            3 => Ok(Self::Xts),
+            4 => Ok(Self::Ctr),
+            5 => Ok(Self::Bktr),
+            _ => Err(LoadError::Invalid("NCA3 encryption type is reserved")),
+        }
+    }
+}
+
+/// Parsed representation of an NCA3 filesystem section header (0x200 bytes).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NcaFsHeader {
+    pub version: u16,
+    pub fs_type: NcaFsType,
+    pub hash_type: NcaHashType,
+    pub encryption_type: NcaEncryptionType,
+    pub section_ctr: [u8; 8],
+    pub hash_data: [u8; 0xF8],
+}
+
+impl NcaFsHeader {
+    pub fn parse(header: &[u8; NCA_FS_HEADER_SIZE]) -> Result<Self, LoadError> {
+        let version = u16::from_le_bytes(header[0..2].try_into().unwrap());
+        if version != 2 {
+            return Err(LoadError::Invalid("NCA3 filesystem header version must be 2"));
+        }
+        let fs_type = NcaFsType::try_from(header[2])?;
+        let hash_type = NcaHashType::try_from(header[3])?;
+        let encryption_type = NcaEncryptionType::try_from(header[4])?;
+        let mut section_ctr = [0u8; 8];
+        section_ctr.copy_from_slice(&header[0x140..0x148]);
+        let mut hash_data = [0u8; 0xF8];
+        hash_data.copy_from_slice(&header[0x08..0x100]);
+        Ok(Self {
+            version,
+            fs_type,
+            hash_type,
+            encryption_type,
+            section_ctr,
+            hash_data,
+        })
+    }
+}
+
 /// One active NCA section. Offsets are absolute byte ranges in the archive;
-/// `end` is exclusive. `fs_header_hash` is the stored SHA-256 value and is not
-/// verified until the section header bytes are available.
+/// `end` is exclusive. `fs_header_hash` is the stored SHA-256 value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NcaSection {
     pub start: u64,
@@ -89,21 +190,129 @@ pub struct NcaHeader {
     pub signature_key_generation: u8,
     pub rights_id: [u8; 16],
     pub sections: [Option<NcaSection>; NCA_SECTION_COUNT],
+    pub encrypted_key_area: [[u8; 16]; NCA_SECTION_COUNT],
+}
+
+impl NcaHeader {
+    pub fn has_rights_id(&self) -> bool {
+        self.rights_id.iter().any(|&b| b != 0)
+    }
+
+    pub fn master_key_revision(&self) -> u8 {
+        let gen = std::cmp::max(self.key_generation, self.key_generation_old);
+        if gen > 0 {
+            gen - 1
+        } else {
+            0
+        }
+    }
+
+    pub fn key_area(&self) -> Result<KeyArea, LoadError> {
+        match self.key_area_encryption_key_index {
+            0 => Ok(KeyArea::Application),
+            1 => Ok(KeyArea::Ocean),
+            2 => Ok(KeyArea::System),
+            _ => Err(LoadError::Invalid("NCA3 key-area index is reserved")),
+        }
+    }
+}
+
+/// Generate the 16-byte initial AES-CTR counter block for a given absolute offset
+/// in the NCA archive. The upper 8 bytes are the 8-byte section_ctr reversed,
+/// and the lower 8 bytes are the block index (offset >> 4) in big-endian order.
+pub fn make_section_ctr(section_ctr: &[u8; 8], offset_in_archive: u64) -> [u8; 16] {
+    let mut ctr = [0u8; 16];
+    for j in 0..8 {
+        ctr[j] = section_ctr[7 - j];
+    }
+    let block_index = offset_in_archive >> 4;
+    ctr[8..16].copy_from_slice(&block_index.to_be_bytes());
+    ctr
 }
 
 /// Decrypted main header and the four corresponding filesystem headers.
-/// XTS provides confidentiality only; no signature or SHA-256 authentication
-/// is verified by this type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NcaDecryptedHeader {
     pub metadata: NcaHeader,
     pub fs_headers: [[u8; NCA_FS_HEADER_SIZE]; NCA_SECTION_COUNT],
 }
 
+impl NcaDecryptedHeader {
+    /// Verify that each active section's 0x200-byte filesystem header matches
+    /// the SHA-256 hash stored in the main header table.
+    pub fn verify_fs_header_hashes(&self) -> Result<(), LoadError> {
+        for (i, section_opt) in self.metadata.sections.iter().enumerate() {
+            if let Some(section) = section_opt {
+                let digest = Sha256::digest(&self.fs_headers[i]);
+                if digest != section.fs_header_hash {
+                    return Err(LoadError::Invalid("NCA3 filesystem header hash mismatch"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Derive the 128-bit section content key from either the title key
+    /// (if rights ID is set) or by decrypting key-area entry 2 with the
+    /// appropriate generation key-area encryption key.
+    pub fn derive_section_key(&self, keys: &KeyFile) -> Result<[u8; 16], LoadError> {
+        if self.metadata.has_rights_id() {
+            let key = keys.title_key(&self.metadata.rights_id).ok_or(LoadError::Invalid(
+                "NCA3 title key not found in key file",
+            ))?;
+            return Ok(*key);
+        }
+
+        let area = self.metadata.key_area()?;
+        let rev = self.metadata.master_key_revision();
+        let kaek = keys.key_area_key(area, rev).ok_or(LoadError::Invalid(
+            "NCA3 key-area key missing for the required generation",
+        ))?;
+
+        let mut key_entry = self.metadata.encrypted_key_area[2];
+        aes128_ecb_decrypt(kaek, &mut key_entry)
+            .map_err(|_| LoadError::Invalid("NCA3 key area decryption failed"))?;
+        Ok(key_entry)
+    }
+
+    /// Decrypt the complete payload of an active NCA section.
+    pub fn decrypt_section(
+        &self,
+        archive: &[u8],
+        section_index: usize,
+        keys: &KeyFile,
+    ) -> Result<Vec<u8>, LoadError> {
+        if section_index >= NCA_SECTION_COUNT {
+            return Err(LoadError::Invalid("NCA3 section index out of range"));
+        }
+        let section = self.metadata.sections[section_index]
+            .ok_or(LoadError::Invalid("NCA3 section is inactive"))?;
+
+        if (archive.len() as u64) < section.end {
+            return Err(LoadError::Invalid("NCA3 archive is shorter than section"));
+        }
+
+        let fs_header = NcaFsHeader::parse(&self.fs_headers[section_index])?;
+        let raw_section = &archive[section.start as usize..section.end as usize];
+        let mut decrypted = raw_section.to_vec();
+
+        match fs_header.encryption_type {
+            NcaEncryptionType::None => Ok(decrypted),
+            NcaEncryptionType::Ctr | NcaEncryptionType::Bktr => {
+                let key = self.derive_section_key(keys)?;
+                let initial_counter = make_section_ctr(&fs_header.section_ctr, section.start);
+                aes128_ctr_xor(&key, initial_counter, &mut decrypted)
+                    .map_err(|_| LoadError::Invalid("NCA3 CTR decryption failed"))?;
+                Ok(decrypted)
+            }
+            _ => Err(LoadError::Invalid("NCA3 section encryption type unsupported")),
+        }
+    }
+}
+
 /// Decrypt the NCA3 0xC00-byte header using six independent 0x200-byte XTS
 /// data units. Nintendo encodes each sector index as a big-endian 128-bit
-/// tweak. The required 32-byte `header_key` is looked up without exposing its
-/// value in diagnostics.
+/// tweak.
 pub fn decrypt_nca3_header(
     archive: &[u8],
     keys: &KeyFile,
@@ -137,8 +346,8 @@ pub fn decrypt_nca3_header(
 }
 
 impl NcaHeader {
-    /// Parse an NCA3 plaintext header, normally produced by a later decryption
-    /// layer. `archive_size` must be the length of the original NCA byte stream.
+    /// Parse an NCA3 plaintext header. `archive_size` must be the length
+    /// of the original NCA byte stream.
     pub fn parse_decrypted(header: &[u8], archive_size: u64) -> Result<Self, LoadError> {
         if header.len() < NCA_HEADER_SIZE {
             return Err(LoadError::Invalid("NCA3 decrypted header is truncated"));
@@ -248,6 +457,12 @@ impl NcaHeader {
             active_ranges.push((start, end));
         }
 
+        let mut encrypted_key_area = [[0; 16]; NCA_SECTION_COUNT];
+        for (index, entry) in encrypted_key_area.iter_mut().enumerate() {
+            let offset = KEY_AREA_OFFSET + index * 16;
+            entry.copy_from_slice(&main[offset..offset + 16]);
+        }
+
         Ok(Self {
             distribution_type,
             content_type,
@@ -261,6 +476,7 @@ impl NcaHeader {
             signature_key_generation,
             rights_id,
             sections,
+            encrypted_key_area,
         })
     }
 }

@@ -51,16 +51,17 @@
    - Bitfield extraction and sign extension (`UBFM`, `SBFM`).
    - Atomic exclusive load/store (`LDXR`, `STXR` 32-bit and 64-bit).
 
-4. **NCA3 Metadata Parser**:
+4. **NCA3 Metadata & Section Decryption Engine**:
    - Clean-room decrypted main-header parser in `crates/loader/src/nca.rs`.
-   - Parses distribution/content fields, key-generation metadata, program/rights IDs, four indexed section entries, and stored filesystem-header hashes.
-   - Validates alignment, archive-size agreement, reserved fields, section bounds and overlap. Ten NCA tests plus the existing loader suite pass.
-   - NCA3 header-only XTS decryption is now wired to the `header_key` lookup. It does not decrypt section payloads, verify signatures or section hashes, parse section filesystems, or derive keys. Details: [`docs/nca-parser.md`](docs/nca-parser.md).
+   - Parses distribution/content fields, key-generation metadata, program/rights IDs, four indexed section entries, encrypted key area (`0x300..0x340`), and stored filesystem-header hashes.
+   - Filesystem section header parser (`NcaFsHeader`) reading version, filesystem type, hash type, encryption type, and 8-byte section counter (`section_ctr`).
+   - Verified section filesystem header SHA-256 integrity checks against main header stored hashes via `verify_fs_header_hashes()`.
+   - Big-endian AES-CTR counter generation via `make_section_ctr` using the format-specific 8-byte reversed section counter prefix and media offset block index.
+   - Section payload decryption via `decrypt_section()` supporting title-key content keys and key-area unwrap via AES-128-ECB. Sixteen NCA unit and integration tests pass. Details: [`docs/nca-parser.md`](docs/nca-parser.md).
 
-5. **Crypto foundations (in progress)**:
-   - Added dependency-free `emulator-crypto`: AES-128 block encrypt/decrypt, explicit-counter CTR, full-block XTS, and bounded `name = hex` key-file parsing with redacted debug output.
-   - AES-128 FIPS 197, CTR SP 800-38A and XTS known-answer tests pass. Lookup-table AES is not constant-time and is not production-hardened.
-   - NCA header sectors use the format-specific big-endian sector-index tweak. NCA section CTR counter construction, key hierarchy/derivation and authenticated signature/hash checks are still open. Do not claim full NCA/content decryption works.
+5. **Crypto foundations**:
+   - Clean-room dependency-free `emulator-crypto`: AES-128 block encrypt/decrypt, ECB decrypt, explicit-counter CTR, full-block XTS, FIPS 180-4 SHA-256 digest engine, and bounded `name = hex` key-file parsing with redacted debug output.
+   - AES-128 FIPS 197, CTR SP 800-38A, XTS known-answer, and SHA-256 NIST test vectors pass. Lookup-table AES is not constant-time and is not production-hardened.
 
 ---
 

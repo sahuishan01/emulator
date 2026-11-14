@@ -1,4 +1,4 @@
-//! Original AES-128 and storage-mode primitives used by the NCA loader.
+//! Original AES-128, SHA-256, and storage-mode primitives used by the NCA loader.
 //!
 //! This prototype prioritizes portable correctness tests. The table-based AES
 //! implementation is not constant-time and must not be treated as hardened
@@ -6,9 +6,11 @@
 
 pub mod aes128;
 pub mod keys;
+pub mod sha256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CryptoError {
     XtsInputMustContainWholeBlocks,
+    EcbInputMustContainWholeBlocks,
     CounterWouldWrap,
 }

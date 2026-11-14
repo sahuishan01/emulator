@@ -215,3 +215,151 @@ fn encrypted_header_rejects_truncation_or_missing_header_key() {
     assert!(decrypt_nca3_header(&[0; NCA_ENCRYPTED_HEADER_SIZE - 1], &keys).is_err());
     assert!(decrypt_nca3_header(&[0; NCA_ENCRYPTED_HEADER_SIZE], &keys).is_err());
 }
+
+#[test]
+fn test_make_section_ctr_format() {
+    use emulator_loader::nca::make_section_ctr;
+
+    let section_ctr = [1, 2, 3, 4, 5, 6, 7, 8];
+    let offset = 0x1000u64; // block index 0x100
+    let ctr = make_section_ctr(&section_ctr, offset);
+
+    // Upper 8 bytes are reversed section_ctr
+    assert_eq!(&ctr[0..8], &[8, 7, 6, 5, 4, 3, 2, 1]);
+    // Lower 8 bytes are big-endian block index
+    assert_eq!(&ctr[8..16], &(0x100u64).to_be_bytes());
+}
+
+#[test]
+fn test_verify_fs_header_hashes_and_mismatch() {
+    use emulator_crypto::sha256::Sha256;
+    use emulator_loader::nca::NcaDecryptedHeader;
+
+    let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
+    fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes()); // version 2
+    fs_headers[0][2] = 0; // RomFs
+    fs_headers[0][3] = 3; // IVFC
+    fs_headers[0][4] = 4; // CTR
+    fs_headers[0][0x140..0x148].copy_from_slice(&[0x12; 8]);
+
+    let fs_hash = Sha256::digest(&fs_headers[0]);
+    let mut header_bytes = valid_header();
+    header_bytes[0x280..0x2a0].copy_from_slice(&fs_hash);
+
+    let metadata = NcaHeader::parse_decrypted(&header_bytes, ARCHIVE_SIZE).unwrap();
+    let dec_header = NcaDecryptedHeader {
+        metadata,
+        fs_headers,
+    };
+
+    assert!(dec_header.verify_fs_header_hashes().is_ok());
+
+    // Corrupt one byte of fs_header
+    let mut corrupt_fs = fs_headers;
+    corrupt_fs[0][0x50] ^= 0xFF;
+    let corrupt_dec = NcaDecryptedHeader {
+        metadata: dec_header.metadata.clone(),
+        fs_headers: corrupt_fs,
+    };
+    assert!(corrupt_dec.verify_fs_header_hashes().is_err());
+}
+
+#[test]
+fn test_decrypt_section_ctr_with_title_key() {
+    use emulator_crypto::aes128::aes128_ctr_xor;
+    use emulator_crypto::sha256::Sha256;
+    use emulator_loader::nca::{make_section_ctr, NcaDecryptedHeader};
+
+    let title_key = [0x77u8; 16];
+    let rights_id = [0xA5u8; 16];
+    let key_text = format!(
+        "titlekey_a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 = {}",
+        "77".repeat(16)
+    );
+    let keys = KeyFile::parse(key_text.as_bytes()).unwrap();
+
+    let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
+    fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes()); // version 2
+    fs_headers[0][2] = 0; // RomFs
+    fs_headers[0][3] = 3; // IVFC
+    fs_headers[0][4] = 4; // CTR
+    fs_headers[0][0x140..0x148].copy_from_slice(&[0x42; 8]);
+
+    let fs_hash = Sha256::digest(&fs_headers[0]);
+    let mut header_bytes = valid_header();
+    header_bytes[0x230..0x240].copy_from_slice(&rights_id);
+    header_bytes[0x280..0x2a0].copy_from_slice(&fs_hash);
+
+    let metadata = NcaHeader::parse_decrypted(&header_bytes, ARCHIVE_SIZE).unwrap();
+    let dec_header = NcaDecryptedHeader {
+        metadata,
+        fs_headers,
+    };
+
+    let original_payload = vec![0x33u8; 0xC00]; // 0xC00 bytes section
+    let mut encrypted_payload = original_payload.clone();
+    let section_start = 0xC00u64;
+    let initial_counter = make_section_ctr(&[0x42; 8], section_start);
+    aes128_ctr_xor(&title_key, initial_counter, &mut encrypted_payload).unwrap();
+
+    let mut archive = vec![0u8; ARCHIVE_SIZE as usize];
+    archive[section_start as usize..section_start as usize + 0xC00]
+        .copy_from_slice(&encrypted_payload);
+
+    let decrypted = dec_header.decrypt_section(&archive, 0, &keys).unwrap();
+    assert_eq!(decrypted, original_payload);
+}
+
+#[test]
+fn test_decrypt_section_ctr_with_key_area() {
+    use emulator_crypto::aes128::{aes128_ctr_xor, Aes128};
+    use emulator_crypto::sha256::Sha256;
+    use emulator_loader::nca::{make_section_ctr, NcaDecryptedHeader};
+
+    let kaek = [0x88u8; 16];
+    let raw_content_key = [0x99u8; 16];
+    let mut encrypted_key_entry = raw_content_key;
+    // Encrypt content key with kaek using AES-128-ECB
+    let aes = Aes128::new(&kaek);
+    aes.encrypt_block(&mut encrypted_key_entry);
+
+    let key_text = format!("key_area_key_application_00 = {}", "88".repeat(16));
+    let keys = KeyFile::parse(key_text.as_bytes()).unwrap();
+
+    let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
+    fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes()); // version 2
+    fs_headers[0][2] = 0; // RomFs
+    fs_headers[0][3] = 3; // IVFC
+    fs_headers[0][4] = 4; // CTR
+    fs_headers[0][0x140..0x148].copy_from_slice(&[0x55; 8]);
+
+    let fs_hash = Sha256::digest(&fs_headers[0]);
+    let mut header_bytes = valid_header();
+    header_bytes[0x206] = 0; // Legacy key generation 0
+    header_bytes[0x207] = 0; // Application key area
+    header_bytes[0x220] = 1; // MasterKey 0
+    header_bytes[0x230..0x240].fill(0); // No rights ID (use Key Area)
+    header_bytes[0x280..0x2a0].copy_from_slice(&fs_hash);
+    // Key area slot 2 at 0x300 + 2 * 16 = 0x320
+    header_bytes[0x320..0x330].copy_from_slice(&encrypted_key_entry);
+
+    let metadata = NcaHeader::parse_decrypted(&header_bytes, ARCHIVE_SIZE).unwrap();
+    let dec_header = NcaDecryptedHeader {
+        metadata,
+        fs_headers,
+    };
+
+    let original_payload = vec![0x44u8; 0xC00];
+    let mut encrypted_payload = original_payload.clone();
+    let section_start = 0xC00u64;
+    let initial_counter = make_section_ctr(&[0x55; 8], section_start);
+    aes128_ctr_xor(&raw_content_key, initial_counter, &mut encrypted_payload).unwrap();
+
+    let mut archive = vec![0u8; ARCHIVE_SIZE as usize];
+    archive[section_start as usize..section_start as usize + 0xC00]
+        .copy_from_slice(&encrypted_payload);
+
+    let decrypted = dec_header.decrypt_section(&archive, 0, &keys).unwrap();
+    assert_eq!(decrypted, original_payload);
+}
+
