@@ -64,21 +64,37 @@
 
 ---
 
+## Canonical Pokémon Legends: Z-A Execution Roadmap
+
+The complete clean-room master plan for booting and running Pokémon Legends: Z-A on the Realme GT 7 Dream Edition (Arm Immortalis-G720) is documented in [`docs/pokemon-legends-za-plan.md`](file:///root/projects/emulator/docs/pokemon-legends-za-plan.md).
+
+The implementation roadmap is structured into eight concrete milestones:
+1. **Phase 1 (M5A) - NCA3 Decryption, Key Hierarchy & RomFS**: Section CTR decryption, Switch key derivation (`header_key`, `key_area_key`, `titlekeys`), RomFS IVFC level 4 directory/file stream reader, and multi-module ExeFS loader.
+2. **Phase 2 (M5B) - AArch64 Floating Point & NEON Vectors**: Complete scalar FP arithmetic (`FADD`, `FSUB`, `FMUL`, `FDIV`, `FMADD`, `FCMP`, `FCVT`), 128-bit vector load/store (`LDR`/`STR` Q-registers, `LD1`–`LD4`), vector math/logic/permutations, and FPCR/FPSR status control.
+3. **Phase 3 (M6A) - Horizon OS Multi-Core Kernel & Services**: 3-core guest scheduler simulation, user-space futex arbitration (`svcWaitProcessWideKeyAtomic`), full `fsp-srv`, `vi:m`/`nvnflinger` BufferQueue presentation, `hid` controller ring buffers, `audren:u` audio mixing, and `nvdrv` GPFIFO submission.
+4. **Phase 4 (M6B) - Maxwell 3D GPFIFO Engine & State**: GPFIFO pushbuffer parsing (methods, gather buffers, call/return), full B197 3D state machine (16 VBs, 32 attrs, two-sided stencil, MRTs, independent blend), TIC/TSC samplers, and syncpoint semaphores.
+5. **Phase 5 (M6C) - Maxwell SM53 Shader Translator & Compute**: Full SM53 opcodes, typed SSA IR, compute workgroup shared memory (`LDS`/`STS`), `BAR.SYNC`, perspective-correct fragment interpolation (`IPA`), and SPIR-V 1.3 emission.
+6. **Phase 6 (M7A) - Host Vulkan Immortalis-G720 Renderer**: Compute-to-draw skinning barriers (preventing post-menu black screens), EDS capability-gated static pipeline fallback, GPU compute BCn decompression to ASTC/RGBA with retained GOB backing, and Reverse-Z depth clamping.
+7. **Phase 7 (M7B) - Android ARM64 Native Code Execution (NCE)**: Host direct execution on Dimensity 9400e Cortex cores, 16 KiB-aligned virtual address space, and fast SVC signal interception (>60 MIPS/core).
+8. **Phase 8 (M8) - Pokémon Legends: Z-A Acceptance Campaign**: Staged verification (Title Boot -> Menu -> Post-Menu Intro -> Lumiose City 3D Exploration -> Save/Load Durability at 30 FPS).
+
+---
+
 ## Next Planned Steps (In Exact Priority Order)
 
-1. **NCA crypto integration and key hierarchy**:
+1. **NCA crypto integration and key hierarchy (Phase 1 / M5A)**:
    - Confirm NCA's per-sector XTS tweak and section CTR counter encoding from format evidence before wiring the generic primitives to files.
-   - Implement key derivation and validate header/section metadata without logging or persisting user key material.
+   - Implement key derivation (`header_key`, `key_area_key`, titlekeys) and validate header/section metadata without logging or persisting user key material.
    - Add independent known-answer and invalid-key/malformed-container cases.
 
-2. **AArch64 Floating Point & NEON Vector Operations**:
-   - Implement scalar single/double precision FP arithmetic in `crates/a64/src/lib.rs` (`FADD`, `FSUB`, `FMUL`, `FDIV`, `FCMP`, `FCVT`).
+2. **AArch64 Floating Point & NEON Vector Operations (Phase 2 / M5B)**:
+   - Implement scalar single/double precision FP arithmetic in `crates/a64/src/lib.rs` (`FADD`, `FSUB`, `FMUL`, `FDIV`, `FMADD`, `FCMP`, `FCVT`).
    - Implement 128-bit vector load/store instructions (`LDR`/`STR` Q-registers).
 
-3. **Horizon VI BufferQueue & Presentation Pipeline**:
+3. **Horizon VI BufferQueue & Presentation Pipeline (Phase 3 / M6A)**:
    - Implement clean-room `nvnflinger` BufferQueue state machine (`Connect`, `RequestBuffer`, `QueueBuffer`, `DequeueBuffer`).
    - Connect buffer presentation to the Android Vulkan swapchain / `ANativeWindow`.
 
-4. **NV Channel GPFIFO Submission Pipeline**:
+4. **NV Channel GPFIFO Submission Pipeline (Phase 4 / M6B)**:
    - Support `NVIOC_CHANNEL_SUBMIT_GPFIFO` command buffer submission.
    - Wire guest command stream decoding directly into the host Vulkan command processor.

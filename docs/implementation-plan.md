@@ -104,10 +104,16 @@ interpolation/clipping, broader shaders/runtime and display remain open.
 | M2 | Minimal guest execution through kernel interfaces | M1A plus needed ISA forms | Our NRO prints a known debug string and exits through implemented guest SVC behavior |
 | M3 | Threads, handles and IPC slice | M2 | Owned multithreaded program exercises events, waits, timeouts and service requests with deterministic expected results |
 | M4 | Guest GPU and shader vertical slice | M1B; M3 for end-to-end guest service submission | Our guest graphics program submits real guest commands and presents a known triangle through our original shader path |
-| M5 | Required 3D/compute/texture correctness | M4 | Textured geometry, depth/stencil, copies, compute-to-draw, formats and aliases pass a reduced workload corpus on G720 |
-| M6 | Broader executable/services and usable application | M3/M5 in relevant portions | Needed module/content paths, filesystem/saves, audio, input and lifecycle work for selected homebrew workloads |
-| M7 | Performance and compatibility iteration | Correct reference paths from M2-M6 | JIT/CPU improvements and GPU optimizations preserve results; selected titles run through tested scenes |
-| M8 | Z-A acceptance campaign | The actual required M6/M7 features | Reproducible progression into 3D gameplay with correct graphics, saves, stability and measured performance on G720 |
+| M5A | NCA3 crypto, key hierarchy and RomFS | M1A, M4 | NCA3 section CTR decryption, master/title key derivation, RomFS IVFC mount and ExeFS multi-module relocations verified |
+| M5B | AArch64 floating point and NEON vectors | M2 | Full scalar FP arithmetic, conversions, and 128-bit NEON vector load/store/math passing known-answer hardware fixtures |
+| M6A | Horizon multi-core kernel and services | M3, M5A | 3-core guest scheduler, futex arbitration, full `fsp-srv`, `vi:m`/BufferQueue, `hid`, `audren:u`, and `nvdrv` GPFIFO |
+| M6B | Maxwell B197 3D engine and resources | M4 | GPFIFO pushbuffers, 16 VBs, 32 attrs, two-sided stencil, MRTs, independent blend, TIC/TSC samplers, syncpoints |
+| M6C | SM53 shader translator and compute | M4, M6B | Full SM53 opcodes, typed SSA IR, compute workgroup shared memory (`LDS`/`STS`), `BAR.SYNC`, and SPIR-V 1.3 emission |
+| M7A | Host Vulkan Immortalis-G720 renderer | M6B, M6C | Compute-to-draw skinning barriers, EDS capability-gated static pipeline fallback, GPU BCn compute decompression, Reverse-Z |
+| M7B | Android ARM64 native code execution (NCE) | M5B, M6A | Host direct execution, 16 KiB-aligned address space virtualization, fast SVC signal interception (>60 MIPS/core) |
+| M8 | Pokémon Legends: Z-A acceptance campaign | M5–M7 | Verified 3D gameplay progression: title logos, menu, intro cutscene, Lumiose City exploration, saves, 30 FPS on G720 |
+
+See the master [Pokémon Legends: Z-A Execution Plan](pokemon-legends-za-plan.md) for the complete subsystem breakdown and failure mode analysis.
 
 M1A and the M2 fixture gate are implemented for the explicitly restricted
 [NRO/ABI subset](nro-loader.md). They do not establish general NRO/libnx or
@@ -257,20 +263,28 @@ and test data have separate directories. A release requires real device evidence
 for the advertised capabilities, installation verification and artifact hashes.
 An APK compiling successfully does not establish game compatibility.
 
-## Z-A acceptance record
+## Z-A acceptance record and commercial roadmap
 
-When the emulator is ready for commercial compatibility work, record the
-original Switch edition, title build/update, content requirements, emulator
-commit, phone/Android/GPU/driver, settings and cache state. Test repeatable
-menu-to-gameplay transitions, camera movement, scene changes, saves/reloads,
-suspend/resume and a sustained session. Compare visible output and behavior,
-not just whether the process remains alive or an FPS overlay advances.
+The master engineering plan for running Pokémon Legends: Z-A is detailed in
+[pokemon-legends-za-plan.md](pokemon-legends-za-plan.md). It outlines the eight
+concrete implementation phases (M5A through M8), subsystem gap analysis, and the
+specific architectural solutions for the five known failure modes observed on Mali GPUs:
+1. **Compute-to-Draw Skinning Barriers**: Explicit `vkCmdPipelineBarrier` between compute
+   deformation passes and vertex attribute fetch stages to prevent post-menu black screens.
+2. **Capability-Gated Static Pipeline Specialization**: Bypassing Immortalis-G720
+   driver bugs in EDS2/EDS3 dynamic vertex input strides by using pre-specialized static pipelines.
+3. **Dual-View Texture Architecture**: Retaining raw Maxwell block-linear GOB data while
+   performing compute-based GPU decompression from BC1/BC3/BC7 to ASTC/RGBA.
+4. **Reverse-Z Clamping**: Enabling `depthClampEnable = VK_TRUE` and mapping Maxwell depth
+   ranges to Vulkan `[0.0, 1.0]`.
+5. **Monotonic Ticket Futex Arbitration**: Preventing multi-threaded condition variable
+   deadlocks in `svcWaitProcessWideKeyAtomic`.
 
-If a failure occurs, isolate its first responsible layer and reduce it to an
-owned workload where possible. Track unsupported services/opcodes separately
-from shader errors, resource lifetime, driver failures and memory exhaustion.
-The current reported black screen remains a target symptom, not a diagnosed
-defect that this new code has already inherited or fixed.
+When the emulator executes commercial compatibility work, record the original Switch
+edition, title build/update, content requirements, emulator commit, phone/Android/GPU/driver,
+settings and cache state. Test repeatable menu-to-gameplay transitions, camera movement,
+scene changes, saves/reloads, suspend/resume and a sustained session. Compare visible
+output and behavior, not just whether the process remains alive or an FPS overlay advances.
 
 ## Main risks and planning policy
 

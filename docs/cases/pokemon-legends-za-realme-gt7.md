@@ -2,7 +2,8 @@
 
 Historical comparison observations. The current project is an original
 emulator; the earlier requests to change Lemon/Eden settings are superseded.
-Our implementation milestones are in [../architecture.md](../architecture.md).
+Our canonical implementation roadmap is in [../pokemon-legends-za-plan.md](../pokemon-legends-za-plan.md)
+and [../implementation-plan.md](../implementation-plan.md). Architectural boundaries are in [../architecture.md](../architecture.md).
 
 ## Reported behavior
 
