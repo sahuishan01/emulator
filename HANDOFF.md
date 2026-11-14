@@ -19,7 +19,17 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.19-dev` (versionCode 59).
+- **Latest Release**: `v0.28.20-dev` (versionCode 60).
+  - Resolved `unsupported A64 instruction 0xdac001ae at 0x1017d0` encountered during retail NSO execution (Pokémon Legends: Z-A at instruction #362).
+  - Implemented A64 Data-processing (1 source) instructions: `RBIT` (reverse bits, 32-bit and 64-bit), `REV16` (reverse bytes in 16-bit halfwords, 32-bit and 64-bit), `REV` / `REV32` (reverse bytes in 32-bit words), `REV` (reverse bytes in 64-bit doublewords), `CLZ` (count leading zeros, 32-bit and 64-bit), and `CLS` (count leading sign bits, 32-bit and 64-bit).
+  - Implemented ARMv8 architectural `HINT` instructions (including `NOP`, `YIELD`, `WFE`, `WFI`, `SEV`, `SEVL`, `BTI`, `PACIASP`, `AUTIASP`, `PACIAZ`, `AUTIAZ`, `PACIBSP`, `AUTIBSP`, `PACIBZ`, `AUTIBZ`, `PACIA1716`, `AUTIA1716`, `PACIB1716`, `AUTIB1716`, `XPACLRI`), memory barriers (`DMB`, `DSB`, `ISB`), and exclusive monitor clearing (`CLREX`) under mask `0xffff_e01f == 0xd503_201f`.
+  - Expanded bitfield operations to support `BFM` (`opc == 1`), enabling `BFI` (Bitfield Insert) and `BFXIL` (Bitfield Extract and Insert Low) with destination register bit preservation.
+  - Implemented register extraction instruction `EXTR` (`0x1380_0000` / `0x9380_0000`) for 32-bit and 64-bit concatenated extraction and rotation.
+  - Implemented add/subtract with carry instructions `ADC`, `ADCS`, `SBC`, `SBCS` (`0x1a00_0000`) with full NZCV carry-in and borrow flag evaluation.
+  - Implemented conditional compare instructions `CCMP` and `CCMN` (both register and immediate variants) under mask `0x3fe0_0410 == 0x3a40_0000` with condition evaluation and default immediate NZCV setting.
+  - Expanded 3-source multiplications to support signed and unsigned wide multiplications `SMADDL`, `SMSUBL` (including `SMULL`, `SMNEGL`), `UMADDL`, `UMSUBL` (including `UMULL`, `UMNEGL`), and high-word multiplications `SMULH`, `UMULH`.
+  - Maintained strict 16 KiB page alignment across `arm64-v8a` and `x86_64` architectures, verified all 22 native engine exports, and passed all 26 A64 unit tests.
+- **Previous Release**: `v0.28.19-dev` (versionCode 59).
   - Resolved `unsupported A64 instruction 0xd63f0020 at 0x1000bc` encountered during retail NSO execution (Pokémon Legends: Z-A).
   - Implemented A64 unconditional register branch instructions: `BLR Xn` (`0xd63f0000 | (rn << 5)`), `BR Xn` (`0xd61f0000 | (rn << 5)`), and `RET Xn` (`0xd65f0000 | (rn << 5)`).
   - Implemented test bit and branch instructions `TBZ` / `TBNZ` (`0x3600_0000` / `0x3700_0000`) for conditional branching based on tested bit values.

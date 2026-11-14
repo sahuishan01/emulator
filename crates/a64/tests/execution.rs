@@ -591,3 +591,316 @@ fn test_byte_halfword_unscaled_and_register_loads_stores() {
     cpu.step(&mut mem).unwrap();
     assert_eq!(cpu.x[6], 0xbeef_cafe_1234_5678);
 }
+
+#[test]
+fn test_data_processing_1src_and_retail_rbit() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // Instructions:
+    // 0: rbit x14, x13 (0xdac001ae) - the exact instruction from Pokémon Legends: Z-A fault at 0x1017d0!
+    // 4: rbit w14, w13 (0x5ac001ae)
+    // 8: rev16 w14, w13 (0x5ac005ae)
+    // 12: rev16 x14, x13 (0xdac005ae)
+    // 16: rev w14, w13 (0x5ac009ae)
+    // 20: rev32 x14, x13 (0xdac009ae)
+    // 24: rev x14, x13 (0xdac00dae)
+    // 28: clz w14, w13 (0x5ac011ae)
+    // 32: clz x14, x13 (0xdac011ae)
+    // 36: cls w14, w13 (0x5ac015ae)
+    // 40: cls x14, x13 (0xdac015ae)
+    let insns: [u32; 11] = [
+        0xdac001ae,
+        0x5ac001ae,
+        0x5ac005ae,
+        0xdac005ae,
+        0x5ac009ae,
+        0xdac009ae,
+        0xdac00dae,
+        0x5ac011ae,
+        0xdac011ae,
+        0x5ac015ae,
+        0xdac015ae,
+    ];
+
+    let mut code = vec![0u8; 0x1000];
+    for (i, &w) in insns.iter().enumerate() {
+        code[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
+    }
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+
+    // 0: RBIT X14, X13
+    cpu.x[13] = 0x1234_5678_9abc_def0;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x1234_5678_9abc_def0_u64.reverse_bits());
+
+    // 4: RBIT W14, W13
+    cpu.x[13] = 0x1234_5678;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x1e6a2c48);
+
+    // 8: REV16 W14, W13
+    cpu.x[13] = 0x1234_5678;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x3412_7856);
+
+    // 12: REV16 X14, X13
+    cpu.x[13] = 0x1122_3344_5566_7788;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x2211_4433_6655_8877);
+
+    // 16: REV W14, W13
+    cpu.x[13] = 0x1234_5678;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x7856_3412);
+
+    // 20: REV32 X14, X13
+    cpu.x[13] = 0x1122_3344_5566_7788;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x4433_2211_8877_6655);
+
+    // 24: REV X14, X13
+    cpu.x[13] = 0x1122_3344_5566_7788;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x8877_6655_4433_2211);
+
+    // 28: CLZ W14, W13
+    cpu.x[13] = 0x0001_0000;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 15);
+
+    // 32: CLZ X14, X13
+    cpu.x[13] = 0x0000_0001_0000_0000;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 31);
+
+    // 36: CLS W14, W13
+    cpu.x[13] = 0x8000_0000; // Sign is 1, next bit is 0 -> 0 sign bits
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0);
+
+    // 40: CLS X14, X13
+    cpu.x[13] = 0; // All 0s -> 63 leading sign bits
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 63);
+}
+
+#[test]
+fn test_hints_and_barriers_nop() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // paciasp, autiasp, clrex, dmb ish, dsb ish, isb, yield
+    let insns: [u32; 7] = [
+        0xd503233f, // paciasp
+        0xd50323bf, // autiasp
+        0xd5033f5f, // clrex
+        0xd5033bbf, // dmb ish
+        0xd5033b9f, // dsb ish
+        0xd5033fdf, // isb
+        0xd503203f, // yield
+    ];
+
+    let mut code = vec![0u8; 0x1000];
+    for (i, &w) in insns.iter().enumerate() {
+        code[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
+    }
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+
+    cpu.x[30] = 0x1234_5678; // LR
+    for i in 0..insns.len() {
+        assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Continue);
+        assert_eq!(cpu.pc, 0x1000 + (i as u64 + 1) * 4);
+    }
+    // LR unchanged
+    assert_eq!(cpu.x[30], 0x1234_5678);
+}
+
+#[test]
+fn test_bitfield_bfm_bfi_bfxil_and_extract() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // 0: bfi w14, w13, #4, #8 (0x331c1dae)
+    // 4: bfxil w14, w13, #4, #8 (0x33042dae)
+    // 8: extr w14, w13, w12, #5 (0x138c15ae)
+    // 12: extr x14, x13, x12, #5 (0x93cc15ae)
+    let insns: [u32; 4] = [
+        0x331c1dae,
+        0x33042dae,
+        0x138c15ae,
+        0x93cc15ae,
+    ];
+
+    let mut code = vec![0u8; 0x1000];
+    for (i, &w) in insns.iter().enumerate() {
+        code[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
+    }
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+
+    // BFI: insert 8 bits from w13 into w14 at pos 4
+    cpu.x[14] = 0x1111_1111;
+    cpu.x[13] = 0x22;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x1111_1221);
+
+    // BFXIL: extract 8 bits from w13 at pos 4, insert into w14 at pos 0
+    cpu.x[14] = 0x1111_1111;
+    cpu.x[13] = 0x220;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0x1111_1122);
+
+    // EXTR 32-bit: concat(w13, w12) >> 5
+    // w13 = 0x12345678, w12 = 0x9abcdef0
+    cpu.x[13] = 0x1234_5678;
+    cpu.x[12] = 0x9abc_def0;
+    cpu.step(&mut mem).unwrap();
+    let expected32 = (((0x1234_5678_u64 << 32) | 0x9abc_def0_u64) >> 5) as u32 as u64;
+    assert_eq!(cpu.x[14], expected32);
+
+    // EXTR 64-bit: concat(x13, x12) >> 5
+    cpu.x[13] = 0x1122_3344_5566_7788;
+    cpu.x[12] = 0x99aa_bbcc_ddee_ff00;
+    cpu.step(&mut mem).unwrap();
+    let expected64 = (((0x1122_3344_5566_7788_u128 << 64) | 0x99aa_bbcc_ddee_ff00_u128) >> 5) as u64;
+    assert_eq!(cpu.x[14], expected64);
+}
+
+#[test]
+fn test_add_sub_carry_and_conditional_compare() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // 0: adcs w14, w13, w12 (0x3a0c01ae)
+    // 4: sbcs w14, w13, w12 (0x7a0c01ae)
+    // 8: ccmp w13, w12, #4, eq (0x7a4c01a4)
+    // 12: ccmp w13, #5, #4, ne (0x7a4519a4)
+    // 16: ccmn w13, w12, #4, eq (0x3a4c01a4)
+    let insns: [u32; 5] = [
+        0x3a0c01ae,
+        0x7a0c01ae,
+        0x7a4c01a4,
+        0x7a4519a4,
+        0x3a4c01a4,
+    ];
+
+    let mut code = vec![0u8; 0x1000];
+    for (i, &w) in insns.iter().enumerate() {
+        code[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
+    }
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+
+    // ADCS: w13 + w12 + carry (carry=1)
+    cpu.x[13] = 0xffff_ffff;
+    cpu.x[12] = 0;
+    cpu.nzcv.carry = true;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 0);
+    assert!(cpu.nzcv.zero);
+    assert!(cpu.nzcv.carry); // overflowed 32-bit
+
+    // SBCS: w13 + NOT(w12) + carry
+    // 5 - 3 with C=1 -> 2
+    cpu.x[13] = 5;
+    cpu.x[12] = 3;
+    cpu.nzcv.carry = true;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 2);
+    assert!(!cpu.nzcv.zero);
+    assert!(cpu.nzcv.carry); // no borrow
+
+    // CCMP w13, w12, #4, eq:
+    // If eq (Z=1): compare w13 with w12.
+    // Currently Z=0 (from previous sbcs), so eq is false!
+    // Should set NZCV to default #4 (Z=1, N=0, C=0, V=0).
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(
+        cpu.nzcv,
+        Nzcv {
+            negative: false,
+            zero: true,
+            carry: false,
+            overflow: false,
+        }
+    );
+
+    // CCMP w13, #5, #4, ne:
+    // Now Z=1, so ne is false!
+    // Should set NZCV to #4 again.
+    cpu.step(&mut mem).unwrap();
+    assert!(cpu.nzcv.zero);
+
+    // Now set Z=1, test CCMP when condition holds:
+    // CCMN w13, w12, #4, eq:
+    // Z=1 so eq is true!
+    // Performs w13 + w12: 5 + 3 = 8 -> Z=0, N=0, C=0, V=0.
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(
+        cpu.nzcv,
+        Nzcv {
+            negative: false,
+            zero: false,
+            carry: false,
+            overflow: false,
+        }
+    );
+}
+
+#[test]
+fn test_wide_multiplies() {
+    let mut mem = AddressSpace::default();
+    let mut cpu = Cpu::new(0x1000, 0x8000);
+
+    // 0: smaddl x14, w13, w12, x11 (0x9b2c2dae)
+    // 4: smsubl x14, w13, w12, x11 (0x9b2cadae)
+    // 8: umaddl x14, w13, w12, x11 (0x9bac2dae)
+    // 12: smulh x14, x13, x12 (0x9b4c7dae)
+    // 16: umulh x14, x13, x12 (0x9bcc7dae)
+    let insns: [u32; 5] = [
+        0x9b2c2dae,
+        0x9b2cadae,
+        0x9bac2dae,
+        0x9b4c7dae,
+        0x9bcc7dae,
+    ];
+
+    let mut code = vec![0u8; 0x1000];
+    for (i, &w) in insns.iter().enumerate() {
+        code[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
+    }
+    mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
+
+    // SMADDL: x11 + (signed(w13) * signed(w12))
+    // x11 = 10, w13 = -2 (0xfffffffe), w12 = 3 -> 10 + (-6) = 4
+    cpu.x[11] = 10;
+    cpu.x[13] = 0xffff_fffe;
+    cpu.x[12] = 3;
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 4);
+
+    // SMSUBL: x11 - (signed(w13) * signed(w12))
+    // 10 - (-6) = 16
+    cpu.step(&mut mem).unwrap();
+    assert_eq!(cpu.x[14], 16);
+
+    // UMADDL: x11 + (unsigned(w13) * unsigned(w12))
+    // x11 = 10, w13 = 0xffff_fffe, w12 = 3
+    cpu.step(&mut mem).unwrap();
+    let expected = 10u64.wrapping_add((0xffff_fffe_u64) * 3);
+    assert_eq!(cpu.x[14], expected);
+
+    // SMULH: high 64 bits of signed x13 * x12
+    cpu.x[13] = 0x4000_0000_0000_0000;
+    cpu.x[12] = 2;
+    cpu.step(&mut mem).unwrap();
+    // 0x4000... * 2 = 0x8000_0000_0000_0000 -> sign bit 1 in 128-bit = negative, high 64 bits is 0
+    let smul = (cpu.x[13] as i64 as i128) * (cpu.x[12] as i64 as i128);
+    assert_eq!(cpu.x[14], (smul >> 64) as u64);
+
+    // UMULH: high 64 bits of unsigned x13 * x12
+    cpu.x[13] = 0x8000_0000_0000_0000;
+    cpu.x[12] = 2;
+    cpu.step(&mut mem).unwrap();
+    // 0x8000... * 2 = 0x1_0000_0000_0000_0000 -> high 64 bits is 1
+    assert_eq!(cpu.x[14], 1);
+}

@@ -121,7 +121,37 @@ enum Instruction {
         rn: u8,
         immr: u8,
         imms: u8,
-        signed: bool,
+        opc: u8,
+    },
+    Extract {
+        width: Width,
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        lsb: u8,
+    },
+    AddSubCarry {
+        width: Width,
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        subtract: bool,
+        flags: bool,
+    },
+    ConditionalCompare {
+        width: Width,
+        rn: u8,
+        rm_or_imm: u8,
+        is_imm: bool,
+        subtract: bool,
+        cond: u8,
+        def_nzcv: u8,
+    },
+    DataProcessing1 {
+        width: Width,
+        rd: u8,
+        rn: u8,
+        op: u8,
     },
     ExclusiveLoadStore {
         width: Width,
@@ -169,6 +199,15 @@ enum Instruction {
         rm: u8,
         ra: u8,
         sub: bool,
+    },
+    MultiplyWide {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        ra: u8,
+        sub: bool,
+        signed: bool,
+        high: bool,
     },
     DataProcessing2 {
         width: Width,
@@ -569,35 +608,181 @@ impl Cpu {
                 rn,
                 immr,
                 imms,
-                signed,
+                opc,
             } => {
-                let n = width.bits();
+                let n = width.bits() as u32;
                 let src = self.read_zero(rn) & width.mask();
-                // ROR(src, immr)
-                let ror = if immr == 0 {
-                    src
-                } else {
-                    let r = immr % n;
-                    (src >> r) | ((src << (n - r)) & width.mask())
-                };
-                let wmask = if imms >= immr {
+                let dst = if opc == 1 { self.read_zero(rd) & width.mask() } else { 0 };
+                let (pos, len, val) = if imms >= immr {
                     let len = (imms - immr + 1) as u32;
-                    if len == 64 { u64::MAX } else { (1u64 << len) - 1 }
+                    (0, len, src >> immr)
                 } else {
                     let len = (imms + 1) as u32;
-                    (1u64 << len) - 1
+                    let pos = n - immr as u32;
+                    (pos, len, src << pos)
                 };
-                let mut result = ror & wmask;
-                if signed && (imms >= immr || imms < immr) {
-                    let sign_bit = (imms.wrapping_sub(immr) % n) as u32;
-                    let sign_mask = 1u64 << sign_bit;
-                    if result & sign_mask != 0 {
-                        // Sign extend from sign_bit to top of width
+                let mask = if len >= 64 {
+                    u64::MAX
+                } else if pos + len >= 64 {
+                    (!0u64) << pos
+                } else {
+                    ((1u64 << len) - 1) << pos
+                } & width.mask();
+                let mut result = (dst & !mask) | (val & mask);
+                if opc == 0 {
+                    // SBFM: sign extend from top bit of extracted field (bit len - 1 in result)
+                    let sign_bit = len - 1;
+                    if sign_bit < n && (result & (1u64 << sign_bit)) != 0 {
                         let top_mask = if sign_bit >= 63 { 0 } else { (!0u64) << (sign_bit + 1) };
                         result |= top_mask & width.mask();
                     }
                 }
                 self.write_zero(rd, result & width.mask());
+            }
+            Instruction::Extract {
+                width,
+                rd,
+                rn,
+                rm,
+                lsb,
+            } => {
+                let vn = self.read_zero(rn) & width.mask();
+                let vm = self.read_zero(rm) & width.mask();
+                let result = match width {
+                    Width::W32 => {
+                        let concat = (u64::from(vn as u32) << 32) | u64::from(vm as u32);
+                        (concat >> lsb) as u64 & width.mask()
+                    }
+                    Width::X64 => {
+                        let concat = (u128::from(vn) << 64) | u128::from(vm);
+                        (concat >> lsb) as u64
+                    }
+                };
+                self.write_zero(rd, result);
+            }
+            Instruction::AddSubCarry {
+                width,
+                rd,
+                rn,
+                rm,
+                subtract,
+                flags,
+            } => {
+                let lhs = self.read_zero(rn) & width.mask();
+                let rhs = self.read_zero(rm) & width.mask();
+                let c_in = self.nzcv.carry as u128;
+                let (sum, carry_out, overflow) = if subtract {
+                    let not_rhs = (!rhs) & width.mask();
+                    let s = lhs as u128 + not_rhs as u128 + c_in;
+                    let res = (s as u64) & width.mask();
+                    let c = s > width.mask() as u128;
+                    let v = ((lhs ^ rhs) & (lhs ^ res) & width.sign()) != 0;
+                    (res, c, v)
+                } else {
+                    let s = lhs as u128 + rhs as u128 + c_in;
+                    let res = (s as u64) & width.mask();
+                    let c = s > width.mask() as u128;
+                    let v = (!(lhs ^ rhs) & (lhs ^ res) & width.sign()) != 0;
+                    (res, c, v)
+                };
+                if flags {
+                    self.nzcv = Nzcv {
+                        negative: sum & width.sign() != 0,
+                        zero: sum == 0,
+                        carry: carry_out,
+                        overflow,
+                    };
+                }
+                self.write_zero(rd, sum);
+            }
+            Instruction::ConditionalCompare {
+                width,
+                rn,
+                rm_or_imm,
+                is_imm,
+                subtract,
+                cond,
+                def_nzcv,
+            } => {
+                if self.nzcv.holds(cond) {
+                    let lhs = self.read_zero(rn) & width.mask();
+                    let rhs = if is_imm {
+                        rm_or_imm as u64
+                    } else {
+                        self.read_zero(rm_or_imm) & width.mask()
+                    };
+                    let result = if subtract {
+                        lhs.wrapping_sub(rhs)
+                    } else {
+                        lhs.wrapping_add(rhs)
+                    } & width.mask();
+                    self.nzcv = Nzcv {
+                        negative: result & width.sign() != 0,
+                        zero: result == 0,
+                        carry: if subtract {
+                            lhs >= rhs
+                        } else {
+                            (lhs as u128 + rhs as u128) > width.mask() as u128
+                        },
+                        overflow: if subtract {
+                            ((lhs ^ rhs) & (lhs ^ result) & width.sign()) != 0
+                        } else {
+                            (!(lhs ^ rhs) & (lhs ^ result) & width.sign()) != 0
+                        },
+                    };
+                } else {
+                    self.nzcv = Nzcv {
+                        negative: (def_nzcv & 8) != 0,
+                        zero: (def_nzcv & 4) != 0,
+                        carry: (def_nzcv & 2) != 0,
+                        overflow: (def_nzcv & 1) != 0,
+                    };
+                }
+            }
+            Instruction::DataProcessing1 { width, rd, rn, op } => {
+                let val = self.read_zero(rn);
+                let result = match op {
+                    0 => match width {
+                        Width::W32 => (val as u32).reverse_bits() as u64,
+                        Width::X64 => val.reverse_bits(),
+                    },
+                    1 => match width {
+                        Width::W32 => {
+                            let v = val as u32;
+                            (((v & 0x00ff_00ff) << 8) | ((v & 0xff00_ff00) >> 8)) as u64
+                        }
+                        Width::X64 => {
+                            ((val & 0x00ff_00ff_00ff_00ff) << 8)
+                                | ((val & 0xff00_ff00_ff00_ff00) >> 8)
+                        }
+                    },
+                    2 => match width {
+                        Width::W32 => (val as u32).swap_bytes() as u64,
+                        Width::X64 => {
+                            let lo = (val as u32).swap_bytes() as u64;
+                            let hi = ((val >> 32) as u32).swap_bytes() as u64;
+                            (hi << 32) | lo
+                        }
+                    },
+                    3 => val.swap_bytes(),
+                    4 => match width {
+                        Width::W32 => (val as u32).leading_zeros() as u64,
+                        Width::X64 => val.leading_zeros() as u64,
+                    },
+                    5 => match width {
+                        Width::W32 => {
+                            let v = val as u32;
+                            let temp = if (v & 0x8000_0000) != 0 { !v } else { v };
+                            (temp.leading_zeros().saturating_sub(1)) as u64
+                        }
+                        Width::X64 => {
+                            let temp = if (val & (1 << 63)) != 0 { !val } else { val };
+                            (temp.leading_zeros().saturating_sub(1)) as u64
+                        }
+                    },
+                    _ => unreachable!(),
+                };
+                self.write_zero(rd, result);
             }
             Instruction::ExclusiveLoadStore {
                 width,
@@ -703,6 +888,49 @@ impl Cpu {
                 } else {
                     acc.wrapping_add(prod)
                 } & width.mask();
+                self.write_zero(rd, result);
+            }
+            Instruction::MultiplyWide {
+                rd,
+                rn,
+                rm,
+                ra,
+                sub,
+                signed,
+                high,
+            } => {
+                let result = if high {
+                    if signed {
+                        let lhs = self.read_zero(rn) as i64 as i128;
+                        let rhs = self.read_zero(rm) as i64 as i128;
+                        ((lhs * rhs) >> 64) as u64
+                    } else {
+                        let lhs = self.read_zero(rn) as u128;
+                        let rhs = self.read_zero(rm) as u128;
+                        ((lhs * rhs) >> 64) as u64
+                    }
+                } else {
+                    let acc = self.read_zero(ra);
+                    if signed {
+                        let lhs = (self.read_zero(rn) as u32 as i32) as i64;
+                        let rhs = (self.read_zero(rm) as u32 as i32) as i64;
+                        let prod = lhs.wrapping_mul(rhs) as u64;
+                        if sub {
+                            acc.wrapping_sub(prod)
+                        } else {
+                            acc.wrapping_add(prod)
+                        }
+                    } else {
+                        let lhs = self.read_zero(rn) as u32 as u64;
+                        let rhs = self.read_zero(rm) as u32 as u64;
+                        let prod = lhs.wrapping_mul(rhs);
+                        if sub {
+                            acc.wrapping_sub(prod)
+                        } else {
+                            acc.wrapping_add(prod)
+                        }
+                    }
+                };
                 self.write_zero(rd, result);
             }
             Instruction::DataProcessing2 {
@@ -1283,7 +1511,8 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
     };
     let rd = (word & 31) as u8;
     let rn = ((word >> 5) & 31) as u8;
-    if word == 0xd503_201f {
+    // HINT (NOP, YIELD, WFE, WFI, SEV, BTI, PACIASP, AUTIASP, etc.), Barriers (DMB, DSB, ISB), and CLREX
+    if word & 0xffff_e01f == 0xd503_201f {
         return Ok(Instruction::Nop);
     }
     if word & 0xffff_ffe0 == 0xd53b_d060 {
@@ -1378,17 +1607,36 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
         if width == Width::W32 && (immr >= 32 || imms >= 32) {
             return Err(ExecutionError::ReservedEncoding { pc, word });
         }
-        if opc == 0 || opc == 2 {
-            // SBFM (0) or UBFM (2)
+        if opc <= 2 {
+            // SBFM (0), BFM (1), or UBFM (2)
             return Ok(Instruction::Bitfield {
                 width,
                 rd,
                 rn,
                 immr,
                 imms,
-                signed: opc == 0,
+                opc: opc as u8,
             });
         }
+    }
+    // Extract register: EXTR
+    // 31: sf, 30-29: 00, 28-23: 100111, 22: N, 21: 0, 20-16: Rm, 15-10: imms, 9-5: Rn, 4-0: Rd
+    if word & 0x7fa0_0000 == 0x1380_0000 {
+        let n_bit = (word >> 22) & 1;
+        let lsb = ((word >> 10) & 63) as u8;
+        if (width == Width::W32 && (n_bit != 0 || lsb >= 32))
+            || (width == Width::X64 && n_bit == 0)
+        {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        let rm = ((word >> 16) & 31) as u8;
+        return Ok(Instruction::Extract {
+            width,
+            rd,
+            rn,
+            rm,
+            lsb,
+        });
     }
     // Exclusive load/store: LDXR / STXR
     // LDXR: 31: size[1], 30: size[0], 29-24: 001000, 23: 0, 22: L=1, 21: 0, 20-16: Rs (11111 for ldxr), 15-10: 011111, 9-5: Rn, 4-0: Rt
@@ -1471,6 +1719,37 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             return Ok(Instruction::Return { rn });
         }
     }
+    // Add/subtract with carry: ADC, ADCS, SBC, SBCS
+    if word & 0x1fe0_fc00 == 0x1a00_0000 {
+        let rm = ((word >> 16) & 31) as u8;
+        let subtract = word & (1 << 30) != 0;
+        let flags = word & (1 << 29) != 0;
+        return Ok(Instruction::AddSubCarry {
+            width,
+            rd,
+            rn,
+            rm,
+            subtract,
+            flags,
+        });
+    }
+    // Conditional compare: CCMP, CCMN (register and immediate)
+    if word & 0x3fe0_0410 == 0x3a40_0000 {
+        let rm_or_imm = ((word >> 16) & 31) as u8;
+        let cond = ((word >> 12) & 15) as u8;
+        let is_imm = word & (1 << 11) != 0;
+        let subtract = word & (1 << 30) != 0;
+        let def_nzcv = (word & 15) as u8;
+        return Ok(Instruction::ConditionalCompare {
+            width,
+            rn,
+            rm_or_imm,
+            is_imm,
+            subtract,
+            cond,
+            def_nzcv,
+        });
+    }
     // Conditional select: CSEL (00), CSINC (01), CSINV (10), CSNEG (11)
     if word & 0x7fe0_0c00 == 0x1a80_0000 {
         let rm = ((word >> 16) & 31) as u8;
@@ -1485,19 +1764,42 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             op,
         });
     }
-    // Multiply-Add / Multiply-Sub: MADD, MSUB, MUL, MNEG
-    if word & 0x7fe0_8000 == 0x1b00_0000 {
+    // Data-processing (1 source): RBIT, REV16, REV/REV32, REV, CLZ, CLS
+    if word & 0x7fff_0000 == 0x5ac0_0000 {
+        let op = ((word >> 10) & 0x3f) as u8;
+        if op <= 5 && !(width == Width::W32 && op == 3) {
+            return Ok(Instruction::DataProcessing1 {
+                width,
+                rd,
+                rn,
+                op,
+            });
+        }
+    }
+    // Multiply: MADD, MSUB, MUL, MNEG, SMADDL, SMSUBL, UMADDL, UMSUBL, SMULH, UMULH
+    if word & 0x7f00_0000 == 0x1b00_0000 {
+        let op31 = ((word >> 21) & 7) as u8;
         let rm = ((word >> 16) & 31) as u8;
         let ra = ((word >> 10) & 31) as u8;
         let sub = (word & (1 << 15)) != 0;
-        return Ok(Instruction::Multiply {
-            width,
-            rd,
-            rn,
-            rm,
-            ra,
-            sub,
-        });
+        if op31 == 0 {
+            return Ok(Instruction::Multiply {
+                width,
+                rd,
+                rn,
+                rm,
+                ra,
+                sub,
+            });
+        } else if width == Width::X64 {
+            match op31 {
+                1 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub, signed: true, high: false }),
+                2 if !sub && ra == 31 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub: false, signed: true, high: true }),
+                5 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub, signed: false, high: false }),
+                6 if !sub && ra == 31 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub: false, signed: false, high: true }),
+                _ => {}
+            }
+        }
     }
     // Data-processing (2 source): UDIV, SDIV, LSLV, LSRV, ASRV, RORV
     if word & 0x7fe0_fc00 == 0x1ac0_0800
