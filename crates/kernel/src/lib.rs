@@ -283,6 +283,9 @@ impl Kernel {
     pub fn current_thread_id(&self) -> usize {
         self.scheduler.current()
     }
+    pub fn current_core(&self) -> u8 {
+        self.scheduler.current_core()
+    }
     pub fn prepare_execution(&mut self, cpu: &mut Cpu) -> ScheduleOutcome {
         self.scheduler.prepare(cpu)
     }

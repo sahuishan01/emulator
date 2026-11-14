@@ -443,6 +443,8 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
             Ok(RunOutcome::BudgetExhausted) => ("running", String::new()),
             Err(e) => ("faulted", e.to_string()),
         };
+        let pc = s.cpu().pc;
+        let core = s.kernel().current_core();
         let total: usize = s.debug_records().iter().map(Vec::len).sum();
         let bytes: Vec<u8> = s
             .debug_records()
@@ -453,10 +455,19 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         let decoded = String::from_utf8_lossy(&bytes);
         let truncated = total > bytes.len() || decoded.chars().count() > 512;
         let output = decoded.chars().take(512).collect::<String>();
-        let text=format!("{{\"ok\":{},\"state\":{},\"instructions\":{},\"output\":{},\"outputTruncated\":{},\"error\":{}}}",
-            message.is_empty(),quote(state),s.instructions(),quote(&output),truncated,quote(&message.chars().take(512).collect::<String>()));
+        let text = format!(
+            "{{\"ok\":{},\"state\":{},\"instructions\":{},\"pc\":{},\"core\":{},\"output\":{},\"outputTruncated\":{},\"error\":{}}}",
+            message.is_empty(),
+            quote(state),
+            s.instructions(),
+            pc,
+            core,
+            quote(&output),
+            truncated,
+            quote(&message.chars().take(512).collect::<String>())
+        );
         s.clear_ipc_trace();
-        if state != "running" {
+        if state != "running" && state != "waiting" {
             p.session = None;
             p.last = text.clone();
         }

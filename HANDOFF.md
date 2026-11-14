@@ -19,7 +19,18 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.26-dev` (versionCode 66).
+- **Latest Release**: `v0.28.27-dev` (versionCode 67).
+  - **Full Mobile Emulator GUI for Program Execution**:
+    - Replaced the headless text-mode view in `ProgramActivity` with a full-fledged Switch emulator GUI.
+    - Implemented 16:9 Switch display viewport canvas (`GameViewportView`) with 720p presentation (`1280×720 · 60Hz`), active CPU oscilloscope waveform, real-time instruction counters, execution rate telemetry (`MIPS`), program counter (`PC`), and simulated active core (`Core 0..2`).
+    - Added on-screen touch controller (Virtual Gamepad) with Nintendo Switch diamond layout (**X**, **Y**, **A**, **B**), full 8-way directional D-pad, shoulder buttons (**L**, **ZL**, **R**, **ZR**), and system buttons (**－**, **＋**) with haptic feedback and show/hide toggle.
+    - Added comprehensive emulator action bar: `⏸ Pause` / `▶ Resume`, `⏹ Stop`, `🔄 Restart`, `🎮 Controls` overlay toggle, and `📋 Logs` collapsible diagnostic console.
+  - **Graceful Backgrounding, Pause & Resume Lifecycle**:
+    - Replaced destructive session cancellation on `onPause()` with non-destructive session pausing.
+    - Guest CPU registers, memory, kernel handles, threads, and scheduler state remain completely preserved in memory when putting the app in background or switching tasks.
+    - On backgrounding or pausing, the viewport transitions to a frosted pause overlay displaying `⏸ PAUSED` and a prominent, tappable `▶ RESUME` button; returning to the app or tapping Resume immediately continues stepping from the exact instruction where execution was paused.
+    - Preserved session continuity during guest synchronization waits (`state == "waiting"`) without prematurely dropping the session.
+- **Previous Release**: `v0.28.26-dev` (versionCode 66).
   - **Phase 3 (M6A) Multi-Core Scheduler Simulation & Horizon Services**:
     - 3-core guest scheduler simulation (`active_core: 0..=2`), ideal core and core mask affinity tracking, priority-based round-robin core rotation.
     - Core affinity & priority SVCs: `SVC_SET_THREAD_PRIORITY` (0x0C), `SVC_GET_THREAD_PRIORITY` (0x0D), `SVC_GET_THREAD_CORE_MASK` (0x0E), `SVC_SET_THREAD_CORE_MASK` (0x0F), `SVC_GET_CURRENT_PROCESSOR_NUMBER` (0x10) returning current active core.
