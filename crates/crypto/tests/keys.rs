@@ -108,3 +108,41 @@ fn parse_lenient_handles_comments_rsa_keys_and_large_sets() {
     assert_eq!(keys.master_key(0), Some(&[0x22; 16]));
     assert_eq!(keys.entry_count(), 302);
 }
+
+#[test]
+fn test_titlekek_and_key_area_derivation_in_parse_lenient() {
+    let mut contents = String::new();
+    contents.push_str("master_key_00 = 11111111111111111111111111111111\n");
+    contents.push_str("titlekek_source = 22222222222222222222222222222222\n");
+    contents.push_str("aes_kek_generation_source = 33333333333333333333333333333333\n");
+    contents.push_str("aes_key_generation_source = 44444444444444444444444444444444\n");
+    contents.push_str("key_area_key_application_source = 55555555555555555555555555555555\n");
+    let keys = KeyFile::parse_lenient(contents.as_bytes());
+
+    assert!(keys.title_kek(0).is_some());
+    assert!(keys.key_area_key(emulator_crypto::keys::KeyArea::Application, 0).is_some());
+}
+
+#[test]
+fn test_title_key_masked_and_prefix_lookups() {
+    let mut contents = String::new();
+    // Register title key with lower 8 bytes masked
+    contents.push_str("titlekey_01001234567800000000000000000000 = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+    // Register another title key with 16-hex title ID prefix
+    contents.push_str("0100abcdef120000 = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n");
+    let keys = KeyFile::parse_lenient(contents.as_bytes());
+
+    // Exact query with unmasked rights ID ending in 0000000000000001
+    let rights_id_1: [u8; 16] = [
+        0x01, 0x00, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    ];
+    assert_eq!(keys.title_key(&rights_id_1), Some(&[0xAA; 16]));
+
+    // Query for 16-hex prefix
+    let rights_id_2: [u8; 16] = [
+        0x01, 0x00, 0xab, 0xcd, 0xef, 0x12, 0x00, 0x00,
+        0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+    ];
+    assert_eq!(keys.title_key(&rights_id_2), Some(&[0xBB; 16]));
+}

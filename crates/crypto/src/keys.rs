@@ -200,6 +200,70 @@ impl KeyFile {
                 }
             }
         }
+
+        // 2. Derive titlekeks from master_key_XX and titlekek_source
+        if let Some(src_bytes) = entries.get("titlekek_source") {
+            if src_bytes.0.len() == 16 {
+                let src: [u8; 16] = src_bytes.0.as_slice().try_into().unwrap();
+                for rev in 0..=32 {
+                    let name = format!("titlekek_{rev:02x}");
+                    if !entries.contains_key(&name) {
+                        let mk_name_02 = format!("master_key_{rev:02x}");
+                        let mk_name_d = format!("master_key_{rev}");
+                        if let Some(mk_bytes) = entries.get(&mk_name_02).or_else(|| entries.get(&mk_name_d)) {
+                            if mk_bytes.0.len() == 16 {
+                                let mk: &[u8; 16] = mk_bytes.0.as_slice().try_into().unwrap();
+                                let mut derived = src;
+                                if crate::aes128::aes128_ecb_decrypt(mk, &mut derived).is_ok() {
+                                    entries.insert(name, SecretKey(derived.to_vec()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Derive key_area_keys from master_key_XX and key_area_key_*_source
+        let kek_seed_opt = entries.get("aes_kek_generation_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
+        let key_seed_opt = entries.get("aes_key_generation_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
+
+        if let (Some(kek_seed), Some(key_seed)) = (kek_seed_opt, key_seed_opt) {
+            let app_src = entries.get("key_area_key_application_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
+            let ocean_src = entries.get("key_area_key_ocean_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
+            let sys_src = entries.get("key_area_key_system_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
+
+            let sources = [
+                ("application", app_src),
+                ("ocean", ocean_src),
+                ("system", sys_src),
+            ];
+            for (area_name, src_opt) in sources {
+                if let Some(src) = src_opt {
+                    for rev in 0..=32 {
+                        let kak_name = format!("key_area_key_{area_name}_{rev:02x}");
+                        if !entries.contains_key(&kak_name) {
+                            let mk_name_02 = format!("master_key_{rev:02x}");
+                            let mk_name_d = format!("master_key_{rev}");
+                            if let Some(mk_bytes) = entries.get(&mk_name_02).or_else(|| entries.get(&mk_name_d)) {
+                                if mk_bytes.0.len() == 16 {
+                                    let mk: &[u8; 16] = mk_bytes.0.as_slice().try_into().unwrap();
+                                    let mut kek = kek_seed;
+                                    let mut src_kek = src;
+                                    let mut dst = key_seed;
+                                    if crate::aes128::aes128_ecb_decrypt(mk, &mut kek).is_ok()
+                                        && crate::aes128::aes128_ecb_decrypt(&kek, &mut src_kek).is_ok()
+                                        && crate::aes128::aes128_ecb_decrypt(&src_kek, &mut dst).is_ok()
+                                    {
+                                        entries.insert(kak_name, SecretKey(dst.to_vec()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Self { entries }
     }
 
@@ -306,21 +370,85 @@ impl KeyFile {
     }
 
     /// Look up a title key named by a 128-bit rights ID, accepting either a
-    /// bare hex ID or the explicit `titlekey_<id>` form.
+    /// bare hex ID, the explicit `titlekey_<id>` form, a masked rights ID
+    /// with lower 8 bytes zeroed, or the 16-hex-digit title ID prefix.
     pub fn title_key(&self, rights_id: &[u8; 16]) -> Option<&[u8; 16]> {
         let id = encode_hex(rights_id);
-        self.get(&format!("titlekey_{id}"))
-            .or_else(|| self.get(&id))?
-            .try_into()
-            .ok()
+        if let Some(key) = self.get(&format!("titlekey_{id}")).or_else(|| self.get(&id)) {
+            if let Ok(k) = key.try_into() {
+                return Some(k);
+            }
+        }
+        let mut masked = *rights_id;
+        masked[8..16].fill(0);
+        let masked_id = encode_hex(&masked);
+        if let Some(key) = self.get(&format!("titlekey_{masked_id}")).or_else(|| self.get(&masked_id)) {
+            if let Ok(k) = key.try_into() {
+                return Some(k);
+            }
+        }
+        let title_id_hex = &id[..16];
+        if let Some(key) = self.get(&format!("titlekey_{title_id_hex}")).or_else(|| self.get(title_id_hex)) {
+            if let Ok(k) = key.try_into() {
+                return Some(k);
+            }
+        }
+        None
     }
 
     /// Look up the raw title key block registered for a 128-bit rights ID.
     pub fn raw_title_key(&self, rights_id: &[u8; 16]) -> Option<&[u8; 16]> {
         let id = encode_hex(rights_id);
-        self.get(&format!("raw_titlekey_{id}"))?
-            .try_into()
-            .ok()
+        if let Some(key) = self.get(&format!("raw_titlekey_{id}")) {
+            if let Ok(k) = key.try_into() {
+                return Some(k);
+            }
+        }
+        let mut masked = *rights_id;
+        masked[8..16].fill(0);
+        let masked_id = encode_hex(&masked);
+        if let Some(key) = self.get(&format!("raw_titlekey_{masked_id}")) {
+            if let Ok(k) = key.try_into() {
+                return Some(k);
+            }
+        }
+        let title_id_hex = &id[..16];
+        if let Some(key) = self.get(&format!("raw_titlekey_{title_id_hex}")) {
+            if let Ok(k) = key.try_into() {
+                return Some(k);
+            }
+        }
+        None
+    }
+
+    /// Return all 16-byte keys that are titled or registered as potential title keys.
+    pub fn all_title_keys(&self) -> Vec<[u8; 16]> {
+        let mut keys = Vec::new();
+        for (name, secret) in &self.entries {
+            if secret.0.len() == 16 {
+                if name.starts_with("titlekey_") || name.starts_with("raw_titlekey_") {
+                    let k: [u8; 16] = secret.0.as_slice().try_into().unwrap();
+                    if !keys.contains(&k) {
+                        keys.push(k);
+                    }
+                }
+            }
+        }
+        keys
+    }
+
+    /// Return all unique 16-byte keys stored in the key file.
+    pub fn all_16byte_keys(&self) -> Vec<[u8; 16]> {
+        let mut keys = Vec::new();
+        for secret in self.entries.values() {
+            if secret.0.len() == 16 {
+                let k: [u8; 16] = secret.0.as_slice().try_into().unwrap();
+                if !keys.contains(&k) {
+                    keys.push(k);
+                }
+            }
+        }
+        keys
     }
 }
 

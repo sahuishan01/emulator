@@ -557,3 +557,88 @@ fn test_open_exefs_skips_logo_partition_and_finds_exefs() {
     assert_eq!(program.modules[0].name, "main");
 }
 
+#[test]
+fn test_decrypt_section_ctr_with_key_area_slot_0() {
+    use emulator_crypto::aes128::{aes128_ctr_xor, Aes128};
+    use emulator_crypto::sha256::Sha256;
+    use emulator_loader::nca::{make_section_ctr, NcaDecryptedHeader};
+
+    let kaek = [0x77u8; 16];
+    let raw_content_key = [0x88u8; 16];
+    let mut encrypted_key_entry = raw_content_key;
+    let aes = Aes128::new(&kaek);
+    aes.encrypt_block(&mut encrypted_key_entry);
+
+    let key_text = format!("key_area_key_application_00 = {}", "77".repeat(16));
+    let keys = KeyFile::parse(key_text.as_bytes()).unwrap();
+
+    let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
+    fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes());
+    fs_headers[0][2] = 1; // PartitionFs
+    fs_headers[0][3] = 2; // Sha256
+    fs_headers[0][4] = 3; // AesCtr
+    fs_headers[0][0x140..0x148].copy_from_slice(&[0x12; 8]);
+
+    let fs_hash = Sha256::digest(&fs_headers[0]);
+    let mut header_bytes = valid_header();
+    header_bytes[0x206] = 0;
+    header_bytes[0x207] = 0; // Application key area
+    header_bytes[0x220] = 1; // MasterKey 0
+    header_bytes[0x230..0x240].fill(0); // No rights ID
+    header_bytes[0x280..0x2a0].copy_from_slice(&fs_hash);
+    // Key area slot 0 at 0x300
+    header_bytes[0x300..0x310].copy_from_slice(&encrypted_key_entry);
+
+    let metadata = NcaHeader::parse_decrypted(&header_bytes, ARCHIVE_SIZE).unwrap();
+    let dec_header = NcaDecryptedHeader {
+        metadata,
+        fs_headers,
+    };
+
+    let test_pfs0 = build_pfs0(&[("test.txt", b"hello world")]);
+    let mut payload = vec![0u8; 0xC00];
+    payload[..test_pfs0.len()].copy_from_slice(&test_pfs0);
+
+    let mut encrypted_payload = payload.clone();
+    let section_start = 0xC00u64;
+    let initial_counter = make_section_ctr(&[0x12; 8], section_start);
+    aes128_ctr_xor(&raw_content_key, initial_counter, &mut encrypted_payload).unwrap();
+
+    let mut archive = vec![0u8; ARCHIVE_SIZE as usize];
+    archive[section_start as usize..section_start as usize + 0xC00].copy_from_slice(&encrypted_payload);
+
+    let decrypted = dec_header.decrypt_section(&archive, 0, &keys).unwrap();
+    assert_eq!(&decrypted[..4], b"PFS0");
+}
+
+#[test]
+fn test_decrypt_partitionfs_rejects_non_matching_keys_with_clear_error() {
+    use emulator_crypto::sha256::Sha256;
+    use emulator_loader::nca::NcaDecryptedHeader;
+
+    let keys = KeyFile::default(); // Empty keys
+
+    let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
+    fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes());
+    fs_headers[0][2] = 1; // PartitionFs
+    fs_headers[0][3] = 2;
+    fs_headers[0][4] = 3; // AesCtr
+    fs_headers[0][0x140..0x148].copy_from_slice(&[0x33; 8]);
+
+    let fs_hash = Sha256::digest(&fs_headers[0]);
+    let mut header_bytes = valid_header();
+    header_bytes[0x280..0x2a0].copy_from_slice(&fs_hash);
+    // Non-zero key area slot so it doesn't treat as unencrypted
+    header_bytes[0x300..0x310].copy_from_slice(&[0x99; 16]);
+
+    let metadata = NcaHeader::parse_decrypted(&header_bytes, ARCHIVE_SIZE).unwrap();
+    let dec_header = NcaDecryptedHeader {
+        metadata,
+        fs_headers,
+    };
+
+    let archive = vec![0x55u8; ARCHIVE_SIZE as usize];
+    let err = dec_header.decrypt_section(&archive, 0, &keys).unwrap_err();
+    assert!(err.to_string().contains("PartitionFS decryption failed"));
+}
+

@@ -182,9 +182,19 @@ fn discover_keys(source_dir: Option<&std::path::Path>) -> emulator_crypto::keys:
         "/storage/emulated/0/switch/title.keys",
         "/sdcard/Download/title.keys",
         "/storage/emulated/0/Download/title.keys",
+        "/sdcard/Documents/title.keys",
+        "/storage/emulated/0/Documents/title.keys",
         "/sdcard/Android/data/org.yuzu.yuzu_emu/files/keys/title.keys",
         "/storage/emulated/0/Android/data/org.yuzu.yuzu_emu/files/keys/title.keys",
+        "/sdcard/Android/data/dev.lemon.lemon_emu/files/keys/title.keys",
+        "/storage/emulated/0/Android/data/dev.lemon.lemon_emu/files/keys/title.keys",
+        "/sdcard/Android/data/org.suyu.suyu_emu/files/keys/title.keys",
+        "/storage/emulated/0/Android/data/org.suyu.suyu_emu/files/keys/title.keys",
+        "/sdcard/Android/data/org.sudachi.sudachi_emu/files/keys/title.keys",
+        "/storage/emulated/0/Android/data/org.sudachi.sudachi_emu/files/keys/title.keys",
         "title.keys",
+        "/root/.switch/title.keys",
+        "/data/local/tmp/title.keys",
     ] {
         title_paths.push(std::path::PathBuf::from(p));
     }
@@ -194,7 +204,6 @@ fn discover_keys(source_dir: Option<&std::path::Path>) -> emulator_crypto::keys:
             let kf = emulator_crypto::keys::KeyFile::parse_lenient(&data);
             if kf.entry_count() > 0 {
                 keys.merge(&kf);
-                break;
             }
         }
     }
@@ -204,7 +213,6 @@ fn discover_keys(source_dir: Option<&std::path::Path>) -> emulator_crypto::keys:
             let kf = emulator_crypto::keys::KeyFile::parse_lenient(&data);
             if kf.entry_count() > 0 {
                 keys.merge(&kf);
-                break;
             }
         }
     }

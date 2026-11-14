@@ -282,7 +282,13 @@ impl NcaDecryptedHeader {
             "NCA3 key-area key missing for the required generation",
         ))?;
 
-        let mut key_entry = self.metadata.encrypted_key_area[2];
+        // Slot 0 is the primary application key in NCA3; fallback to slot 2 if slot 0 is zeroed
+        let key_entry = if self.metadata.encrypted_key_area[0] != [0; 16] {
+            self.metadata.encrypted_key_area[0]
+        } else {
+            self.metadata.encrypted_key_area[2]
+        };
+        let mut key_entry = key_entry;
         aes128_ecb_decrypt(kaek, &mut key_entry)
             .map_err(|_| LoadError::Invalid("NCA3 key area decryption failed"))?;
         Ok(key_entry)
@@ -290,7 +296,7 @@ impl NcaDecryptedHeader {
 
     /// Collect candidate 128-bit decryption keys for an active section.
     pub fn candidate_section_keys(&self, section_index: usize, keys: &KeyFile) -> Vec<[u8; 16]> {
-        let mut candidates = Vec::with_capacity(8);
+        let mut candidates = Vec::with_capacity(32);
 
         // 1. Primary derived key if available
         if let Ok(primary) = self.derive_section_key(keys) {
@@ -331,33 +337,54 @@ impl NcaDecryptedHeader {
             }
         }
 
-        // 3. Key-area keys (for both slot 2 [AesCtr] and slot 3 [AesCtrEx])
+        // Also test all registered title keys from tickets or title.keys
+        for tk in keys.all_title_keys() {
+            if !candidates.contains(&tk) {
+                candidates.push(tk);
+            }
+            for rev in 0..=32 {
+                if let Some(titlekek) = keys.title_kek(rev) {
+                    let mut dec = tk;
+                    if aes128_ecb_decrypt(titlekek, &mut dec).is_ok() && !candidates.contains(&dec) {
+                        candidates.push(dec);
+                    }
+                }
+            }
+        }
+
+        // 3. Key-area keys (for all 4 slots: 0, 1, 2, 3)
         let slots = if section_index < self.fs_headers.len() {
             if let Ok(fs_header) = NcaFsHeader::parse(&self.fs_headers[section_index]) {
                 match fs_header.encryption_type {
-                    NcaEncryptionType::AesCtrEx | NcaEncryptionType::AesCtrExSkipLayerHash => [3, 2],
-                    _ => [2, 3],
+                    NcaEncryptionType::AesCtrEx | NcaEncryptionType::AesCtrExSkipLayerHash => [3, 0, 2, 1],
+                    _ => [0, 2, 1, 3],
                 }
             } else {
-                [2, 3]
+                [0, 2, 1, 3]
             }
         } else {
-            [2, 3]
+            [0, 2, 1, 3]
         };
 
-        if let Ok(area) = self.metadata.key_area() {
-            let nca_rev = self.metadata.master_key_revision();
-            for slot in slots {
-                let enc_entry = self.metadata.encrypted_key_area[slot];
-                if enc_entry != [0u8; 16] {
-                    // Try NCA master key revision kaek
+        let primary_area = self.metadata.key_area().unwrap_or(KeyArea::Application);
+        let areas = [primary_area, KeyArea::Application, KeyArea::Ocean, KeyArea::System];
+        let nca_rev = self.metadata.master_key_revision();
+
+        for slot in slots {
+            let enc_entry = self.metadata.encrypted_key_area[slot];
+            if enc_entry != [0u8; 16] {
+                // Try raw unencrypted entry directly (for pre-decrypted dumps)
+                if !candidates.contains(&enc_entry) {
+                    candidates.push(enc_entry);
+                }
+                // Decrypt with key area keys across all areas and revisions
+                for area in areas {
                     if let Some(kaek) = keys.key_area_key(area, nca_rev) {
                         let mut dec = enc_entry;
                         if aes128_ecb_decrypt(kaek, &mut dec).is_ok() && !candidates.contains(&dec) {
                             candidates.push(dec);
                         }
                     }
-                    // Try all other kaek revisions
                     for rev in 0..=32 {
                         if rev != nca_rev {
                             if let Some(kaek) = keys.key_area_key(area, rev) {
@@ -411,6 +438,8 @@ impl NcaDecryptedHeader {
 
         // 2. If key area is empty and no rights ID, it is unencrypted
         if !self.metadata.has_rights_id()
+            && self.metadata.encrypted_key_area[0] == [0; 16]
+            && self.metadata.encrypted_key_area[1] == [0; 16]
             && self.metadata.encrypted_key_area[2] == [0; 16]
             && self.metadata.encrypted_key_area[3] == [0; 16]
         {
@@ -431,7 +460,7 @@ impl NcaDecryptedHeader {
             if aes128_ctr_xor(key, initial_counter, &mut test_block).is_ok() {
                 let matches = match fs_header.fs_type {
                     NcaFsType::PartitionFs => &test_block[..4] == PFS0_MAGIC || &test_block[..4] == HFS0_MAGIC,
-                    NcaFsType::RomFs => &test_block[..4] == b"IVFC",
+                    NcaFsType::RomFs => &test_block[..4] == b"IVFC" || &test_block[..4] == PFS0_MAGIC,
                 };
                 if matches {
                     let mut decrypted = raw_section.to_vec();
@@ -442,7 +471,14 @@ impl NcaDecryptedHeader {
             }
         }
 
-        // 4. Fallback: if primary derived key was available, decrypt with it anyway
+        // 4. If fs_header is PartitionFs, do not return garbage that fails PFS0 magic later
+        if fs_header.fs_type == NcaFsType::PartitionFs {
+            return Err(LoadError::Invalid(
+                "NCA3 PartitionFS decryption failed: no matching key in prod.keys/title.keys produces valid PFS0/HFS0 magic",
+            ));
+        }
+
+        // 5. Fallback: if primary derived key was available, decrypt with it anyway
         // (to support tests with non-standard dummy payloads)
         if let Ok(primary_key) = self.derive_section_key(keys) {
             let mut decrypted = raw_section.to_vec();
