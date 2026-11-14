@@ -11,7 +11,7 @@
 
 use crate::cnmt::Cnmt;
 use crate::nca::{decrypt_nca3_header, NcaContentType, NcaDecryptedHeader, NcaFsHeader, NcaFsType};
-use crate::pfs0::Pfs0Archive;
+use crate::pfs0::{HFS0_MAGIC, PFS0_MAGIC, Pfs0Archive};
 use crate::ticket::Ticket;
 use crate::LoadError;
 use emulator_crypto::keys::KeyFile;
@@ -111,7 +111,41 @@ impl<'a> NspArchive<'a> {
                 if let Ok(fs_header) = NcaFsHeader::parse(&header.fs_headers[i]) {
                     if fs_header.fs_type == NcaFsType::PartitionFs {
                         if let Ok(decrypted_pfs) = header.decrypt_section(meta_nca, i, keys) {
-                            if let Ok(pfs) = Pfs0Archive::parse(&decrypted_pfs) {
+                            let (data_off, data_sz) =
+                                fs_header.data_region(decrypted_pfs.len() as u64);
+                            let target_bytes = if data_off > 0
+                                && (data_off + data_sz) as usize <= decrypted_pfs.len()
+                                && data_sz > 0
+                            {
+                                &decrypted_pfs[data_off as usize..(data_off + data_sz) as usize]
+                            } else {
+                                &decrypted_pfs[..]
+                            };
+                            let candidate_slice = if target_bytes.starts_with(PFS0_MAGIC)
+                                || target_bytes.starts_with(HFS0_MAGIC)
+                            {
+                                target_bytes
+                            } else if decrypted_pfs.starts_with(PFS0_MAGIC)
+                                || decrypted_pfs.starts_with(HFS0_MAGIC)
+                            {
+                                &decrypted_pfs[..]
+                            } else {
+                                let search_limit = decrypted_pfs.len().min(1024 * 1024);
+                                let mut found = target_bytes;
+                                for off in (0x200..search_limit).step_by(0x200) {
+                                    if off + 4 <= decrypted_pfs.len()
+                                        && (&decrypted_pfs[off..off + 4] == PFS0_MAGIC
+                                            || &decrypted_pfs[off..off + 4] == HFS0_MAGIC)
+                                    {
+                                        if Pfs0Archive::parse(&decrypted_pfs[off..]).is_ok() {
+                                            found = &decrypted_pfs[off..];
+                                            break;
+                                        }
+                                    }
+                                }
+                                found
+                            };
+                            if let Ok(pfs) = Pfs0Archive::parse(candidate_slice) {
                                 for file in pfs.files() {
                                     if file.name.to_ascii_lowercase().ends_with(".cnmt") {
                                         if let Some(cnmt_bytes) = pfs.get_file(&file.name) {

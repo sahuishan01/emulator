@@ -642,3 +642,128 @@ fn test_decrypt_partitionfs_rejects_non_matching_keys_with_clear_error() {
     assert!(err.to_string().contains("PartitionFS decryption failed"));
 }
 
+#[test]
+fn test_open_exefs_hierarchical_sha256_partitionfs_with_data_offset() {
+    use emulator_crypto::sha256::Sha256;
+    use emulator_loader::nca::NcaDecryptedHeader;
+
+    let keys = KeyFile::default();
+
+    let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
+    fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes()); // version 2
+    fs_headers[0][2] = 1; // PartitionFs
+    fs_headers[0][3] = 2; // HierarchicalSha256
+    fs_headers[0][4] = 1; // None (unencrypted/plaintext)
+
+    // Setup HierarchicalSha256Data in hash_data (offset 0x08..0x100 in fs_header)
+    // 0x00..0x20: master hash
+    // 0x20..0x24: block size (0x4000)
+    fs_headers[0][0x28..0x2c].copy_from_slice(&0x4000u32.to_le_bytes());
+    // 0x24..0x28: layer count = 2
+    fs_headers[0][0x2c..0x30].copy_from_slice(&2u32.to_le_bytes());
+    // Layer 0 region (0x28): offset = 0, size = 0x4000
+    fs_headers[0][0x30..0x38].copy_from_slice(&0u64.to_le_bytes());
+    fs_headers[0][0x38..0x40].copy_from_slice(&0x4000u64.to_le_bytes());
+    // Layer 1 data region (0x38): offset = 0x4000, size = 0x4000
+    fs_headers[0][0x40..0x48].copy_from_slice(&0x4000u64.to_le_bytes());
+    fs_headers[0][0x48..0x50].copy_from_slice(&0x4000u64.to_le_bytes());
+
+    let fs_hash = Sha256::digest(&fs_headers[0]);
+    const TOTAL_SIZE: u64 = 0x20000;
+    let mut header_bytes = vec![0u8; NCA_HEADER_SIZE];
+    header_bytes[0x200..0x204].copy_from_slice(b"NCA3");
+    header_bytes[0x204] = NcaDistributionType::Download as u8;
+    header_bytes[0x205] = NcaContentType::Program as u8;
+    header_bytes[0x208..0x210].copy_from_slice(&TOTAL_SIZE.to_le_bytes());
+    // Section 0: media units [6, 128) -> [0xC00, 0x10000) (size 0xF400)
+    header_bytes[0x240..0x244].copy_from_slice(&6u32.to_le_bytes());
+    header_bytes[0x244..0x248].copy_from_slice(&128u32.to_le_bytes());
+    header_bytes[0x280..0x2a0].copy_from_slice(&fs_hash);
+
+    let metadata = NcaHeader::parse_decrypted(&header_bytes, TOTAL_SIZE).unwrap();
+    let dec_header = NcaDecryptedHeader {
+        metadata,
+        fs_headers,
+    };
+
+    let nso = build_test_nso();
+    let exefs_pfs0 = build_pfs0(&[("main", &nso)]);
+
+    let mut archive = vec![0u8; TOTAL_SIZE as usize];
+    // Fill section 0 with dummy SHA256 hashes at 0..0x4000
+    let sec_start = 0xC00usize;
+    archive[sec_start..sec_start + 0x4000].fill(0xAA);
+    // Put PFS0 at sec_start + 0x4000
+    archive[sec_start + 0x4000..sec_start + 0x4000 + exefs_pfs0.len()]
+        .copy_from_slice(&exefs_pfs0);
+
+    let program = dec_header.open_exefs(&archive, &keys).unwrap();
+    assert_eq!(program.modules.len(), 1);
+    assert_eq!(program.modules[0].name, "main");
+}
+
+#[test]
+fn test_open_exefs_hierarchical_sha256_partitionfs_ctr_encrypted() {
+    use emulator_crypto::aes128::aes128_ctr_xor;
+    use emulator_crypto::sha256::Sha256;
+    use emulator_loader::nca::{make_section_ctr, NcaDecryptedHeader};
+
+    let content_key = [0x71u8; 16];
+    let key_text = format!("titlekey_01000000000000010000000000000000 = {}", "71".repeat(16));
+    let keys = KeyFile::parse(key_text.as_bytes()).unwrap();
+
+    let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
+    fs_headers[0][0..2].copy_from_slice(&2u16.to_le_bytes());
+    fs_headers[0][2] = 1; // PartitionFs
+    fs_headers[0][3] = 2; // HierarchicalSha256
+    fs_headers[0][4] = 3; // AesCtr
+    fs_headers[0][0x140..0x148].copy_from_slice(&[0x44; 8]); // section_ctr
+
+    // HierarchicalSha256: layer 1 at offset 0x4000
+    fs_headers[0][0x28..0x2c].copy_from_slice(&0x4000u32.to_le_bytes());
+    fs_headers[0][0x2c..0x30].copy_from_slice(&2u32.to_le_bytes());
+    fs_headers[0][0x30..0x38].copy_from_slice(&0u64.to_le_bytes());
+    fs_headers[0][0x38..0x40].copy_from_slice(&0x4000u64.to_le_bytes());
+    fs_headers[0][0x40..0x48].copy_from_slice(&0x4000u64.to_le_bytes());
+    fs_headers[0][0x48..0x50].copy_from_slice(&0x4000u64.to_le_bytes());
+
+    let fs_hash = Sha256::digest(&fs_headers[0]);
+    const TOTAL_SIZE: u64 = 0x20000;
+    let mut header_bytes = vec![0u8; NCA_HEADER_SIZE];
+    header_bytes[0x200..0x204].copy_from_slice(b"NCA3");
+    header_bytes[0x204] = NcaDistributionType::Download as u8;
+    header_bytes[0x205] = NcaContentType::Program as u8;
+    header_bytes[0x208..0x210].copy_from_slice(&TOTAL_SIZE.to_le_bytes());
+    // Rights ID
+    header_bytes[0x230] = 0x01;
+    // Section 0: media units [6, 128) -> [0xC00, 0x10000)
+    header_bytes[0x240..0x244].copy_from_slice(&6u32.to_le_bytes());
+    header_bytes[0x244..0x248].copy_from_slice(&128u32.to_le_bytes());
+    header_bytes[0x280..0x2a0].copy_from_slice(&fs_hash);
+
+    let metadata = NcaHeader::parse_decrypted(&header_bytes, TOTAL_SIZE).unwrap();
+    let dec_header = NcaDecryptedHeader {
+        metadata,
+        fs_headers,
+    };
+
+    let nso = build_test_nso();
+    let exefs_pfs0 = build_pfs0(&[("main", &nso)]);
+
+    let sec_start = 0xC00usize;
+    let sec_len = 0xF400usize;
+    let mut plaintext_payload = vec![0xBB; sec_len];
+    plaintext_payload[0x4000..0x4000 + exefs_pfs0.len()].copy_from_slice(&exefs_pfs0);
+
+    let mut encrypted_payload = plaintext_payload.clone();
+    let initial_ctr = make_section_ctr(&[0x44; 8], sec_start as u64);
+    aes128_ctr_xor(&content_key, initial_ctr, &mut encrypted_payload).unwrap();
+
+    let mut archive = vec![0u8; TOTAL_SIZE as usize];
+    archive[sec_start..sec_start + sec_len].copy_from_slice(&encrypted_payload);
+
+    let program = dec_header.open_exefs(&archive, &keys).unwrap();
+    assert_eq!(program.modules.len(), 1);
+    assert_eq!(program.modules[0].name, "main");
+}
+

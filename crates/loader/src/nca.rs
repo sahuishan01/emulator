@@ -16,6 +16,7 @@ pub const NCA_ENCRYPTED_HEADER_SIZE: usize = 0xC00;
 pub const NCA_MEDIA_UNIT_SIZE: u64 = 0x200;
 pub const NCA_SECTION_COUNT: usize = 4;
 pub const NCA_FS_HEADER_SIZE: usize = 0x200;
+pub const IVFC_MAGIC: &[u8; 4] = b"IVFC";
 const NCA_MAGIC_OFFSET: usize = 0x200;
 const SECTION_TABLE_OFFSET: usize = 0x240;
 const SECTION_HASHES_OFFSET: usize = 0x280;
@@ -176,6 +177,67 @@ impl NcaFsHeader {
             section_ctr,
             hash_data,
         })
+    }
+
+    /// Returns the data region (offset, size) within the section payload.
+    ///
+    /// For HierarchicalSha256 / HierarchicalSha3256 (used by PartitionFS / ExeFS),
+    /// the section payload begins with the hash table (layer 0) and the actual
+    /// PartitionFS payload begins at the data layer offset (`hash_layer_count - 1`).
+    ///
+    /// For HierarchicalIntegrity / HierarchicalIntegritySha3 (IVFC, used by RomFS),
+    /// the data level offset describes where the RomFS file data begins.
+    ///
+    /// If no hash layer is present or for unhashed/plain sections, returns (0, section_len).
+    pub fn data_region(&self, section_len: u64) -> (u64, u64) {
+        match self.hash_type {
+            NcaHashType::HierarchicalSha256 | NcaHashType::HierarchicalSha3256 => {
+                if self.hash_data.len() >= 0x48 {
+                    let layer_count = u32::from_le_bytes(
+                        self.hash_data[0x24..0x28].try_into().unwrap_or([0; 4]),
+                    ) as usize;
+                    if (2..=5).contains(&layer_count) {
+                        let data_layer_idx = layer_count - 1;
+                        let reg_off = 0x28 + data_layer_idx * 16;
+                        if reg_off + 16 <= self.hash_data.len() {
+                            let off = u64::from_le_bytes(
+                                self.hash_data[reg_off..reg_off + 8].try_into().unwrap(),
+                            );
+                            let sz = u64::from_le_bytes(
+                                self.hash_data[reg_off + 8..reg_off + 16].try_into().unwrap(),
+                            );
+                            if off < section_len {
+                                let clamped_sz = sz.min(section_len.saturating_sub(off));
+                                if clamped_sz > 0 {
+                                    return (off, clamped_sz);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            NcaHashType::HierarchicalIntegrity | NcaHashType::HierarchicalIntegritySha3 => {
+                if self.hash_data.len() >= 0x9C && &self.hash_data[0..4] == IVFC_MAGIC {
+                    for level_idx in (0..6).rev() {
+                        let off = 0x0C + level_idx * 0x18;
+                        if off + 16 <= self.hash_data.len() {
+                            let lvl_offset = u64::from_le_bytes(
+                                self.hash_data[off..off + 8].try_into().unwrap(),
+                            );
+                            let lvl_size = u64::from_le_bytes(
+                                self.hash_data[off + 8..off + 16].try_into().unwrap(),
+                            );
+                            if lvl_size > 0 && lvl_offset < section_len {
+                                let clamped_sz = lvl_size.min(section_len.saturating_sub(lvl_offset));
+                                return (lvl_offset, clamped_sz);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        (0, section_len)
     }
 }
 
@@ -422,14 +484,31 @@ impl NcaDecryptedHeader {
         let fs_header = NcaFsHeader::parse(&self.fs_headers[section_index])?;
         let raw_section = &archive[section.start as usize..section.end as usize];
 
+        let (data_off, _data_sz) = fs_header.data_region(raw_section.len() as u64);
+        let check_offsets: &[u64] = if data_off > 0 && data_off + 4 <= raw_section.len() as u64 {
+            &[data_off, 0]
+        } else {
+            &[0]
+        };
+
         // 1. If section is already plaintext (dumped/decrypted in place), return directly
-        if raw_section.len() >= 4 {
-            let magic = &raw_section[..4];
-            if fs_header.fs_type == NcaFsType::PartitionFs && (magic == PFS0_MAGIC || magic == HFS0_MAGIC) {
-                return Ok(raw_section.to_vec());
-            }
-            if fs_header.fs_type == NcaFsType::RomFs && magic == b"IVFC" {
-                return Ok(raw_section.to_vec());
+        for &off in check_offsets {
+            let off_usize = off as usize;
+            if off_usize + 4 <= raw_section.len() {
+                let magic = &raw_section[off_usize..off_usize + 4];
+                if fs_header.fs_type == NcaFsType::PartitionFs
+                    && (magic == PFS0_MAGIC || magic == HFS0_MAGIC)
+                {
+                    return Ok(raw_section.to_vec());
+                }
+                if fs_header.fs_type == NcaFsType::RomFs
+                    && (magic == b"IVFC"
+                        || magic == PFS0_MAGIC
+                        || (raw_section.len() >= off_usize + 8
+                            && &raw_section[off_usize..off_usize + 8] == &0x50u64.to_le_bytes()))
+                {
+                    return Ok(raw_section.to_vec());
+                }
             }
         }
         if fs_header.encryption_type == NcaEncryptionType::None {
@@ -453,20 +532,32 @@ impl NcaDecryptedHeader {
         let initial_counter = make_section_ctr(&fs_header.section_ctr, section.start);
         let candidate_keys = self.candidate_section_keys(section_index, keys);
 
-        // 3. Test candidate keys by decrypting first block (16 bytes) and verifying magic
+        // 3. Test candidate keys by testing blocks at data_off and 0, verifying magic
         for key in &candidate_keys {
-            let mut test_block = [0u8; 16];
-            test_block.copy_from_slice(&raw_section[..16]);
-            if aes128_ctr_xor(key, initial_counter, &mut test_block).is_ok() {
-                let matches = match fs_header.fs_type {
-                    NcaFsType::PartitionFs => &test_block[..4] == PFS0_MAGIC || &test_block[..4] == HFS0_MAGIC,
-                    NcaFsType::RomFs => &test_block[..4] == b"IVFC" || &test_block[..4] == PFS0_MAGIC,
-                };
-                if matches {
-                    let mut decrypted = raw_section.to_vec();
-                    aes128_ctr_xor(key, initial_counter, &mut decrypted)
-                        .map_err(|_| LoadError::Invalid("NCA3 CTR decryption failed"))?;
-                    return Ok(decrypted);
+            for &off in check_offsets {
+                let off_usize = off as usize;
+                if off_usize + 16 <= raw_section.len() {
+                    let ctr = make_section_ctr(&fs_header.section_ctr, section.start + off);
+                    let mut test_block = [0u8; 16];
+                    test_block.copy_from_slice(&raw_section[off_usize..off_usize + 16]);
+                    if aes128_ctr_xor(key, ctr, &mut test_block).is_ok() {
+                        let matches = match fs_header.fs_type {
+                            NcaFsType::PartitionFs => {
+                                &test_block[..4] == PFS0_MAGIC || &test_block[..4] == HFS0_MAGIC
+                            }
+                            NcaFsType::RomFs => {
+                                &test_block[..4] == b"IVFC"
+                                    || &test_block[..4] == PFS0_MAGIC
+                                    || test_block[..8] == 0x50u64.to_le_bytes()
+                            }
+                        };
+                        if matches {
+                            let mut decrypted = raw_section.to_vec();
+                            aes128_ctr_xor(key, initial_counter, &mut decrypted)
+                                .map_err(|_| LoadError::Invalid("NCA3 CTR decryption failed"))?;
+                            return Ok(decrypted);
+                        }
+                    }
                 }
             }
         }
@@ -503,7 +594,28 @@ impl NcaDecryptedHeader {
                     if fs_header.fs_type == NcaFsType::PartitionFs {
                         match self.decrypt_section(archive, i, keys) {
                             Ok(decrypted) => {
-                                match crate::exefs::ExeFsProgram::parse(&decrypted) {
+                                let (data_off, data_sz) =
+                                    fs_header.data_region(decrypted.len() as u64);
+                                let exefs_bytes = if data_off > 0
+                                    && (data_off + data_sz) as usize <= decrypted.len()
+                                    && data_sz > 0
+                                {
+                                    &decrypted[data_off as usize..(data_off + data_sz) as usize]
+                                } else {
+                                    &decrypted[..]
+                                };
+                                let target_bytes = if exefs_bytes.starts_with(PFS0_MAGIC)
+                                    || exefs_bytes.starts_with(HFS0_MAGIC)
+                                {
+                                    exefs_bytes
+                                } else if decrypted.starts_with(PFS0_MAGIC)
+                                    || decrypted.starts_with(HFS0_MAGIC)
+                                {
+                                    &decrypted[..]
+                                } else {
+                                    exefs_bytes
+                                };
+                                match crate::exefs::ExeFsProgram::parse(target_bytes) {
                                     Ok(program) => return Ok(program),
                                     Err(e) => {
                                         last_error = Some(e);

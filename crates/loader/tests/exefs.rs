@@ -98,3 +98,24 @@ fn test_exefs_program_loading() {
     assert_eq!(program.modules().len(), 1);
     assert_eq!(program.modules()[0].name, "main");
 }
+
+#[test]
+fn test_exefs_parse_finds_pfs0_at_aligned_offset() {
+    let nso_bytes = build_test_nso();
+    let npdm_bytes = build_test_npdm();
+
+    let files = [
+        ("main.npdm", npdm_bytes.as_slice()),
+        ("main.nso", nso_bytes.as_slice()),
+    ];
+
+    let exefs_bytes = build_pfs0(&files);
+    // Prefix with 0x4000 bytes of dummy hash table data
+    let mut padded = vec![0xEEu8; 0x4000];
+    padded.extend_from_slice(&exefs_bytes);
+
+    let exefs = ExeFsProgram::parse(&padded).expect("parse ExeFS with prefix hash data");
+    assert!(exefs.npdm.is_some());
+    assert_eq!(exefs.modules.len(), 1);
+    assert_eq!(exefs.modules[0].name, "main");
+}

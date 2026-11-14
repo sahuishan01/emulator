@@ -3,7 +3,7 @@
 
 use crate::npdm::NpdmMeta;
 use crate::nso::{NsoImage, NsoProgram};
-use crate::pfs0::Pfs0Archive;
+use crate::pfs0::{Pfs0Archive, HFS0_MAGIC, PFS0_MAGIC};
 use crate::LoadError;
 
 #[derive(Debug)]
@@ -21,7 +21,33 @@ pub struct ExeFsProgram {
 impl ExeFsProgram {
     /// Parses an ExeFS archive from raw bytes (PFS0 format containing main.npdm, rtld.nso, main.nso, subsdk*.nso).
     pub fn parse(archive_bytes: &[u8]) -> Result<Self, LoadError> {
-        let archive = Pfs0Archive::parse(archive_bytes)?;
+        let archive_slice = if archive_bytes.starts_with(PFS0_MAGIC)
+            || archive_bytes.starts_with(HFS0_MAGIC)
+        {
+            archive_bytes
+        } else {
+            // Search for PFS0 / HFS0 magic at 0x200-aligned offsets in the first 1 MiB
+            let search_limit = archive_bytes.len().min(1024 * 1024);
+            let mut found_offset = None;
+            for off in (0x200..search_limit).step_by(0x200) {
+                if off + 4 <= archive_bytes.len() {
+                    let magic = &archive_bytes[off..off + 4];
+                    if magic == PFS0_MAGIC || magic == HFS0_MAGIC {
+                        if Pfs0Archive::parse(&archive_bytes[off..]).is_ok() {
+                            found_offset = Some(off);
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(off) = found_offset {
+                &archive_bytes[off..]
+            } else {
+                archive_bytes
+            }
+        };
+
+        let archive = Pfs0Archive::parse(archive_slice)?;
 
         let npdm = if let Some(meta_bytes) = archive.get_file("main.npdm") {
             Some(NpdmMeta::parse(meta_bytes)?)

@@ -161,7 +161,16 @@ impl RomFsArchive {
     /// Parses RomFS from an NCA section decrypted payload using its `NcaFsHeader`.
     /// Handles IVFC (Hierarchical Integrity) level descriptors.
     pub fn from_section_payload(payload: &[u8], fs_header: &NcaFsHeader) -> Result<Self, LoadError> {
-        if fs_header.hash_type == NcaHashType::HierarchicalIntegrity {
+        if fs_header.hash_type == NcaHashType::HierarchicalIntegrity
+            || fs_header.hash_type == NcaHashType::HierarchicalIntegritySha3
+        {
+            let (data_off, data_sz) = fs_header.data_region(payload.len() as u64);
+            if data_sz > 0 && (data_off + data_sz) as usize <= payload.len() {
+                let romfs_slice = &payload[data_off as usize..(data_off + data_sz) as usize];
+                if let Ok(romfs) = Self::parse(romfs_slice) {
+                    return Ok(romfs);
+                }
+            }
             // Parse IVFC header in fs_header.hash_data (0xF8 bytes)
             if fs_header.hash_data.len() < 0x9C || &fs_header.hash_data[0..4] != IVFC_MAGIC {
                 return Err(LoadError::Invalid("missing IVFC magic in RomFS hash data"));
