@@ -187,6 +187,11 @@ pub struct Kernel {
     aslr_size: u64,
     program_id: u64,
     sync: FutexArbitrator,
+    svc_count: u64,
+    last_svc_id: u16,
+    last_svc_pc: u64,
+    ipc_count: u64,
+    last_ipc_cmd: u32,
 }
 
 impl Default for Kernel {
@@ -208,6 +213,11 @@ impl Default for Kernel {
             aslr_size: 0x7f_ff00_0000,
             program_id: 0x0100_0000_0000_1000,
             sync: FutexArbitrator::default(),
+            svc_count: 0,
+            last_svc_id: 0,
+            last_svc_pc: 0,
+            ipc_count: 0,
+            last_ipc_cmd: 0,
         }
     }
 }
@@ -338,6 +348,21 @@ impl Kernel {
     pub fn ipc_records(&self) -> &[IpcRecord] {
         &self.ipc_records
     }
+    pub fn svc_count(&self) -> u64 {
+        self.svc_count
+    }
+    pub fn last_svc_id(&self) -> u16 {
+        self.last_svc_id
+    }
+    pub fn last_svc_pc(&self) -> u64 {
+        self.last_svc_pc
+    }
+    pub fn ipc_count(&self) -> u64 {
+        self.ipc_count
+    }
+    pub fn last_ipc_cmd(&self) -> u32 {
+        self.last_ipc_cmd
+    }
 
     pub fn register_named_port(
         &mut self,
@@ -422,6 +447,8 @@ impl Kernel {
             .check_access(cpu.tpidrro_el0, IPC_BUFFER_SIZE, Access::Write)
             .map_err(KernelError::Memory)?;
         let mut request = parse_request(&input).map_err(KernelError::Ipc)?;
+        self.ipc_count = self.ipc_count.saturating_add(1);
+        self.last_ipc_cmd = request.command_id;
         if request.pid.is_some() {
             request.pid = Some(1);
         } // Owned guest process ID, never the host PID.
@@ -750,6 +777,9 @@ impl Kernel {
         if self.exited {
             return Err(KernelError::ProcessAlreadyExited);
         }
+        self.svc_count = self.svc_count.saturating_add(1);
+        self.last_svc_id = id;
+        self.last_svc_pc = cpu.pc;
         match id {
             SVC_SET_HEAP_SIZE => {
                 self.set_heap_size(cpu, memory)?;
@@ -1158,7 +1188,8 @@ impl Kernel {
                 let reason = cpu.x[0] as u32;
                 let info1 = cpu.x[1];
                 let info2 = cpu.x[2];
-                let msg = format!("guest svcBreak: reason={reason:#x}, info1={info1:#x}, info2={info2:#x}\n");
+                let pc = cpu.pc;
+                let msg = format!("guest svcBreak: reason={reason:#x}, info1={info1:#x}, info2={info2:#x} at pc={pc:#x}\n");
                 self.debug_records.push(msg.into_bytes());
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)

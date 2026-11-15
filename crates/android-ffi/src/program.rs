@@ -498,6 +498,11 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         let pc = s.cpu().pc;
         let core = s.kernel().current_core();
         let frames = FRAMES_PRESENTED.with(|f| *f.borrow());
+        let svc_count = s.kernel().svc_count();
+        let last_svc = s.kernel().last_svc_id();
+        let last_svc_pc = s.kernel().last_svc_pc();
+        let ipc_count = s.kernel().ipc_count();
+        let last_ipc_cmd = s.kernel().last_ipc_cmd();
         let total: usize = s.debug_records().iter().map(Vec::len).sum();
         let bytes: Vec<u8> = s
             .debug_records()
@@ -509,7 +514,7 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         let truncated = total > bytes.len() || decoded.chars().count() > 512;
         let output = decoded.chars().take(512).collect::<String>();
         let text = format!(
-            "{{\"ok\":{},\"state\":{},\"instructions\":{},\"pc\":{},\"core\":{},\"frames\":{},\"output\":{},\"outputTruncated\":{},\"error\":{}}}",
+            "{{\"ok\":{},\"state\":{},\"instructions\":{},\"pc\":{},\"core\":{},\"frames\":{},\"output\":{},\"outputTruncated\":{},\"svcCount\":{},\"lastSvc\":{},\"lastSvcPc\":{},\"ipcCount\":{},\"lastIpcCmd\":{},\"error\":{}}}",
             message.is_empty(),
             quote(state),
             s.instructions(),
@@ -518,6 +523,11 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
             frames,
             quote(&output),
             truncated,
+            svc_count,
+            last_svc,
+            last_svc_pc,
+            ipc_count,
+            last_ipc_cmd,
             quote(&message.chars().take(512).collect::<String>())
         );
         s.clear_ipc_trace();

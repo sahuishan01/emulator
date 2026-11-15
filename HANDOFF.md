@@ -19,7 +19,21 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.35-dev` (versionCode 75).
+- **Latest Release**: `v0.28.36-dev` (versionCode 76).
+  - **Live Kernel SVC & IPC Telemetry Observability**:
+    - Instrumented `Kernel` (`crates/kernel/src/lib.rs`) with live metric tracking: `svc_count`, `last_svc_id`, `last_svc_pc`, `ipc_count`, and `last_ipc_cmd`.
+    - Exposed telemetry accessors in `Kernel` and threaded metrics through `crates/android-ffi/src/program.rs` in `emulator_program_step_v1` JSON reports (`svcCount`, `lastSvc`, `lastSvcPc`, `ipcCount`, `lastIpcCmd`).
+    - Extended `ProgramActivity.kt` execution telemetry: periodic logging now records live supervisor calls and IPC commands (`svcs=$svcCount(last=0x$lastSvc@0x$lastSvcPc), ipcs=$ipcCount(lastCmd=$lastIpcCmd)`), enabling instant diagnosis of whether guest runtime linker (`rtld`) is actively querying system state or stalled in user-space logic.
+  - **Guest Diagnostic Break & Output Logging**:
+    - Updated `SVC_BREAK` (0x26/0x2C) in `crates/kernel/src/lib.rs` to record the guest Program Counter (PC) where the break occurred (`guest svcBreak: reason=..., info1=..., info2=... at pc=0x...`).
+    - Added dedicated logging in `ProgramActivity.kt` (`AppLog.i("ProgramActivity", "Guest diagnostic output: $guestOutput")`) so any guest assertion breaks, debug strings, or panic outputs appear immediately in diagnostic logs and logcat.
+  - **MIPS Rate Tracking & Telemetry Fix**:
+    - Fixed MIPS calculation in `ProgramActivity.kt`: preserved `currentMips` across sample iterations rather than losing the calculated rate when sample intervals are under 400ms, ensuring real-time MIPS is accurately displayed on HUD and reported in logs.
+  - **Invariants & Verification**:
+    - Maintained strict 16 KiB page-alignment across `arm64-v8a` and `x86_64` native libraries in APK builds.
+    - Exported and verified all 22 required engine symbols.
+    - 100% pass rate across entire Rust workspace test suite and Android unit/verification tests.
+- **Previous Release**: `v0.28.35-dev` (versionCode 75).
   - **Horizon OS Kernel Supervisor Call (SVC) ABI Corrections**:
     - `SVC_QUERY_MEMORY` (0x06): Fixed page-specific information output pointer handling. When callers provide an `out_page_info` pointer in `cpu.x[1]`, the kernel now writes `0_u32` through the pointer to guest memory (`memory.write_u32(in_pageinfo_addr, 0)`) in addition to returning `cpu.x[1] = 0` and `cpu.x[0] = 0`, eliminating uninitialized stack reads during runtime link-editor (`rtld`) memory scans.
     - `SVC_GET_INFO` (0x29): Corrected register return ABI to return queried values in `cpu.x[1]` alongside returning `cpu.x[0] = 0` (and dual-writing to `out_ptr` in `cpu.x[0]` when aligned). Prevents userspace wrappers from clobbering queried results with the input `info_type`.

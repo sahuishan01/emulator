@@ -559,6 +559,8 @@ class ProgramActivity : Activity() {
                     var lastLog = System.currentTimeMillis()
                     var lastInstructionCount = 0L
                     var lastRateTime = System.currentTimeMillis()
+                    var currentMips = 0.0
+                    var lastLoggedOutput = ""
 
                     while (!isStopped.get()) {
                         // Dynamically attach/detach native surface on worker thread
@@ -595,10 +597,16 @@ class ProgramActivity : Activity() {
                         if (now - lastRateTime >= 400) {
                             val deltaInst = instructions - lastInstructionCount
                             val deltaTime = (now - lastRateTime).coerceAtLeast(1)
-                            val mips = (deltaInst.toDouble() / deltaTime) / 1000.0
+                            currentMips = (deltaInst.toDouble() / deltaTime) / 1000.0
                             lastInstructionCount = instructions
                             lastRateTime = now
-                            result.put("mips", mips)
+                        }
+                        result.put("mips", currentMips)
+
+                        val guestOutput = result.optString("output").trim()
+                        if (guestOutput.isNotEmpty() && guestOutput != lastLoggedOutput) {
+                            AppLog.i("ProgramActivity", "Guest diagnostic output: $guestOutput")
+                            lastLoggedOutput = guestOutput
                         }
 
                         if (now - lastShow > 150 || state != "running") {
@@ -607,9 +615,17 @@ class ProgramActivity : Activity() {
                         }
 
                         if (now - lastLog >= 2500 || state != "running") {
+                            val pc = result.optLong("pc")
+                            val frames = result.optLong("frames")
+                            val svcCount = result.optLong("svcCount")
+                            val lastSvc = result.optInt("lastSvc")
+                            val lastSvcPc = result.optLong("lastSvcPc")
+                            val ipcCount = result.optLong("ipcCount")
+                            val lastIpcCmd = result.optLong("lastIpcCmd")
+                            val outSummary = if (guestOutput.isNotEmpty()) " output='${guestOutput.replace("\n", " ").take(120)}'" else ""
                             AppLog.i(
                                 "ProgramActivity",
-                                "Guest execution: state=$state, inst=$instructions, pc=0x${java.lang.Long.toHexString(result.optLong("pc"))}, mips=${String.format(Locale.US, "%.1f", result.optDouble("mips", 0.0))}, frames=${result.optLong("frames")}"
+                                "Guest execution: state=$state, inst=$instructions, pc=0x${java.lang.Long.toHexString(pc)}, mips=${String.format(Locale.US, "%.1f", currentMips)}, svcs=$svcCount(last=0x${Integer.toHexString(lastSvc)}@0x${java.lang.Long.toHexString(lastSvcPc)}), ipcs=$ipcCount(lastCmd=$lastIpcCmd), frames=$frames$outSummary"
                             )
                             lastLog = now
                         }
