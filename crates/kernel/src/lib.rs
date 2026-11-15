@@ -688,10 +688,6 @@ impl Kernel {
             cpu.x[0] = RESULT_INVALID_ADDRESS;
             return Ok(());
         }
-        if query_addr >= (1_u64 << 39) {
-            cpu.x[0] = RESULT_INVALID_ADDRESS;
-            return Ok(());
-        }
         let desc = memory.query_memory(query_addr);
         let mut bytes = [0u8; 40];
         bytes[0..8].copy_from_slice(&desc.base_address.to_le_bytes());

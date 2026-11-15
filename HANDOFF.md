@@ -19,7 +19,21 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.37-dev` (versionCode 77).
+- **Latest Release**: `v0.28.38-dev` (versionCode 78).
+  - **Horizon OS `svcQueryMemory` (SVC 0x06) Address Space End & Traversal Bug Fix**:
+    - Analyzed device telemetry from realme RMX5061 running Pokémon Legends: Z-A (`c494c0f9225370e6e39d4c6634b0be1cbc74af087bb87ef9b271594ce84f2521.nsp`), which halted in an abort spin-loop at `pc=0x100740` (`b 0x100740`) with `x0=0xe601` (`RESULT_INVALID_ADDRESS`), `lr=0x100448`, `sp=0x8000ff60`, `x1=0x8000ff74`, and `svcs=22(last=0x6@0x101ba0)`.
+    - Identified that the runtime link-editor (`rtld`) scans virtual memory sequentially using `svcQueryMemory` across all mapped regions and gaps to discover loaded NSO modules and their `MOD0` headers.
+    - Discovered that when `rtld` queried past the end of mapped memory (reaching `1 << 39`, the boundary of the 39-bit address space), `crates/kernel/src/lib.rs` explicitly rejected `query_addr >= (1_u64 << 39)` with `RESULT_INVALID_ADDRESS (0xe601)`.
+    - In the Horizon OS kernel (`KPageTableBase::QueryInfo`), querying beyond the end of the address space (`address >= address_space_end`) does not fail; it returns `RESULT_SUCCESS (0)` with a synthetic Inaccessible descriptor (`base_address = max_address`, `size = 0 - max_address`, `state = 0`, `permission = 0`).
+    - Fixed `crates/memory/src/lib.rs`: `query_memory` now cleanly handles `address >= max_address` by returning the synthetic Inaccessible block (`base_address: max_address`, `size: 0u64.wrapping_sub(max_address)` = `0xFFFF_FF80_0000_0000`), allowing `rtld`'s traversal loop to wrap around to 0 and terminate cleanly without panic.
+    - Removed premature `query_addr >= (1_u64 << 39)` rejection from `crates/kernel/src/lib.rs`.
+    - Added unit test in `crates/kernel/tests/svc.rs` verifying sequential traversal over the entire address space past `1 << 39` with wrap-around termination.
+    - Added integration test `guest_exefs_rtld_traversal_loop_survives_to_end_of_address_space` in `crates/session/tests/homebrew.rs` executing the exact guest A64 `rtld` traversal loop with real `svc 0x06` calls and clean exit.
+  - **Invariants & Verification**:
+    - Maintained strict 16 KiB page-alignment across `arm64-v8a` and `x86_64` native libraries in APK builds.
+    - Exported and verified all 22 required engine symbols.
+    - 100% pass rate across entire Rust workspace test suite and Android unit/verification tests.
+- **Previous Release**: `v0.28.37-dev` (versionCode 77).
   - **A64 Live Instruction Disassembly & Register Observability**:
     - Implemented clean-room A64 disassembler in `crates/a64/src/lib.rs` (`pub fn disassemble(pc: u64, word: u32) -> String`) decoding any 32-bit ARM64 opcode into human-readable assembly mnemonics (`nop`, `ret`, `svc`, `b`, `bl`, `blr`, `br`, `b.cond`, `cbz`, `cbnz`, `tbz`, `tbnz`, `movz`, `movk`, `ldr`, `str`, `ldp`, `stp`, `adds`, `subs`, `cmp`, `csel`, etc.).
     - Added unit test `test_disassemble_common_instructions` in `crates/a64/tests/execution.rs` covering typical branch, arithmetic, load/store, conditional select, and supervisor calls.

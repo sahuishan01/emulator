@@ -182,7 +182,7 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
     );
     assert_eq!(cpu.x[0], RESULT_INVALID_ADDRESS);
 
-    // Query 7: query_address beyond address space (>= 1 << 39)
+    // Query 7: query_address beyond address space (>= 1 << 39) returns fake Inaccessible block with success
     cpu.x[0] = 0x1000;
     cpu.x[2] = 1_u64 << 39;
     assert_eq!(
@@ -191,7 +191,12 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
             .unwrap(),
         KernelEvent::Continue
     );
-    assert_eq!(cpu.x[0], RESULT_INVALID_ADDRESS);
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 0);
+    assert_eq!(memory.read_u64(0x1000).unwrap(), 1_u64 << 39);
+    assert_eq!(memory.read_u64(0x1008).unwrap(), 0u64.wrapping_sub(1_u64 << 39));
+    assert_eq!(memory.read_u32(0x1010).unwrap(), 0);
+    assert_eq!(memory.read_u32(0x1018).unwrap(), 0);
 
     // Query 8: verifies page_info output pointer is populated with 0
     memory.write_u32(0x1030, 0xdead_beef).unwrap();
@@ -208,11 +213,12 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
     assert_eq!(cpu.x[1], 0);
     assert_eq!(memory.read_u32(0x1030).unwrap(), 0);
 
-    // Query 8: Sequential traversal loop like rtld
+    // Query 9: Sequential traversal loop like rtld across the entire address space
     let mut current_addr = 0u64;
     let mut visited_code = false;
     let mut visited_data = false;
-    while current_addr < 0x8004_0000 {
+    let mut query_count = 0;
+    loop {
         cpu.x[0] = 0x1000;
         cpu.x[2] = current_addr;
         assert_eq!(
@@ -231,11 +237,16 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
         if base == 0x8001_0000 && perm == 3 {
             visited_data = true;
         }
-        assert!(size > 0);
-        current_addr = base + size;
+        query_count += 1;
+        let next_addr = base.wrapping_add(size);
+        if next_addr <= current_addr || base >= (1_u64 << 39) {
+            break;
+        }
+        current_addr = next_addr;
     }
     assert!(visited_code);
     assert!(visited_data);
+    assert!(query_count >= 5);
 }
 
 #[test]

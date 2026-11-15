@@ -390,3 +390,97 @@ fn guest_shader_draws_submit_via_nv_and_keep_backing_after_owner_close() {
         }
     }
 }
+
+#[test]
+fn guest_exefs_rtld_traversal_loop_survives_to_end_of_address_space() {
+    let mut nso_data = vec![0u8; 0x100 + 0x3000];
+    nso_data[0..4].copy_from_slice(b"NSO0");
+    nso_data[0x10..0x14].copy_from_slice(&0x100u32.to_le_bytes());
+    nso_data[0x14..0x18].copy_from_slice(&0x0u32.to_le_bytes());
+    nso_data[0x18..0x1c].copy_from_slice(&0x1000u32.to_le_bytes());
+    nso_data[0x20..0x24].copy_from_slice(&0x1100u32.to_le_bytes());
+    nso_data[0x24..0x28].copy_from_slice(&0x1000u32.to_le_bytes());
+    nso_data[0x28..0x2c].copy_from_slice(&0x1000u32.to_le_bytes());
+    nso_data[0x30..0x34].copy_from_slice(&0x2100u32.to_le_bytes());
+    nso_data[0x34..0x38].copy_from_slice(&0x2000u32.to_le_bytes());
+    nso_data[0x38..0x3c].copy_from_slice(&0x1000u32.to_le_bytes());
+
+    // Instructions:
+    // 0: SUB SP, SP, #0x40  (0xd10103ff)
+    // 1: MOV X19, XZR       (0xaa1f03f3)
+    // LOOP:
+    // 2: ADD X0, SP, #0     (0x910003e0) - out_meminfo
+    // 3: MOV X1, XZR        (0xaa1f03e1) - page_info
+    // 4: MOV X2, X19        (0xaa1303e2) - query_addr
+    // 5: SVC #0x06          (0xd40000c1) - QueryMemory
+    // 6: LDR X20, [SP, #0]  (0xf94003f4) - base_address
+    // 7: LDR X21, [SP, #8]  (0xf94007f5) - size
+    // 8: ADD X19, X20, X21  (0x8b150293) - next_addr = base + size
+    // 9: CBZ X19, +2        (0xb4000053) - if wrapped to 0, break to insn 11
+    // 10: B -8              (0x17ffff8)  - loop back to insn 2
+    // DONE:
+    // 11: MOV X0, #99       (0xd2800c60)
+    // 12: SVC #0x07         (0xd40000e1) - ExitProcess
+    let insns: [u32; 13] = [
+        0xd10103ff,
+        0xaa1f03f3,
+        0x910003e0,
+        0xaa1f03e1,
+        0xaa1303e2,
+        0xd40000c1,
+        0xf94003f4,
+        0xf94007f5,
+        0x8b150293,
+        0xb4000053,
+        0x17ff_fff8,
+        0xd2800c60,
+        0xd40000e1,
+    ];
+    for (i, &insn) in insns.iter().enumerate() {
+        nso_data[0x100 + i * 4..0x104 + i * 4].copy_from_slice(&insn.to_le_bytes());
+    }
+
+    let mut npdm = vec![0u8; 0x80];
+    npdm[0..4].copy_from_slice(b"META");
+    npdm[0x10..0x1a].copy_from_slice(b"TEST-GAME\0");
+    npdm[0x20..0x28].copy_from_slice(&0x0100_1234_5678_0000u64.to_le_bytes());
+
+    let files: [(&str, &[u8]); 2] = [("main.npdm", &npdm), ("rtld.nso", &nso_data)];
+    let mut header = Vec::new();
+    header.extend_from_slice(b"PFS0");
+    header.extend_from_slice(&(files.len() as u32).to_le_bytes());
+
+    let mut string_table = Vec::new();
+    let mut file_entries = Vec::new();
+    let mut current_data_offset = 0u64;
+
+    for (name, data) in files {
+        let name_offset = string_table.len() as u32;
+        string_table.extend_from_slice(name.as_bytes());
+        string_table.push(0);
+
+        file_entries.extend_from_slice(&current_data_offset.to_le_bytes());
+        file_entries.extend_from_slice(&(data.len() as u64).to_le_bytes());
+        file_entries.extend_from_slice(&name_offset.to_le_bytes());
+        file_entries.extend_from_slice(&0u32.to_le_bytes());
+
+        current_data_offset += data.len() as u64;
+    }
+
+    header.extend_from_slice(&(string_table.len() as u32).to_le_bytes());
+    header.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut archive = Vec::new();
+    archive.extend_from_slice(&header);
+    archive.extend_from_slice(&file_entries);
+    archive.extend_from_slice(&string_table);
+    for (_, data) in files {
+        archive.extend_from_slice(data);
+    }
+
+    let exefs = emulator_loader::exefs::ExeFsProgram::parse(&archive).unwrap();
+    let mut session = Session::from_exefs(&exefs).unwrap();
+    let outcome = session.run(2000);
+    assert_eq!(outcome.unwrap(), RunOutcome::Exited);
+    assert_eq!(session.cpu().x[0], 99);
+}

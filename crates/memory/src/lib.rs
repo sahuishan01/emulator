@@ -238,6 +238,18 @@ impl AddressSpace {
 
     pub fn query_memory(&self, address: u64) -> MemoryDescriptor {
         let max_address: u64 = 1_u64 << 39;
+        if address >= max_address {
+            return MemoryDescriptor {
+                base_address: max_address,
+                size: 0u64.wrapping_sub(max_address),
+                state: 0,
+                attribute: 0,
+                permission: 0,
+                ipc_count: 0,
+                device_count: 0,
+            };
+        }
+
         if self.regions.is_empty() {
             return MemoryDescriptor {
                 base_address: 0,
