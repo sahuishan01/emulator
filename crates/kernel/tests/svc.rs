@@ -193,6 +193,21 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
     );
     assert_eq!(cpu.x[0], RESULT_INVALID_ADDRESS);
 
+    // Query 8: verifies page_info output pointer is populated with 0
+    memory.write_u32(0x1030, 0xdead_beef).unwrap();
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 0x1030; // page_info output pointer
+    cpu.x[2] = 0x8000_0000;
+    assert_eq!(
+        kernel
+            .dispatch(SVC_QUERY_MEMORY, &mut cpu, &mut memory)
+            .unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 0);
+    assert_eq!(memory.read_u32(0x1030).unwrap(), 0);
+
     // Query 8: Sequential traversal loop like rtld
     let mut current_addr = 0u64;
     let mut visited_code = false;
@@ -338,6 +353,7 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 1);
     assert_eq!(memory.read_u64(0x1000).unwrap(), 1);
 
     // Process ID
@@ -348,6 +364,7 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 1);
     assert_eq!(memory.read_u64(0x1000).unwrap(), 1);
 
     // GetInfo (CoreMask)
@@ -360,7 +377,48 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 7);
     assert_eq!(memory.read_u64(0x1000).unwrap(), 7);
+
+    // GetInfo (AslrRegionAddress & AslrRegionSize)
+    kernel.set_aslr_region(0x10_0000, 0x7f_ff00_0000);
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 12; // InfoType_AslrRegionAddress
+    cpu.x[2] = 0xffff_8001;
+    cpu.x[3] = 0;
+    assert_eq!(
+        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 0x10_0000);
+    assert_eq!(memory.read_u64(0x1000).unwrap(), 0x10_0000);
+
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 13; // InfoType_AslrRegionSize
+    cpu.x[2] = 0xffff_8001;
+    cpu.x[3] = 0;
+    assert_eq!(
+        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 0x7f_ff00_0000);
+    assert_eq!(memory.read_u64(0x1000).unwrap(), 0x7f_ff00_0000);
+
+    // GetInfo (ProgramId)
+    kernel.set_program_id(0x0100_1520_0000_1000);
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 18; // InfoType_ProgramId
+    cpu.x[2] = 0xffff_8001;
+    cpu.x[3] = 0;
+    assert_eq!(
+        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        KernelEvent::Continue
+    );
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], 0x0100_1520_0000_1000);
+    assert_eq!(memory.read_u64(0x1000).unwrap(), 0x0100_1520_0000_1000);
 
     // Set memory permission
     cpu.x[0] = 0x1000;

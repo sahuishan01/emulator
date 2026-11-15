@@ -19,7 +19,22 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.34-dev` (versionCode 74).
+- **Latest Release**: `v0.28.35-dev` (versionCode 75).
+  - **Horizon OS Kernel Supervisor Call (SVC) ABI Corrections**:
+    - `SVC_QUERY_MEMORY` (0x06): Fixed page-specific information output pointer handling. When callers provide an `out_page_info` pointer in `cpu.x[1]`, the kernel now writes `0_u32` through the pointer to guest memory (`memory.write_u32(in_pageinfo_addr, 0)`) in addition to returning `cpu.x[1] = 0` and `cpu.x[0] = 0`, eliminating uninitialized stack reads during runtime link-editor (`rtld`) memory scans.
+    - `SVC_GET_INFO` (0x29): Corrected register return ABI to return queried values in `cpu.x[1]` alongside returning `cpu.x[0] = 0` (and dual-writing to `out_ptr` in `cpu.x[0]` when aligned). Prevents userspace wrappers from clobbering queried results with the input `info_type`.
+    - Implemented full coverage for extended InfoTypes: `SystemResourceSizeTotal` (16), `SystemResourceSizeUsed` (17), `ProgramId` (18), `InitialProcessIdRange` (19), `UserExceptionContextAddress` (20), `TotalNonSystemMemorySize` (21), `UsedNonSystemMemorySize` (22), `IsApplication` (23 returning 1), `FreeThreadCount` (24 returning 128), `ThreadTickCount` (25), and `IsSvcPermitted` (26 returning 1).
+    - `SVC_GET_PROCESS_ID` (0x24) & `SVC_GET_THREAD_ID` (0x25): Aligned register return ABI to deliver IDs in `cpu.x[1]` with `cpu.x[0] = 0` (with dual-write to `out_ptr` when valid).
+    - `SVC_SET_HEAP_SIZE` (0x01): Aligned to deliver heap base in `cpu.x[1]` and support optional pointer write in `cpu.x[0]`.
+  - **Address Space & ASLR Boundary Synchronization**:
+    - Synchronized `InfoType_AslrRegionAddress` (12) and `InfoType_AslrRegionSize` (13) with `LOAD_BASE` (`0x10_0000`) and the active process layout, resolving address-range mismatches where `rtld`'s module discovery scan previously skipped loaded NSOs outside the reported ASLR space.
+    - Connected `InfoType_HeapRegionAddress` (4) to dynamically report `kernel.heap_base`.
+    - Added `kernel.set_aslr_region()` and connected NPDM `title_id` to `InfoType_ProgramId` in `Session::from_exefs_with_services`.
+  - **Invariants & Verification**:
+    - Maintained strict 16 KiB page-alignment across `arm64-v8a` and `x86_64` native libraries in APK builds.
+    - Exported and verified all 22 required engine symbols.
+    - 100% pass rate across entire Rust workspace test suite and Android unit/verification tests.
+- **Previous Release**: `v0.28.34-dev` (versionCode 74).
   - **NVIDIA Tegra X1 Maxwell Architecture Discovery & Characteristics**:
     - Completed full 160-byte `GET_CHARACTERISTICS` ioctl (`0x80044705`) on `/dev/nvhost-ctrl-gpu`: reports GM20B architecture (`arch: 0x120`, `impl: 0x0B`, `rev: 0xA1`), `threed_class` (`0xB197` MAXWELL_B), `compute_class` (`0xB1C0` MAXWELL_COMPUTE_B), `gpfifo_class` (`0xB06F`), `inline_to_memory_class` (`0xA140`), `dma_copy_class` (`0xB0B5` MAXWELL_DMA_COPY_A), big pages (64 KiB), and multi-processor counts. Resolves NVN runtime initialization failure when querying 3D and compute engine classes.
     - Implemented `GET_TPC_MASKS` (`0x800c4706` / `0x80044706`) returning active TPC bitmask `0x3` (both TPCs active on Tegra X1).

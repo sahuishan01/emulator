@@ -140,6 +140,10 @@ impl Session {
         cpu.x[0] = 0;
         cpu.x[1] = u64::from(emulator_kernel::MAIN_THREAD_HANDLE);
         let mut kernel = Kernel::default();
+        kernel.set_aslr_region(LOAD_BASE, 0x7f_ff00_0000);
+        if let Some(meta) = &program.npdm {
+            kernel.set_program_id(meta.title_id);
+        }
         kernel
             .register_named_port("sm:", Box::new(service_manager))
             .map_err(SessionError::Kernel)?;

@@ -183,6 +183,9 @@ pub struct Kernel {
     transfer_quota: Rc<Cell<usize>>,
     heap_base: u64,
     heap_size: usize,
+    aslr_base: u64,
+    aslr_size: u64,
+    program_id: u64,
     sync: FutexArbitrator,
 }
 
@@ -201,12 +204,36 @@ impl Default for Kernel {
             transfer_quota: Rc::new(Cell::new(0)),
             heap_base: DEFAULT_HEAP_BASE,
             heap_size: 0,
+            aslr_base: 0x10_0000,
+            aslr_size: 0x7f_ff00_0000,
+            program_id: 0x0100_0000_0000_1000,
             sync: FutexArbitrator::default(),
         }
     }
 }
 
 impl Kernel {
+    pub fn aslr_base(&self) -> u64 {
+        self.aslr_base
+    }
+
+    pub fn aslr_size(&self) -> u64 {
+        self.aslr_size
+    }
+
+    pub fn set_aslr_region(&mut self, base: u64, size: u64) {
+        self.aslr_base = base;
+        self.aslr_size = size;
+    }
+
+    pub fn program_id(&self) -> u64 {
+        self.program_id
+    }
+
+    pub fn set_program_id(&mut self, program_id: u64) {
+        self.program_id = program_id;
+    }
+
     pub fn live_transfer_memory_count(&self) -> usize {
         self.transfer_quota.get()
     }
@@ -628,6 +655,7 @@ impl Kernel {
         memory: &mut AddressSpace,
     ) -> Result<(), KernelError> {
         let out_meminfo_addr = cpu.x[0];
+        let in_pageinfo_addr = cpu.x[1];
         let query_addr = cpu.x[2];
         if out_meminfo_addr == 0 || out_meminfo_addr % 4 != 0 {
             cpu.x[0] = RESULT_INVALID_ADDRESS;
@@ -652,6 +680,9 @@ impl Kernel {
             cpu.x[0] = RESULT_INVALID_ADDRESS;
             return Ok(());
         }
+        if in_pageinfo_addr != 0 && in_pageinfo_addr % 4 == 0 {
+            let _ = memory.write_u32(in_pageinfo_addr, 0);
+        }
         cpu.x[0] = 0;
         cpu.x[1] = 0;
         Ok(())
@@ -662,6 +693,7 @@ impl Kernel {
         cpu: &mut Cpu,
         memory: &mut AddressSpace,
     ) -> Result<(), KernelError> {
+        let out_ptr = cpu.x[0];
         let size = cpu.x[1] as usize;
         if size % 4096 != 0 {
             cpu.x[0] = RESULT_INVALID_SIZE;
@@ -670,6 +702,9 @@ impl Kernel {
         let heap_base = self.heap_base;
         let current_size = self.heap_size;
         if size == current_size {
+            if out_ptr != 0 && out_ptr % 4 == 0 {
+                let _ = memory.write_u64(out_ptr, heap_base);
+            }
             cpu.x[0] = 0;
             cpu.x[1] = heap_base;
             return Ok(());
@@ -698,6 +733,9 @@ impl Kernel {
             }
         }
         self.heap_size = size;
+        if out_ptr != 0 && out_ptr % 4 == 0 {
+            let _ = memory.write_u64(out_ptr, heap_base);
+        }
         cpu.x[0] = 0;
         cpu.x[1] = heap_base;
         Ok(())
@@ -1046,13 +1084,11 @@ impl Kernel {
             SVC_GET_PROCESS_ID => {
                 let out_ptr = cpu.x[0];
                 let _process_handle = cpu.x[1] as u32;
-                if out_ptr != 0 {
-                    if memory.write_u64(out_ptr, 1).is_err() {
-                        cpu.x[0] = RESULT_INVALID_ADDRESS;
-                        return Ok(KernelEvent::Continue);
-                    }
+                if out_ptr != 0 && out_ptr % 4 == 0 {
+                    let _ = memory.write_u64(out_ptr, 1);
                 }
                 cpu.x[0] = 0;
+                cpu.x[1] = 1;
                 Ok(KernelEvent::Continue)
             }
             SVC_GET_THREAD_ID => {
@@ -1069,13 +1105,11 @@ impl Kernel {
                         _ => 1,
                     }
                 };
-                if out_ptr != 0 {
-                    if memory.write_u64(out_ptr, thread_id).is_err() {
-                        cpu.x[0] = RESULT_INVALID_ADDRESS;
-                        return Ok(KernelEvent::Continue);
-                    }
+                if out_ptr != 0 && out_ptr % 4 == 0 {
+                    let _ = memory.write_u64(out_ptr, thread_id);
                 }
                 cpu.x[0] = 0;
+                cpu.x[1] = thread_id;
                 Ok(KernelEvent::Continue)
             }
             SVC_GET_INFO => {
@@ -1088,7 +1122,7 @@ impl Kernel {
                     1 => !0u64, // InfoType_PriorityMask (all priorities)
                     2 => 0x20_0000_0000, // InfoType_AliasRegionAddress
                     3 => 0x10_0000_0000, // InfoType_AliasRegionSize
-                    4 => 0x8000_0000, // InfoType_HeapRegionAddress
+                    4 => self.heap_base, // InfoType_HeapRegionAddress
                     5 => 0x4000_0000, // InfoType_HeapRegionSize (1 GB)
                     6 => 0x1_0000_0000, // InfoType_TotalMemorySize (4 GB)
                     7 => 0x2000_0000, // InfoType_UsedMemorySize (512 MB)
@@ -1096,20 +1130,28 @@ impl Kernel {
                     9 => 0, // InfoType_ResourceLimit
                     10 => 0, // InfoType_IdleTickCount
                     11 => 0x0123_4567_89ab_cdef, // InfoType_RandomEntropy
-                    12 => 0x800_0000, // InfoType_AslrRegionAddress
-                    13 => 0x7f_f800_0000, // InfoType_AslrRegionSize
+                    12 => self.aslr_base, // InfoType_AslrRegionAddress
+                    13 => self.aslr_size, // InfoType_AslrRegionSize
                     14 => 0x70_0000_0000, // InfoType_StackRegionAddress
                     15 => 0x1000_0000, // InfoType_StackRegionSize
-                    18 => 0, // InfoType_InitialProcessIdRange
+                    16 => 0, // InfoType_SystemResourceSizeTotal
+                    17 => 0, // InfoType_SystemResourceSizeUsed
+                    18 => self.program_id, // InfoType_ProgramId
+                    19 => 0, // InfoType_InitialProcessIdRange
+                    20 => 0, // InfoType_UserExceptionContextAddress
+                    21 => 0x1_0000_0000, // InfoType_TotalNonSystemMemorySize
+                    22 => 0x2000_0000, // InfoType_UsedNonSystemMemorySize
+                    23 => 1, // InfoType_IsApplication (true)
+                    24 => 128, // InfoType_FreeThreadCount
+                    25 => 0, // InfoType_ThreadTickCount
+                    26 => 1, // InfoType_IsSvcPermitted
                     _ => 0,
                 };
-                if out_ptr != 0 {
-                    if memory.write_u64(out_ptr, val).is_err() {
-                        cpu.x[0] = RESULT_INVALID_ADDRESS;
-                        return Ok(KernelEvent::Continue);
-                    }
+                if out_ptr != 0 && out_ptr % 4 == 0 {
+                    let _ = memory.write_u64(out_ptr, val);
                 }
                 cpu.x[0] = 0;
+                cpu.x[1] = val;
                 Ok(KernelEvent::Continue)
             }
             SVC_BREAK | 0x2c => {
