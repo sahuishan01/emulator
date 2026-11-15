@@ -561,6 +561,9 @@ class ProgramActivity : Activity() {
                     var lastRateTime = System.currentTimeMillis()
                     var currentMips = 0.0
                     var lastLoggedOutput = ""
+                    var lastObservedPc = 0L
+                    var lastObservedPcInst = 0L
+                    var loopWarningLogged = false
 
                     while (!isStopped.get()) {
                         // Dynamically attach/detach native surface on worker thread
@@ -616,6 +619,12 @@ class ProgramActivity : Activity() {
 
                         if (now - lastLog >= 2500 || state != "running") {
                             val pc = result.optLong("pc")
+                            val opcode = result.optLong("opcode")
+                            val disasm = result.optString("disasm")
+                            val sp = result.optLong("sp")
+                            val lr = result.optLong("lr")
+                            val r0 = result.optLong("r0")
+                            val r1 = result.optLong("r1")
                             val frames = result.optLong("frames")
                             val svcCount = result.optLong("svcCount")
                             val lastSvc = result.optInt("lastSvc")
@@ -623,10 +632,24 @@ class ProgramActivity : Activity() {
                             val ipcCount = result.optLong("ipcCount")
                             val lastIpcCmd = result.optLong("lastIpcCmd")
                             val outSummary = if (guestOutput.isNotEmpty()) " output='${guestOutput.replace("\n", " ").take(120)}'" else ""
+                            val disasmSummary = if (disasm.isNotEmpty()) " [op=0x${java.lang.Long.toHexString(opcode)}: $disasm], lr=0x${java.lang.Long.toHexString(lr)}, sp=0x${java.lang.Long.toHexString(sp)}, x0=0x${java.lang.Long.toHexString(r0)}, x1=0x${java.lang.Long.toHexString(r1)}" else ""
                             AppLog.i(
                                 "ProgramActivity",
-                                "Guest execution: state=$state, inst=$instructions, pc=0x${java.lang.Long.toHexString(pc)}, mips=${String.format(Locale.US, "%.1f", currentMips)}, svcs=$svcCount(last=0x${Integer.toHexString(lastSvc)}@0x${java.lang.Long.toHexString(lastSvcPc)}), ipcs=$ipcCount(lastCmd=$lastIpcCmd), frames=$frames$outSummary"
+                                "Guest execution: state=$state, inst=$instructions, pc=0x${java.lang.Long.toHexString(pc)}$disasmSummary, mips=${String.format(Locale.US, "%.1f", currentMips)}, svcs=$svcCount(last=0x${Integer.toHexString(lastSvc)}@0x${java.lang.Long.toHexString(lastSvcPc)}), ipcs=$ipcCount(lastCmd=$lastIpcCmd), frames=$frames$outSummary"
                             )
+                            if (pc != 0L && pc == lastObservedPc && (instructions - lastObservedPcInst) > 500_000L) {
+                                if (!loopWarningLogged) {
+                                    AppLog.w(
+                                        "ProgramActivity",
+                                        "SPIN-LOOP DETECTED: pc=0x${java.lang.Long.toHexString(pc)} executing '$disasm' repeatedly ($instructions instructions, x0=0x${java.lang.Long.toHexString(r0)}, x1=0x${java.lang.Long.toHexString(r1)}, lr=0x${java.lang.Long.toHexString(lr)})"
+                                    )
+                                    loopWarningLogged = true
+                                }
+                            } else {
+                                lastObservedPc = pc
+                                lastObservedPcInst = instructions
+                                loopWarningLogged = false
+                            }
                             lastLog = now
                         }
 
@@ -724,6 +747,7 @@ class ProgramActivity : Activity() {
 
                 viewportView.instructions = currentInstructions
                 viewportView.pc = currentPc
+                viewportView.disasm = value.optString("disasm")
                 viewportView.core = currentCore
                 viewportView.mips = currentMips
                 viewportView.framesPresented = currentFramesPresented
@@ -888,6 +912,7 @@ class ProgramActivity : Activity() {
 
         var instructions: Long = 0
         var pc: Long = 0
+        var disasm: String = ""
         var core: Int = 0
         var mips: Double = 0.0
         var framesPresented: Long = 0
@@ -1019,7 +1044,8 @@ class ProgramActivity : Activity() {
                 val mipsStr = String.format(Locale.US, "%.1f MIPS", mips)
                 canvas.drawText(mipsStr, w * 0.96f - textPaint.measureText(mipsStr), h * 0.92f, textPaint)
 
-                val pcStr = String.format("PC: 0x%08X", pc)
+                val pcDisasm = if (disasm.isNotEmpty()) " [$disasm]" else ""
+                val pcStr = String.format("PC: 0x%08X%s", pc, pcDisasm)
                 val instStr = "${NumberFormat.getNumberInstance(Locale.US).format(instructions)} inst · $pcStr"
                 canvas.drawText(instStr, w * 0.04f, h * 0.92f, accentPaint)
             }

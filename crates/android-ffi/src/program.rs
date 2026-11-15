@@ -496,6 +496,14 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
             Err(e) => ("faulted", e.to_string()),
         };
         let pc = s.cpu().pc;
+        let opcode = s.memory().fetch_u32(pc).unwrap_or(0);
+        let disasm = emulator_a64::disassemble(pc, opcode);
+        let sp = s.cpu().sp;
+        let lr = s.cpu().x[30];
+        let r0 = s.cpu().x[0];
+        let r1 = s.cpu().x[1];
+        let r2 = s.cpu().x[2];
+        let r3 = s.cpu().x[3];
         let core = s.kernel().current_core();
         let frames = FRAMES_PRESENTED.with(|f| *f.borrow());
         let svc_count = s.kernel().svc_count();
@@ -514,11 +522,19 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         let truncated = total > bytes.len() || decoded.chars().count() > 512;
         let output = decoded.chars().take(512).collect::<String>();
         let text = format!(
-            "{{\"ok\":{},\"state\":{},\"instructions\":{},\"pc\":{},\"core\":{},\"frames\":{},\"output\":{},\"outputTruncated\":{},\"svcCount\":{},\"lastSvc\":{},\"lastSvcPc\":{},\"ipcCount\":{},\"lastIpcCmd\":{},\"error\":{}}}",
+            "{{\"ok\":{},\"state\":{},\"instructions\":{},\"pc\":{},\"opcode\":{},\"disasm\":{},\"sp\":{},\"lr\":{},\"r0\":{},\"r1\":{},\"r2\":{},\"r3\":{},\"core\":{},\"frames\":{},\"output\":{},\"outputTruncated\":{},\"svcCount\":{},\"lastSvc\":{},\"lastSvcPc\":{},\"ipcCount\":{},\"lastIpcCmd\":{},\"error\":{}}}",
             message.is_empty(),
             quote(state),
             s.instructions(),
             pc,
+            opcode,
+            quote(&disasm),
+            sp,
+            lr,
+            r0,
+            r1,
+            r2,
+            r3,
             core,
             frames,
             quote(&output),

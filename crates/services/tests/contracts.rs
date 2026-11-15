@@ -412,3 +412,91 @@ fn test_applet_subcontrollers_and_extended_services() {
     let pseudo_reply = af.dispatch(&request(50, &[], None)).unwrap();
     assert_eq!(pseudo_reply.data.len(), 16);
 }
+
+#[test]
+fn vi_service_and_hos_binder_buffer_queue_lifecycle() {
+    let mut sm = ServiceManager::default();
+    sm.dispatch(&request(0, &[0; 8], Some(1))).unwrap();
+
+    let mut vi_reply = sm.dispatch(&request(1, b"vi:m\0\0\0\0", None)).unwrap();
+    let mut vi = vi_reply.moved_objects.remove(0);
+
+    // GetDisplayService (0) -> returns DisplayService
+    let mut disp_reply = vi.dispatch(&request(0, &[], None)).unwrap();
+    let mut display_service = disp_reply.moved_objects.remove(0);
+
+    // GetRelayService (100) -> returns HosBinderDriver
+    let mut relay_reply = display_service.dispatch(&request(100, &[], None)).unwrap();
+    let mut binder = relay_reply.moved_objects.remove(0);
+
+    // Helper for TransactParcel (0): binder_code at data[4..8], arg at data[8..12]
+    let parcel = |code: u32, arg: u32| -> Request {
+        let mut data = vec![0u8; 12];
+        data[4..8].copy_from_slice(&code.to_le_bytes());
+        data[8..12].copy_from_slice(&arg.to_le_bytes());
+        request(0, &data, None)
+    };
+
+    // 1. Connect (code 10, API 1)
+    let conn_reply = binder.dispatch(&parcel(10, 1)).unwrap();
+    assert_eq!(conn_reply.result, 0);
+    assert_eq!(u32::from_le_bytes(conn_reply.data[0..4].try_into().unwrap()), 0); // OK status
+    assert_eq!(u32::from_le_bytes(conn_reply.data[4..8].try_into().unwrap()), 1280); // width
+    assert_eq!(u32::from_le_bytes(conn_reply.data[8..12].try_into().unwrap()), 720);  // height
+
+    // 2. Query (code 9, what 1: width, what 2: height, what 3: format)
+    let q_w = binder.dispatch(&parcel(9, 1)).unwrap();
+    assert_eq!(u32::from_le_bytes(q_w.data[4..8].try_into().unwrap()), 1280);
+    let q_h = binder.dispatch(&parcel(9, 2)).unwrap();
+    assert_eq!(u32::from_le_bytes(q_h.data[4..8].try_into().unwrap()), 720);
+    let q_f = binder.dispatch(&parcel(9, 3)).unwrap();
+    assert_eq!(u32::from_le_bytes(q_f.data[4..8].try_into().unwrap()), 1);
+
+    // 3. SetBufferCount (code 2, count 4)
+    let sbc_reply = binder.dispatch(&parcel(2, 4)).unwrap();
+    assert_eq!(sbc_reply.result, 0);
+
+    // 4. DequeueBuffer (code 3)
+    let deq_reply = binder.dispatch(&parcel(3, 0)).unwrap();
+    assert_eq!(deq_reply.result, 0);
+    let slot = u32::from_le_bytes(deq_reply.data[4..8].try_into().unwrap());
+
+    // 5. RequestBuffer (code 1, slot)
+    let req_reply = binder.dispatch(&parcel(1, slot)).unwrap();
+    assert_eq!(req_reply.result, 0);
+    assert_eq!(u32::from_le_bytes(req_reply.data[0..4].try_into().unwrap()), 0); // status OK
+    assert_eq!(u32::from_le_bytes(req_reply.data[4..8].try_into().unwrap()), 1); // present
+    assert_eq!(u32::from_le_bytes(req_reply.data[8..12].try_into().unwrap()), 1280); // width
+
+    // 6. QueueBuffer (code 7, slot)
+    let qb_reply = binder.dispatch(&parcel(7, slot)).unwrap();
+    assert_eq!(qb_reply.result, 0);
+    assert_eq!(u32::from_le_bytes(qb_reply.data[0..4].try_into().unwrap()), 0); // OK
+    assert_eq!(u32::from_le_bytes(qb_reply.data[16..20].try_into().unwrap()), 1); // pending count 1
+
+    // 7. Detach & Attach Buffer (codes 4 and 5)
+    let detach_reply = binder.dispatch(&parcel(4, slot)).unwrap();
+    assert_eq!(detach_reply.result, 0);
+    let attach_reply = binder.dispatch(&parcel(5, slot)).unwrap();
+    assert_eq!(attach_reply.result, 0);
+
+    // 8. SetPreAllocatedBuffer (code 14)
+    let mut prealloc_data = vec![0u8; 28];
+    prealloc_data[4..8].copy_from_slice(&14u32.to_le_bytes()); // code 14
+    prealloc_data[8..12].copy_from_slice(&slot.to_le_bytes()); // slot
+    prealloc_data[12..16].copy_from_slice(&1920u32.to_le_bytes()); // width 1920
+    prealloc_data[16..20].copy_from_slice(&1080u32.to_le_bytes()); // height 1080
+    prealloc_data[20..24].copy_from_slice(&1920u32.to_le_bytes()); // stride 1920
+    prealloc_data[24..28].copy_from_slice(&1u32.to_le_bytes());    // format 1
+    let set_pre_reply = binder.dispatch(&request(0, &prealloc_data, None)).unwrap();
+    assert_eq!(set_pre_reply.result, 0);
+
+    // Verify pre-allocated buffer dimensions with RequestBuffer
+    let req_pre = binder.dispatch(&parcel(1, slot)).unwrap();
+    assert_eq!(u32::from_le_bytes(req_pre.data[8..12].try_into().unwrap()), 1920);
+    assert_eq!(u32::from_le_bytes(req_pre.data[12..16].try_into().unwrap()), 1080);
+
+    // 9. Disconnect (code 11)
+    let disc_reply = binder.dispatch(&parcel(11, 0)).unwrap();
+    assert_eq!(disc_reply.result, 0);
+}

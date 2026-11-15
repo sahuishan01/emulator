@@ -193,8 +193,11 @@ object AppLog {
         try {
             if (crashFile?.exists() == true) {
                 val crashText = crashFile?.readText(Charsets.UTF_8) ?: ""
+                val lastMod = crashFile?.lastModified() ?: 0L
+                val lastModStr = if (lastMod > 0L) timeFormat.format(Date(lastMod)) else "unknown"
                 if (crashText.isNotEmpty()) {
-                    append("--- LAST CRASH REPORT (prior session) ---\n")
+                    append("--- HISTORICAL CRASH REPORT (prior session: $lastModStr) ---\n")
+                    append("Note: The following crash occurred in a previous run. If the current session started after this timestamp, it is running normally.\n")
                     append(crashText.trimEnd())
                     append("\n\n")
                 }

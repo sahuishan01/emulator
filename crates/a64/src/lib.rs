@@ -2516,3 +2516,272 @@ fn decode_bit_masks(n: bool, imms: u8, immr: u8, is_64: bool) -> Option<u64> {
     }
     Some(mask)
 }
+
+fn cond_name(condition: u8) -> &'static str {
+    match condition & 0xf {
+        0 => "eq",
+        1 => "ne",
+        2 => "cs",
+        3 => "cc",
+        4 => "mi",
+        5 => "pl",
+        6 => "vs",
+        7 => "vc",
+        8 => "hi",
+        9 => "ls",
+        10 => "ge",
+        11 => "lt",
+        12 => "gt",
+        13 => "le",
+        14 => "al",
+        _ => "nv",
+    }
+}
+
+fn reg_prefix(width: Width) -> char {
+    match width {
+        Width::W32 => 'w',
+        Width::X64 => 'x',
+    }
+}
+
+/// Disassembles an encoded 32-bit ARM64 instruction word at `pc` into standard mnemonic text.
+pub fn disassemble(pc: u64, word: u32) -> String {
+    let inst = match decode(pc, word) {
+        Ok(i) => i,
+        Err(_) => return format!("raw {word:#010x}"),
+    };
+    match inst {
+        Instruction::Nop => "nop".to_string(),
+        Instruction::ReadThreadLocal { rd } => format!("mrs x{rd}, tpidrro_el0"),
+        Instruction::Movz { width, rd, value } => format!("movz {}{rd}, {value:#x}", reg_prefix(width)),
+        Instruction::MoveWide { width, rd, value, operation, .. } => {
+            let name = match operation {
+                0 => "movn",
+                2 => "movz",
+                3 => "movk",
+                _ => "mov",
+            };
+            format!("{name} {}{rd}, {value:#x}", reg_prefix(width))
+        }
+        Instruction::PcRelative { rd, displacement, page } => {
+            if page {
+                let target = (pc & !0xfff).wrapping_add_signed(displacement);
+                format!("adrp x{rd}, {target:#x}")
+            } else {
+                let target = pc.wrapping_add_signed(displacement);
+                format!("adr x{rd}, {target:#x}")
+            }
+        }
+        Instruction::AddSub { width, rd, rn, immediate, subtract, flags } => {
+            let p = reg_prefix(width);
+            if flags && rd == 31 {
+                format!("cmp {p}{rn}, #{immediate}")
+            } else {
+                let op = if subtract { if flags { "subs" } else { "sub" } } else { if flags { "adds" } else { "add" } };
+                format!("{op} {p}{rd}, {p}{rn}, #{immediate}")
+            }
+        }
+        Instruction::AddSubRegister { width, rd, rn, rm, subtract, flags, .. } => {
+            let p = reg_prefix(width);
+            if flags && rd == 31 {
+                format!("cmp {p}{rn}, {p}{rm}")
+            } else {
+                let op = if subtract { if flags { "subs" } else { "sub" } } else { if flags { "adds" } else { "add" } };
+                format!("{op} {p}{rd}, {p}{rn}, {p}{rm}")
+            }
+        }
+        Instruction::AddSubExtended { width, rd, rn, rm, subtract, flags, .. } => {
+            let p = reg_prefix(width);
+            if flags && rd == 31 {
+                format!("cmp {p}{rn}, {p}{rm}")
+            } else {
+                let op = if subtract { if flags { "subs" } else { "sub" } } else { if flags { "adds" } else { "add" } };
+                format!("{op} {p}{rd}, {p}{rn}, {p}{rm}")
+            }
+        }
+        Instruction::LogicalRegister { width, rd, rn, rm, op, .. } => {
+            let p = reg_prefix(width);
+            let name = match op {
+                0 => "and",
+                1 => "bic",
+                2 => "orr",
+                3 => "orn",
+                4 => "eor",
+                5 => "eon",
+                6 => "ands",
+                7 => "bics",
+                _ => "logic",
+            };
+            if op == 2 && rn == 31 {
+                format!("mov {p}{rd}, {p}{rm}")
+            } else {
+                format!("{name} {p}{rd}, {p}{rn}, {p}{rm}")
+            }
+        }
+        Instruction::Bitfield { width, rd, rn, immr, imms, opc } => {
+            let p = reg_prefix(width);
+            let name = match opc {
+                0 => "sbfm",
+                1 => "bfm",
+                2 => "ubfm",
+                _ => "bfm",
+            };
+            format!("{name} {p}{rd}, {p}{rn}, #{immr}, #{imms}")
+        }
+        Instruction::Extract { width, rd, rn, rm, lsb } => {
+            let p = reg_prefix(width);
+            format!("extr {p}{rd}, {p}{rn}, {p}{rm}, #{lsb}")
+        }
+        Instruction::AddSubCarry { width, rd, rn, rm, subtract, flags } => {
+            let p = reg_prefix(width);
+            let name = if subtract { if flags { "sbcs" } else { "sbc" } } else { if flags { "adcs" } else { "adc" } };
+            format!("{name} {p}{rd}, {p}{rn}, {p}{rm}")
+        }
+        Instruction::ConditionalCompare { width, rn, rm_or_imm, is_imm, cond, def_nzcv, subtract } => {
+            let p = reg_prefix(width);
+            let name = if subtract { "ccmp" } else { "ccmn" };
+            if is_imm {
+                format!("{name} {p}{rn}, #{rm_or_imm}, #{def_nzcv}, {}", cond_name(cond))
+            } else {
+                format!("{name} {p}{rn}, {p}{rm_or_imm}, #{def_nzcv}, {}", cond_name(cond))
+            }
+        }
+        Instruction::DataProcessing1 { width, rd, rn, op } => {
+            let p = reg_prefix(width);
+            let name = match op {
+                0 => "rbit",
+                1 => "rev16",
+                2 => "rev",
+                3 => "clz",
+                4 => "cls",
+                _ => "dp1",
+            };
+            format!("{name} {p}{rd}, {p}{rn}")
+        }
+        Instruction::ExclusiveLoadStore { rt, rn, load, .. } => {
+            format!("{} x{rt}, [x{rn}]", if load { "ldaxr" } else { "stlxr" })
+        }
+        Instruction::Branch { displacement, link } => {
+            let target = pc.wrapping_add_signed(displacement);
+            format!("{} {target:#x}", if link { "bl" } else { "b" })
+        }
+        Instruction::BranchRegister { rn, link } => {
+            format!("{} x{rn}", if link { "blr" } else { "br" })
+        }
+        Instruction::ConditionalBranch { displacement, condition } => {
+            let target = pc.wrapping_add_signed(displacement);
+            format!("b.{} {target:#x}", cond_name(condition))
+        }
+        Instruction::CompareBranch { width, rt, displacement, nonzero } => {
+            let target = pc.wrapping_add_signed(displacement);
+            format!("{} {}{rt}, {target:#x}", if nonzero { "cbnz" } else { "cbz" }, reg_prefix(width))
+        }
+        Instruction::TestBitBranch { rt, bit_pos, displacement, nonzero } => {
+            let target = pc.wrapping_add_signed(displacement);
+            format!("{} x{rt}, #{bit_pos}, {target:#x}", if nonzero { "tbnz" } else { "tbz" })
+        }
+        Instruction::ConditionalSelect { width, rd, rn, rm, cond, op } => {
+            let p = reg_prefix(width);
+            let name = match op {
+                0 => "csel",
+                1 => "csinc",
+                2 => "csinv",
+                3 => "csneg",
+                _ => "csel",
+            };
+            format!("{name} {p}{rd}, {p}{rn}, {p}{rm}, {}", cond_name(cond))
+        }
+        Instruction::Multiply { width, rd, rn, rm, ra, sub } => {
+            let p = reg_prefix(width);
+            if ra == 31 {
+                format!("{} {p}{rd}, {p}{rn}, {p}{rm}", if sub { "mneg" } else { "mul" })
+            } else {
+                format!("{} {p}{rd}, {p}{rn}, {p}{rm}, {p}{ra}", if sub { "msub" } else { "madd" })
+            }
+        }
+        Instruction::MultiplyWide { rd, rn, rm, .. } => {
+            format!("smull x{rd}, w{rn}, w{rm}")
+        }
+        Instruction::DataProcessing2 { width, rd, rn, rm, op } => {
+            let p = reg_prefix(width);
+            let name = match op {
+                2 => "udiv",
+                3 => "sdiv",
+                8 => "lslv",
+                9 => "lsrv",
+                10 => "asrv",
+                11 => "rorv",
+                _ => "dp2",
+            };
+            format!("{name} {p}{rd}, {p}{rn}, {p}{rm}")
+        }
+        Instruction::LogicalImmediate { width, rd, rn, imm, op } => {
+            let p = reg_prefix(width);
+            let name = match op {
+                0 => "and",
+                1 => "orr",
+                2 => "eor",
+                3 => "ands",
+                _ => "logic_imm",
+            };
+            format!("{name} {p}{rd}, {p}{rn}, #{imm:#x}")
+        }
+        Instruction::Return { rn } => {
+            if rn == 30 {
+                "ret".to_string()
+            } else {
+                format!("ret x{rn}")
+            }
+        }
+        Instruction::LoadStore { size, rt, rn, offset, load, pre_index, post_index, .. } => {
+            let p = if size == 3 { 'x' } else { 'w' };
+            let op = if load { "ldr" } else { "str" };
+            if pre_index {
+                format!("{op} {p}{rt}, [x{rn}, #{offset}]!")
+            } else if post_index {
+                format!("{op} {p}{rt}, [x{rn}], #{offset}")
+            } else if offset == 0 {
+                format!("{op} {p}{rt}, [x{rn}]")
+            } else {
+                format!("{op} {p}{rt}, [x{rn}, #{offset}]")
+            }
+        }
+        Instruction::LoadStoreRegister { size, rt, rn, rm, load, .. } => {
+            let p = if size == 3 { 'x' } else { 'w' };
+            let op = if load { "ldr" } else { "str" };
+            format!("{op} {p}{rt}, [x{rn}, x{rm}]")
+        }
+        Instruction::LoadStorePair { width, rt1, rt2, rn, offset, load, pre_index, post_index, .. } => {
+            let p = reg_prefix(width);
+            let op = if load { "ldp" } else { "stp" };
+            if pre_index {
+                format!("{op} {p}{rt1}, {p}{rt2}, [x{rn}, #{offset}]!")
+            } else if post_index {
+                format!("{op} {p}{rt1}, {p}{rt2}, [x{rn}], #{offset}")
+            } else if offset == 0 {
+                format!("{op} {p}{rt1}, {p}{rt2}, [x{rn}]")
+            } else {
+                format!("{op} {p}{rt1}, {p}{rt2}, [x{rn}, #{offset}]")
+            }
+        }
+        Instruction::SupervisorCall { immediate } => format!("svc {immediate:#x}"),
+        Instruction::FpData1 { rd, rn, .. } => format!("fmov d{rd}, d{rn}"),
+        Instruction::FpData2 { rd, rn, rm, .. } => format!("fadd d{rd}, d{rn}, d{rm}"),
+        Instruction::FpCompare { rn, rm, .. } => format!("fcmp d{rn}, d{rm}"),
+        Instruction::FpMultiplyAdd { rd, rn, rm, ra, .. } => format!("fmadd d{rd}, d{rn}, d{rm}, d{ra}"),
+        Instruction::FpConvertInt { rd, rn, .. } => format!("fcvt d{rd}, s{rn}"),
+        Instruction::FpLoadStore { rt, rn, offset, load, .. } => {
+            format!("{} q{rt}, [x{rn}, #{offset}]", if load { "ldr" } else { "str" })
+        }
+        Instruction::FpLoadStoreRegister { rt, rn, rm, load, .. } => {
+            format!("{} q{rt}, [x{rn}, x{rm}]", if load { "ldr" } else { "str" })
+        }
+        Instruction::FpLoadStorePair { rt1, rt2, rn, offset, load, .. } => {
+            format!("{} d{rt1}, d{rt2}, [x{rn}, #{offset}]", if load { "ldp" } else { "stp" })
+        }
+        Instruction::VectorBitwise { rd, rn, rm, .. } => {
+            format!("eor v{rd}.16b, v{rn}.16b, v{rm}.16b")
+        }
+    }
+}

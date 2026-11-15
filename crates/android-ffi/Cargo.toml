@@ -16,6 +16,7 @@ emulator-memory = { path = "../memory" }
 emulator-gpu = { path = "../gpu" }
 emulator-services = { path = "../services" }
 emulator-crypto = { path = "../crypto" }
+emulator-a64 = { path = "../a64" }
 
 # Audited exception for the exported symbol attribute only. This boundary has
 # no raw pointer arguments, borrowed outputs or unsafe blocks. Engine crates

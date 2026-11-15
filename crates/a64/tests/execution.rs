@@ -1182,3 +1182,30 @@ fn test_ldpsw_signed_pair_loading() {
     assert_eq!(cpu.x[4], 20);
 }
 
+#[test]
+fn test_disassemble_common_instructions() {
+    use emulator_a64::disassemble;
+
+    // NOP (0xd503201f)
+    assert_eq!(disassemble(0x1000, 0xd503_201f), "nop");
+
+    // RET (0xd65f03c0)
+    assert_eq!(disassemble(0x1000, 0xd65f_03c0), "ret");
+
+    // SVC #0x6 (0xd40000c1)
+    assert_eq!(disassemble(0x1000, 0xd400_00c1), "svc 0x6");
+
+    // B 0x1010 (+16 bytes -> offset 4 words: 0x14000004)
+    assert_eq!(disassemble(0x1000, 0x1400_0004), "b 0x1010");
+
+    // BLR X1 (0xd63f0020)
+    assert_eq!(disassemble(0x1000, 0xd63f_0020), "blr x1");
+
+    // MOVZ X0, #0x42 (0xd2800840)
+    assert_eq!(disassemble(0x1000, 0xd280_0840), "movz x0, 0x42");
+
+    // Raw unknown
+    assert_eq!(disassemble(0x1000, 0x0000_0000), "raw 0x00000000");
+}
+
+

@@ -19,7 +19,29 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.36-dev` (versionCode 76).
+- **Latest Release**: `v0.28.37-dev` (versionCode 77).
+  - **A64 Live Instruction Disassembly & Register Observability**:
+    - Implemented clean-room A64 disassembler in `crates/a64/src/lib.rs` (`pub fn disassemble(pc: u64, word: u32) -> String`) decoding any 32-bit ARM64 opcode into human-readable assembly mnemonics (`nop`, `ret`, `svc`, `b`, `bl`, `blr`, `br`, `b.cond`, `cbz`, `cbnz`, `tbz`, `tbnz`, `movz`, `movk`, `ldr`, `str`, `ldp`, `stp`, `adds`, `subs`, `cmp`, `csel`, etc.).
+    - Added unit test `test_disassemble_common_instructions` in `crates/a64/tests/execution.rs` covering typical branch, arithmetic, load/store, conditional select, and supervisor calls.
+    - Threaded live opcode, disassembly mnemonic, `sp`, `lr` (x30), and arguments `x0..x3` through `crates/android-ffi/src/program.rs` in `emulator_program_step_v1` JSON reports (`opcode`, `disasm`, `sp`, `lr`, `r0`, `r1`, `r2`, `r3`).
+  - **Telemetry HUD & Automated Spin-Loop Diagnostics**:
+    - Extended `ProgramActivity.kt` execution telemetry: periodic logging now records live opcode disassembly, link register (`lr`), stack pointer (`sp`), and register arguments (`x0`, `x1`).
+    - Added automated spin-loop detection: if guest execution remains at the identical PC across 500,000+ instructions, the emulator logs a prominent warning identifying the exact repeated instruction, PC, and registers (`SPIN-LOOP DETECTED: pc=0x... executing '$disasm' repeatedly ($instructions instructions, x0=..., x1=..., lr=...)`).
+    - Updated `GameViewportView.onDraw`: HUD overlay now displays the live disassembly mnemonic next to the Program Counter (`PC: 0x... [disasm]`).
+  - **Clarified Historical Crash Reporting in Diagnostics**:
+    - In `AppLog.kt`, annotated crash logs with the file's modification timestamp and an explicit note clarifying that historical crashes from prior sessions do not reflect current running sessions.
+  - **Horizon OS VI BufferQueue State Machine Extensions**:
+    - Extended `HosBinderDriver` in `crates/services/src/vi.rs`:
+      - Code 4: `TRANSACT_DETACH_BUFFER` (transitions slot to `BufferState::Free`, returns status OK).
+      - Code 5: `TRANSACT_ATTACH_BUFFER` (transitions slot to `BufferState::Dequeued`, returns status OK and allocated slot index).
+      - Code 14: `TRANSACT_SET_PRE_ALLOCATED_BUFFER` (configures pre-allocated width, height, stride, format for the target slot).
+      - Code 16: `TRANSACT_GET_BUFFER_HISTORY` (returns status OK).
+    - Added integration test `vi_service_and_hos_binder_buffer_queue_lifecycle` in `crates/services/tests/contracts.rs` verifying Connect -> Query -> SetBufferCount -> Dequeue -> Request -> Queue -> Detach -> Attach -> SetPreAllocated -> Disconnect (100% passed).
+  - **Invariants & Verification**:
+    - Maintained strict 16 KiB page-alignment across `arm64-v8a` and `x86_64` native libraries in APK builds.
+    - Exported and verified all 22 required engine symbols.
+    - 100% pass rate across entire Rust workspace test suite and Android unit/verification tests.
+- **Previous Release**: `v0.28.36-dev` (versionCode 76).
   - **Live Kernel SVC & IPC Telemetry Observability**:
     - Instrumented `Kernel` (`crates/kernel/src/lib.rs`) with live metric tracking: `svc_count`, `last_svc_id`, `last_svc_pc`, `ipc_count`, and `last_ipc_cmd`.
     - Exposed telemetry accessors in `Kernel` and threaded metrics through `crates/android-ffi/src/program.rs` in `emulator_program_step_v1` JSON reports (`svcCount`, `lastSvc`, `lastSvcPc`, `ipcCount`, `lastIpcCmd`).

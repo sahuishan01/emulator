@@ -138,6 +138,35 @@ impl Service for HosBinderDriver {
                         reply_data.extend_from_slice(&(slot as u32).to_le_bytes()); // slot
                         reply_data.extend_from_slice(&0u32.to_le_bytes()); // has_fence = 0
                     }
+                    // 4: DETACH_BUFFER
+                    4 => {
+                        let slot_idx = if request.data.len() >= 12 {
+                            u32::from_le_bytes(request.data[8..12].try_into().unwrap_or([0; 4])) as usize
+                        } else {
+                            0
+                        };
+                        if let Some(slot) = self.slots.get_mut(slot_idx) {
+                            slot.state = BufferState::Free;
+                        }
+                        reply_data.extend_from_slice(&0u32.to_le_bytes());
+                    }
+                    // 5: ATTACH_BUFFER
+                    5 => {
+                        let slot_count = self.slots.len();
+                        let mut chosen = None;
+                        for i in 0..slot_count {
+                            let idx = (self.current_slot + i) % slot_count;
+                            if self.slots[idx].state == BufferState::Free {
+                                chosen = Some(idx);
+                                break;
+                            }
+                        }
+                        let slot = chosen.unwrap_or(self.current_slot % slot_count);
+                        self.slots[slot].state = BufferState::Dequeued;
+                        self.current_slot = (slot + 1) % slot_count;
+                        reply_data.extend_from_slice(&0u32.to_le_bytes());
+                        reply_data.extend_from_slice(&(slot as u32).to_le_bytes());
+                    }
                     // 7: QUEUE_BUFFER
                     7 => {
                         let slot_idx = if request.data.len() >= 12 {
@@ -231,6 +260,28 @@ impl Service for HosBinderDriver {
                         for slot in &mut self.slots {
                             slot.state = BufferState::Free;
                         }
+                        reply_data.extend_from_slice(&0u32.to_le_bytes());
+                    }
+                    // 14: SET_PRE_ALLOCATED_BUFFER
+                    14 => {
+                        let slot_idx = if request.data.len() >= 12 {
+                            u32::from_le_bytes(request.data[8..12].try_into().unwrap_or([0; 4])) as usize
+                        } else {
+                            0
+                        };
+                        if let Some(slot) = self.slots.get_mut(slot_idx) {
+                            if request.data.len() >= 28 {
+                                slot.width = u32::from_le_bytes(request.data[12..16].try_into().unwrap_or(1280u32.to_le_bytes()));
+                                slot.height = u32::from_le_bytes(request.data[16..20].try_into().unwrap_or(720u32.to_le_bytes()));
+                                slot.stride = u32::from_le_bytes(request.data[20..24].try_into().unwrap_or(1280u32.to_le_bytes()));
+                                slot.format = u32::from_le_bytes(request.data[24..28].try_into().unwrap_or(1u32.to_le_bytes()));
+                            }
+                            slot.state = BufferState::Free;
+                        }
+                        reply_data.extend_from_slice(&0u32.to_le_bytes());
+                    }
+                    // 16: GET_BUFFER_HISTORY
+                    16 => {
                         reply_data.extend_from_slice(&0u32.to_le_bytes());
                     }
                     _ => {
