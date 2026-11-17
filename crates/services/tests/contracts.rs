@@ -526,3 +526,28 @@ fn audio_device_reports_stereo_unit_volume_and_rejects_out_of_range_volume() {
     assert_eq!(request(4, vec![]).unwrap().moved_objects.len(), 1);
     assert!(request(0, vec![]).is_err());
 }
+
+#[test]
+fn shared_font_service_never_claims_fonts_are_loaded() {
+    use emulator_kernel::service::Service;
+    use emulator_services::plu::{SharedFontService, FONT_LOAD_STATE_LOADING, SHARED_FONT_REGION_SIZE};
+    let mut pl = SharedFontService::default();
+    let word = |r: emulator_kernel::service::ServiceReply| u32::from_le_bytes(r.data[..4].try_into().unwrap());
+    assert_eq!(pl.dispatch(&request(0, &[0, 0, 0, 0], None)).unwrap().result, 0, "RequestLoad accepted");
+    assert_eq!(word(pl.dispatch(&request(1, &[0, 0, 0, 0], None)).unwrap()), FONT_LOAD_STATE_LOADING);
+    assert_eq!(word(pl.dispatch(&request(2, &[6, 0, 0, 0], None)).unwrap()), 0, "no size");
+    assert_eq!(word(pl.dispatch(&request(3, &[6, 0, 0, 0], None)).unwrap()), 0, "no offset");
+    // Font type 7 does not exist; missing payload is a protocol error.
+    assert_ne!(pl.dispatch(&request(1, &[7, 0, 0, 0], None)).unwrap().result, 0);
+    assert_ne!(pl.dispatch(&request(0, &[7, 0, 0, 0], None)).unwrap().result, 0);
+    assert!(pl.dispatch(&request(1, &[], None)).is_err());
+    let shm = pl.dispatch(&request(4, &[], None)).unwrap().moved_objects.remove(0);
+    match shm.as_handle() {
+        Some(emulator_kernel::Object::SharedMemory(m)) => {
+            assert_eq!(m.borrow().len(), SHARED_FONT_REGION_SIZE);
+            assert!(m.borrow().iter().all(|&b| b == 0), "no fabricated font data");
+        }
+        other => panic!("expected shared memory, got {other:?}"),
+    }
+    assert!(pl.dispatch(&request(99, &[], None)).is_err());
+}

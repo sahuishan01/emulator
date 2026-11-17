@@ -17,6 +17,7 @@ pub mod hid;
 pub mod hwopus;
 pub mod lm;
 pub mod pctl;
+pub mod plu;
 pub mod reference;
 pub mod setsys;
 pub mod timesys;
@@ -166,6 +167,7 @@ impl Service for ServiceManager {
                     }
                     b"audout:u" => Box::new(AudioOutManager::default()),
                     b"hwopus\0\0" => Box::new(hwopus::OpusDecoderManager),
+                    b"pl:u\0\0\0\0" => Box::new(plu::SharedFontService::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {
