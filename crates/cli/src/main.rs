@@ -130,7 +130,10 @@ fn read_key_file(path: &str) -> Result<emulator_crypto::keys::KeyFile, Box<dyn s
     Ok(keys)
 }
 
-fn load_keys(keys_path: Option<&str>, titlekeys_path: Option<&str>) -> Result<emulator_crypto::keys::KeyFile, Box<dyn std::error::Error>> {
+fn load_keys(
+    keys_path: Option<&str>,
+    titlekeys_path: Option<&str>,
+) -> Result<emulator_crypto::keys::KeyFile, Box<dyn std::error::Error>> {
     let mut keys = if let Some(path) = keys_path {
         read_key_file(path)?
     } else {
@@ -249,9 +252,7 @@ fn run_nca(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             );
             Ok(())
         }
-        RunOutcome::Blocked => {
-            Err("guest process is blocked waiting for kernel resources".into())
-        }
+        RunOutcome::Blocked => Err("guest process is blocked waiting for kernel resources".into()),
     }
 }
 
@@ -262,6 +263,7 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut budget = DEFAULT_STEPS;
     let mut disasm: Vec<(u64, u64)> = Vec::new();
     let mut peek: Vec<(u64, u64)> = Vec::new();
+    let mut watch: Option<(u64, u64)> = None;
 
     let mut i = 1;
     while i < arguments.len() {
@@ -309,6 +311,17 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 peek.push((address, count));
             }
+            "--watch" => {
+                i += 1;
+                let spec = arguments.get(i).ok_or("--watch requires HEXADDR:LEN")?;
+                let (address, len) = spec.split_once(':').ok_or("--watch expects HEXADDR:LEN")?;
+                let address = u64::from_str_radix(address.trim_start_matches("0x"), 16)?;
+                let len = len.parse::<u64>()?;
+                if len == 0 || len > 4096 {
+                    return Err("--watch LEN must be between 1 and 4096".into());
+                }
+                watch = Some((address, len));
+            }
             arg if !arg.starts_with("--") && file.is_none() => {
                 file = Some(arg);
             }
@@ -317,7 +330,7 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]...")?;
+    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]... [--watch HEXADDR:LEN]")?;
     // Commercial titles need far more than the microprogram cap; the caller bounds
     // wall-clock time (the smoke sandbox sets a runtime limit).
     if budget == 0 || budget > NSP_MAX_STEPS {
@@ -342,11 +355,19 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Ok(Some(cnmt)) = nsp.parse_cnmt(&keys) {
-        println!("Parsed CNMT metadata: Title ID {:#018x}, Version {:#x}, {} content records",
-            cnmt.title_id, cnmt.version, cnmt.contents.len());
+        println!(
+            "Parsed CNMT metadata: Title ID {:#018x}, Version {:#x}, {} content records",
+            cnmt.title_id,
+            cnmt.version,
+            cnmt.contents.len()
+        );
         for content in &cnmt.contents {
-            println!("  Content {:?}: {} ({} bytes)",
-                content.content_type, content.nca_filename(), content.size);
+            println!(
+                "  Content {:?}: {} ({} bytes)",
+                content.content_type,
+                content.nca_filename(),
+                content.size
+            );
         }
     }
 
@@ -356,6 +377,9 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         session.cpu().pc,
         session.cpu().sp
     );
+    if let Some((address, len)) = watch {
+        session.set_write_watch(address, len);
+    }
 
     // Run in slices and sample the PC at each boundary: a cheap profile that
     // separates real progress from a spin loop when the budget runs out.
@@ -398,12 +422,39 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    if watch.is_some() {
+        println!(
+            "watched writes ({} recorded, cap 4096):",
+            session.watch_log().len()
+        );
+        for record in session.watch_log() {
+            let value: String = record
+                .bytes
+                .iter()
+                .rev()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            println!(
+                "  inst={} thread={} pc={:#x} lr={:#x} addr={:#x} len={} value=0x{}",
+                record.instruction,
+                record.thread,
+                record.pc,
+                record.lr,
+                record.address,
+                record.bytes.len(),
+                value
+            );
+        }
+    }
     for (start, count) in &disasm {
         println!("disassembly {start:#x} (+{count} instructions):");
         for index in 0..*count {
             let address = start.wrapping_add(index * 4);
             match session.memory().read_u32(address) {
-                Ok(word) => println!("  {address:#010x}: {word:08x}  {}", emulator_a64::disassemble(address, word)),
+                Ok(word) => println!(
+                    "  {address:#010x}: {word:08x}  {}",
+                    emulator_a64::disassemble(address, word)
+                ),
                 Err(_) => println!("  {address:#010x}: <unmapped>"),
             }
         }
@@ -425,22 +476,28 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             );
             Ok(())
         }
-        RunOutcome::Blocked => {
-            Err("guest process is blocked waiting for kernel resources".into())
-        }
+        RunOutcome::Blocked => Err("guest process is blocked waiting for kernel resources".into()),
     }
 }
 
 /// Host-side diagnostics after a commercial-title run: where the guest is, what it
 /// last asked the kernel for, and where the sampled time went.
-fn print_run_report(session: &Session, samples: &std::collections::BTreeMap<u64, u64>, elapsed: f64) {
+fn print_run_report(
+    session: &Session,
+    samples: &std::collections::BTreeMap<u64, u64>,
+    elapsed: f64,
+) {
     let cpu = session.cpu();
     let kernel = session.kernel();
     let steps = session.instructions();
     println!("--- run report ---");
     println!(
         "steps={steps} elapsed={elapsed:.2}s rate={:.1} MIPS state={:?}",
-        if elapsed > 0.0 { steps as f64 / elapsed / 1e6 } else { 0.0 },
+        if elapsed > 0.0 {
+            steps as f64 / elapsed / 1e6
+        } else {
+            0.0
+        },
         session.state()
     );
     println!(
@@ -474,12 +531,14 @@ fn print_run_report(session: &Session, samples: &std::collections::BTreeMap<u64,
         }
         for i in 0..count {
             if let Ok(h) = session.memory().read_u32(list + i * 4) {
-                let what = kernel.describe_handle(h).unwrap_or_else(|| "invalid".into());
+                let what = kernel
+                    .describe_handle(h)
+                    .unwrap_or_else(|| "invalid".into());
                 println!("  thread {} waits on handle {h:#x}: {what}", t.id);
             }
         }
     }
-        println!("recent supervisor calls (oldest first):");
+    println!("recent supervisor calls (oldest first):");
     for record in kernel.svc_records() {
         let [a0, a1, a2, a3] = record.arguments;
         match record.results {
@@ -506,9 +565,10 @@ fn print_run_report(session: &Session, samples: &std::collections::BTreeMap<u64,
         let object = record
             .domain_object
             .map_or_else(String::new, |id| format!(" object={id}"));
-        let outcome = record
-            .result
-            .map_or_else(|| "REJECTED".to_string(), |code| format!("result={code:#x}"));
+        let outcome = record.result.map_or_else(
+            || "REJECTED".to_string(),
+            |code| format!("result={code:#x}"),
+        );
         let [a, b, x, c] = record.buffers;
         println!(
             "  #{:<4} handle={:#x} {} {kind} {command}{object} data={} buffers(a/b/x/c)={a}/{b}/{x}/{c} copy={} {outcome}",
@@ -544,7 +604,10 @@ fn print_run_report(session: &Session, samples: &std::collections::BTreeMap<u64,
         if fp == 0 || fp % 16 != 0 {
             break;
         }
-        let (Ok(next), Ok(ret)) = (session.memory().read_u64(fp), session.memory().read_u64(fp + 8)) else {
+        let (Ok(next), Ok(ret)) = (
+            session.memory().read_u64(fp),
+            session.memory().read_u64(fp + 8),
+        ) else {
             break;
         };
         println!("  #{depth:<2} fp={fp:#x} ret={ret:#x}");
@@ -569,14 +632,19 @@ fn print_run_report(session: &Session, samples: &std::collections::BTreeMap<u64,
     if total > 0 {
         let mut hot: Vec<(u64, u64)> = samples.iter().map(|(pc, count)| (*pc, *count)).collect();
         hot.sort_by(|left, right| right.1.cmp(&left.1));
-        println!("pc samples: {total} taken, {} distinct; hottest:", hot.len());
+        println!(
+            "pc samples: {total} taken, {} distinct; hottest:",
+            hot.len()
+        );
         for (pc, count) in hot.iter().take(12) {
-            println!("  {pc:#010x}: {count} ({:.1}%)", *count as f64 * 100.0 / total as f64);
+            println!(
+                "  {pc:#010x}: {count} ({:.1}%)",
+                *count as f64 * 100.0 / total as f64
+            );
         }
     }
     println!("--- end report ---");
 }
-
 
 fn read_image(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();

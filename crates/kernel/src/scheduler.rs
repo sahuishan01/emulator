@@ -107,6 +107,12 @@ pub struct Scheduler {
     active_core: u8,
     quantum_used: u32,
     yield_requested: bool,
+    /// Set whenever thread state may have changed outside the running thread's
+    /// instruction stream (SVCs, thread management). While clear and the quantum
+    /// is not exhausted, `prepare` keeps the live CPU without a full reschedule.
+    dirty: bool,
+    /// Earliest Waiting/Sleeping deadline, refreshed on every full reschedule.
+    next_deadline: u64,
     ready_order: u128,
     stats: SchedulerStats,
 }
@@ -127,6 +133,8 @@ impl Scheduler {
             active_core: 0,
             quantum_used: 0,
             yield_requested: false,
+            dirty: true,
+            next_deadline: u64::MAX,
             ready_order: 0,
             stats: SchedulerStats {
                 threads_created: 1,
@@ -142,6 +150,7 @@ impl Scheduler {
         }
     }
     pub fn add(&mut self, object: ThreadObject, cpu: Cpu, priority: u8, ideal_core: i32) {
+        self.dirty = true;
         let mask = if (0..3).contains(&ideal_core) {
             1u64 << ideal_core
         } else {
@@ -166,6 +175,7 @@ impl Scheduler {
         self.ready_order
     }
     pub fn start(&mut self, id: usize) -> bool {
+        self.dirty = true;
         if !matches!(self.threads[id].state, State::Created) {
             return false;
         }
@@ -181,6 +191,7 @@ impl Scheduler {
             .ok_or(SchedulerError::ClockOverflow)
     }
     pub fn wait(&mut self, targets: Vec<WaitTarget>, timeout: i64) -> Result<(), SchedulerError> {
+        self.dirty = true;
         let deadline = if timeout < 0 {
             None
         } else {
@@ -191,6 +202,7 @@ impl Scheduler {
         Ok(())
     }
     pub fn take_cancellation(&mut self) -> bool {
+        self.dirty = true;
         let pending = std::mem::take(&mut self.threads[self.current].cancel_pending);
         if pending {
             self.stats.cancelled_waits += 1;
@@ -198,6 +210,7 @@ impl Scheduler {
         pending
     }
     pub fn cancel_wait(&mut self, id: usize) {
+        self.dirty = true;
         if matches!(self.threads[id].state, State::Waiting { .. }) {
             let order = self.next_order();
             let thread = &mut self.threads[id];
@@ -215,6 +228,7 @@ impl Scheduler {
         }
     }
     pub fn sleep(&mut self, ns: i64) -> Result<(), SchedulerError> {
+        self.dirty = true;
         if ns == 0 {
             self.yield_requested = true;
         } else if ns == -1 || ns == -2 {
@@ -232,6 +246,7 @@ impl Scheduler {
         Ok(())
     }
     pub fn exit_current(&mut self) -> bool {
+        self.dirty = true;
         self.threads[self.current].state = State::Exited;
         self.threads[self.current].object.terminated.set(true);
         !self.threads.iter().any(|t| {
@@ -242,6 +257,7 @@ impl Scheduler {
         })
     }
     pub fn terminate_all(&mut self) {
+        self.dirty = true;
         for thread in &mut self.threads {
             thread.object.terminated.set(true);
             thread.state = State::Exited;
@@ -289,6 +305,7 @@ impl Scheduler {
         self.active_core
     }
     pub fn set_thread_core_mask(&mut self, id: usize, ideal_core: i32, mask: u64) -> bool {
+        self.dirty = true;
         if id < self.threads.len() {
             self.threads[id].ideal_core = ideal_core;
             self.threads[id].core_mask = if mask == 0 { 7 } else { mask };
@@ -301,6 +318,7 @@ impl Scheduler {
         self.threads.get(id).map(|t| (t.ideal_core, t.core_mask))
     }
     pub fn set_thread_priority(&mut self, id: usize, priority: u8) -> bool {
+        self.dirty = true;
         if id < self.threads.len() && priority < 64 {
             self.threads[id].priority = priority;
             true
@@ -389,7 +407,25 @@ impl Scheduler {
             .min_by_key(|(_, t)| (t.priority, t.ready_order))
             .map(|(id, _)| id)
     }
+    /// Forces the next `prepare` to run a full reschedule (wake checks and
+    /// thread selection). The kernel calls this on every supervisor call.
+    pub fn request_reschedule(&mut self) {
+        self.dirty = true;
+    }
     pub fn prepare(&mut self, cpu: &mut Cpu) -> ScheduleOutcome {
+        // Fast path: nothing outside the current thread's instruction stream
+        // changed and its quantum is not used up, so it keeps running with its
+        // live registers. Timed wake-ups are checked at the next quantum
+        // boundary, which bounds their latency to THREAD_QUANTUM instructions.
+        if !self.dirty
+            && !self.yield_requested
+            && self.quantum_used < THREAD_QUANTUM
+            && self.stats.virtual_time_ns < self.next_deadline
+            && matches!(self.threads[self.current].state, State::Runnable)
+        {
+            return ScheduleOutcome::Ready;
+        }
+        self.dirty = false;
         self.threads[self.current].cpu = cpu.clone();
         self.wake();
         let quantum_expired = self.quantum_used >= THREAD_QUANTUM;
@@ -425,7 +461,18 @@ impl Scheduler {
                 best = self.best();
             }
         }
+        self.next_deadline = self
+            .threads
+            .iter()
+            .filter_map(|t| match &t.state {
+                State::Waiting { deadline, .. } => *deadline,
+                State::Sleeping { deadline } => Some(*deadline),
+                _ => None,
+            })
+            .min()
+            .unwrap_or(u64::MAX);
         let Some(next) = best else {
+            self.dirty = true;
             return ScheduleOutcome::Blocked;
         };
         let previous = self.current;

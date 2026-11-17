@@ -1287,6 +1287,7 @@ impl Kernel {
         cpu: &mut Cpu,
         memory: &mut AddressSpace,
     ) -> Result<KernelEvent, KernelError> {
+        self.scheduler.request_reschedule();
         if self.exited {
             return Err(KernelError::ProcessAlreadyExited);
         }

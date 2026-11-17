@@ -179,6 +179,16 @@ pub struct MemoryDescriptor {
 pub struct AddressSpace {
     regions: Vec<Region>,
     budget: Rc<AllocationBudget>,
+    /// Debug write watchpoint `[start, end)`; matching writes are logged.
+    watch: Option<(u64, u64)>,
+    watch_hits: Vec<WatchHit>,
+}
+
+/// A guest or host write that overlapped the debug watch range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WatchHit {
+    pub address: u64,
+    pub bytes: Vec<u8>,
 }
 
 const MAX_MAPPINGS: usize = 4096;
@@ -212,6 +222,8 @@ impl AddressSpace {
                 limit: byte_limit,
                 used: Cell::new(0),
             }),
+            watch: None,
+            watch_hits: Vec::new(),
         }
     }
 
@@ -766,6 +778,14 @@ impl AddressSpace {
             return Ok(());
         }
         let end = checked_end(address, input.len())?;
+        if let Some((start, stop)) = self.watch {
+            if address < stop && start < end {
+                self.watch_hits.push(WatchHit {
+                    address,
+                    bytes: input.to_vec(),
+                });
+            }
+        }
         for region in &mut self.regions {
             if region.start <= address && end <= region.end {
                 if !region.effective_permissions().allows(Access::Write) {
@@ -796,6 +816,17 @@ impl AddressSpace {
             consumed += size;
         }
         Ok(())
+    }
+
+    /// Installs (or clears) a debug write watchpoint over `[start, start + len)`.
+    pub fn set_write_watch(&mut self, range: Option<(u64, u64)>) {
+        self.watch = range.map(|(start, len)| (start, start.saturating_add(len)));
+        self.watch_hits.clear();
+    }
+
+    /// Drains writes recorded by the debug watchpoint since the last call.
+    pub fn take_watch_hits(&mut self) -> Vec<WatchHit> {
+        std::mem::take(&mut self.watch_hits)
     }
 
     pub fn fetch_u32(&self, address: u64) -> Result<u32, MemoryError> {

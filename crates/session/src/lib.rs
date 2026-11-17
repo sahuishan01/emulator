@@ -1,8 +1,8 @@
 //! Composition of original NRO loading, CPU execution and the minimal kernel.
 
-use emulator_loader::storage::ReadOnlyStorage;
 use emulator_a64::{Cpu, ExecutionError, StepEvent};
 use emulator_kernel::{homebrew_config, Kernel, KernelError, KernelEvent, ScheduleOutcome};
+use emulator_loader::storage::ReadOnlyStorage;
 use emulator_loader::{LoadError, LoadedImage, NroImage, NsoProgram};
 use emulator_memory::{AddressSpace, MemoryError, Permissions};
 use std::fmt;
@@ -63,6 +63,18 @@ pub struct Session {
     image: LoadedImage,
     state: SessionState,
     instructions: u64,
+    watch_log: Vec<WatchRecord>,
+}
+
+/// A watched write attributed to the instruction (or SVC) that caused it.
+#[derive(Clone, Debug)]
+pub struct WatchRecord {
+    pub instruction: u64,
+    pub thread: usize,
+    pub pc: u64,
+    pub lr: u64,
+    pub address: u64,
+    pub bytes: Vec<u8>,
 }
 
 impl Session {
@@ -83,7 +95,9 @@ impl Session {
         Self::from_nso_program_with_services(program, emulator_services::ServiceManager::default())
     }
 
-    pub fn from_exefs(program: &emulator_loader::exefs::ExeFsProgram) -> Result<Self, SessionError> {
+    pub fn from_exefs(
+        program: &emulator_loader::exefs::ExeFsProgram,
+    ) -> Result<Self, SessionError> {
         Self::from_exefs_with_services(program, emulator_services::ServiceManager::default())
     }
 
@@ -108,7 +122,9 @@ impl Session {
             .find(|m| m.name == "rtld")
             .or_else(|| nso_program.modules().iter().find(|m| m.name == "main"))
             .or_else(|| nso_program.modules().first())
-            .ok_or(SessionError::Load(LoadError::Invalid("NSO program contains no modules")))?;
+            .ok_or(SessionError::Load(LoadError::Invalid(
+                "NSO program contains no modules",
+            )))?;
         let image = main_module.image;
 
         let stack_size = program
@@ -164,6 +180,7 @@ impl Session {
             image,
             state: SessionState::Loaded,
             instructions: 0,
+            watch_log: Vec::new(),
         })
     }
 
@@ -179,13 +196,17 @@ impl Session {
         keys: &emulator_crypto::keys::KeyFile,
         mut service_manager: emulator_services::ServiceManager,
     ) -> Result<Self, SessionError> {
-        let header = emulator_loader::nca::decrypt_nca3_header(archive, keys)
+        let header =
+            emulator_loader::nca::decrypt_nca3_header(archive, keys).map_err(SessionError::Load)?;
+        header
+            .verify_fs_header_hashes()
             .map_err(SessionError::Load)?;
-        header.verify_fs_header_hashes().map_err(SessionError::Load)?;
         if let Ok(romfs) = header.open_romfs(archive, keys) {
             service_manager.set_romfs(romfs);
         }
-        let exefs = header.open_exefs(archive, keys).map_err(SessionError::Load)?;
+        let exefs = header
+            .open_exefs(archive, keys)
+            .map_err(SessionError::Load)?;
         Self::from_exefs_with_services(&exefs, service_manager)
     }
 
@@ -220,8 +241,7 @@ impl Session {
         mut service_manager: emulator_services::ServiceManager,
     ) -> Result<Self, SessionError> {
         let archive: &[u8] = (*shared).as_ref();
-        let nsp = emulator_loader::nsp::NspArchive::parse(archive)
-            .map_err(SessionError::Load)?;
+        let nsp = emulator_loader::nsp::NspArchive::parse(archive).map_err(SessionError::Load)?;
         let (header, prog_nca) = nsp.open_program(keys).map_err(SessionError::Load)?;
         // `prog_nca` borrows from `archive`: recover its offset in the container.
         let nca_offset = (prog_nca.as_ptr() as usize - archive.as_ptr() as usize) as u64;
@@ -240,7 +260,9 @@ impl Session {
             )) => {}
             Err(error) => return Err(SessionError::Load(error)),
         }
-        let exefs = header.open_exefs(prog_nca, keys).map_err(SessionError::Load)?;
+        let exefs = header
+            .open_exefs(prog_nca, keys)
+            .map_err(SessionError::Load)?;
         Self::from_exefs_with_services(&exefs, service_manager)
     }
 
@@ -253,7 +275,9 @@ impl Session {
             .iter()
             .find(|m| m.name == "main")
             .or_else(|| program.modules().first())
-            .ok_or(SessionError::Load(LoadError::Invalid("NSO program contains no modules")))?;
+            .ok_or(SessionError::Load(LoadError::Invalid(
+                "NSO program contains no modules",
+            )))?;
         let image = main_module.image;
         let mut memory = AddressSpace::default();
         let mut config = homebrew_config();
@@ -293,6 +317,7 @@ impl Session {
             image,
             state: SessionState::Loaded,
             instructions: 0,
+            watch_log: Vec::new(),
         })
     }
     fn load(
@@ -341,6 +366,7 @@ impl Session {
             image,
             state: SessionState::Loaded,
             instructions: 0,
+            watch_log: Vec::new(),
         })
     }
 
@@ -369,6 +395,34 @@ impl Session {
         &self.kernel
     }
 
+    /// Enables a debug write watchpoint over `[start, start + len)`.
+    pub fn set_write_watch(&mut self, start: u64, len: u64) {
+        self.memory.set_write_watch(Some((start, len)));
+    }
+    pub fn watch_log(&self) -> &[WatchRecord] {
+        &self.watch_log
+    }
+    fn collect_watch(&mut self, pc: u64, lr: u64) {
+        let hits = self.memory.take_watch_hits();
+        if hits.is_empty() {
+            return;
+        }
+        let thread = self.kernel.current_thread_id();
+        for hit in hits {
+            if self.watch_log.len() >= 4096 {
+                break;
+            }
+            self.watch_log.push(WatchRecord {
+                instruction: self.instructions,
+                thread,
+                pc,
+                lr,
+                address: hit.address,
+                bytes: hit.bytes,
+            });
+        }
+    }
+
     pub fn run(&mut self, budget: u64) -> Result<RunOutcome, SessionError> {
         if !matches!(
             self.state,
@@ -382,7 +436,10 @@ impl Session {
                 self.state = SessionState::Blocked;
                 return Ok(RunOutcome::Blocked);
             }
-            let event = match self.cpu.step(&mut self.memory) {
+            let (pc, lr) = (self.cpu.pc, self.cpu.x[30]);
+            let event = self.cpu.step(&mut self.memory);
+            self.collect_watch(pc, lr);
+            let event = match event {
                 Ok(event) => event,
                 Err(error) => {
                     self.state = SessionState::Faulted;
@@ -395,10 +452,11 @@ impl Session {
                 return Err(SessionError::Kernel(error));
             }
             if let StepEvent::SupervisorCall { immediate } = event {
-                match self
+                let result = self
                     .kernel
-                    .dispatch(immediate, &mut self.cpu, &mut self.memory)
-                {
+                    .dispatch(immediate, &mut self.cpu, &mut self.memory);
+                self.collect_watch(pc, lr);
+                match result {
                     Ok(KernelEvent::Continue) => {}
                     Ok(KernelEvent::ProcessExited) => {
                         self.state = SessionState::Exited;
