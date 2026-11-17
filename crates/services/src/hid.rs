@@ -3,8 +3,9 @@
 //! and six-axis motion sensor readings.
 
 use emulator_ipc::Request;
-use emulator_kernel::service::{Service, ServiceError, ServiceReply};
+use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
 use emulator_kernel::Object;
+use crate::event::EventHandle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -109,15 +110,89 @@ impl Service for HidAppletResource {
     }
 }
 
+/// Npad configuration the guest sets and reads back through `hid`.
+#[derive(Clone, Debug)]
+struct NpadConfig {
+    style_set: u32,
+    joy_hold_type: u64,
+    handheld_activation_mode: u64,
+    communication_mode: u64,
+    vibration_permitted: bool,
+}
+
+impl Default for NpadConfig {
+    fn default() -> Self {
+        Self {
+            style_set: 0x1f, // FullKey | Handheld | JoyDual | JoyLeft | JoyRight
+            joy_hold_type: 1, // Horizontal
+            handheld_activation_mode: 0,
+            communication_mode: 0,
+            vibration_permitted: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HidService {
     shared_memory: Rc<RefCell<Vec<u8>>>,
+    /// Per-request copy (clone_for_request), committed by the kernel on success.
+    config: NpadConfig,
 }
 
 impl Default for HidService {
     fn default() -> Self {
         Self {
             shared_memory: create_hid_shared_memory(),
+            config: NpadConfig::default(),
+        }
+    }
+}
+
+fn data(bytes: Vec<u8>) -> Result<ServiceReply, ServiceError> {
+    Ok(ServiceReply {
+        result: 0,
+        data: bytes,
+        moved_objects: Vec::new(),
+        effect: None,
+    })
+}
+
+fn object(object: Box<dyn Service>) -> Result<ServiceReply, ServiceError> {
+    Ok(ServiceReply {
+        result: 0,
+        data: Vec::new(),
+        moved_objects: vec![object],
+        effect: None,
+    })
+}
+
+fn input_u32(request: &Request) -> Result<u32, ServiceError> {
+    request
+        .data
+        .get(..4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .ok_or(ServiceError::InvalidPayload {
+            expected: 4,
+            actual: request.data.len(),
+        })
+}
+
+/// IActiveVibrationDeviceList: only ActivateVibrationDevice (0).
+#[derive(Clone, Debug, Default)]
+pub struct ActiveVibrationDeviceList;
+
+impl Service for ActiveVibrationDeviceList {
+    fn clone_for_request(&self) -> Box<dyn Service> {
+        Box::new(self.clone())
+    }
+
+    fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
+        match request.command_id {
+            0 => Ok(ServiceReply::default()),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IActiveVibrationDeviceList",
+                command,
+            }),
         }
     }
 }
@@ -127,97 +202,133 @@ impl Service for HidService {
         Box::new(self.clone())
     }
 
+    /// IHidServer. Input devices are emulated as one always-connected handheld
+    /// controller; configuration setters are stored and read back.
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
+        let config = &mut self.config;
         match request.command_id {
-            // CreateAppletResource -> returns IAppletResource object
-            0 => Ok(ServiceReply {
-                result: 0,
-                data: Vec::new(),
-                moved_objects: vec![Box::new(HidAppletResource::new(self.shared_memory.clone()))],
-                effect: None,
-            }),
-            // ActivateDebugPad
-            1 => Ok(ServiceReply::default()),
+            // CreateAppletResource -> IAppletResource
+            0 => object(Box::new(HidAppletResource::new(self.shared_memory.clone()))),
+            // Activate{DebugPad,TouchScreen,Mouse,Keyboard,Gesture}
+            1 | 11 | 21 | 31 | 91 => Ok(ServiceReply::default()),
+            // Start/StopSixAxisSensor, EnableSixAxisSensorFusion,
+            // Set/ResetSixAxisSensorFusionParameters, SetGyroscopeZeroDriftMode
+            66 | 67 | 69 | 70 | 72 | 79 => Ok(ServiceReply::default()),
+            // IsSixAxisSensorFusionEnabled
+            68 => data(vec![1]),
+            // IsSixAxisSensorAtRest
+            82 => data(vec![1]),
             // SetSupportedNpadStyleSet
-            100 => Ok(ServiceReply::default()),
-            // GetSupportedNpadStyleSet
-            101 => {
-                let style_set = 0x1Fu32; // ProController | Handheld | JoyDual | JoyLeft | JoyRight
-                Ok(ServiceReply {
-                    result: 0,
-                    data: style_set.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
+            100 => {
+                config.style_set = input_u32(request)?;
+                Ok(ServiceReply::default())
             }
-            // SetSupportedNpadIdType
-            102 => Ok(ServiceReply::default()),
-            // ActivateNpad
-            103 => Ok(ServiceReply::default()),
-            // DeactivateNpad
-            104 => Ok(ServiceReply::default()),
-            // AcquireNpadStyleSetUpdateEventHandle
-            106 => Ok(ServiceReply::default()),
-            // SetNpadJoyAssignmentModeSingleByDefault
-            120 => Ok(ServiceReply::default()),
-            // SetNpadJoyAssignmentModeDual
-            121 => Ok(ServiceReply::default()),
-            // SetNpadHandheldActivationMode
-            122 => Ok(ServiceReply::default()),
+            // GetSupportedNpadStyleSet
+            101 => data(config.style_set.to_le_bytes().to_vec()),
+            // ActivateNpad, DeactivateNpad, DisconnectNpad, ActivateNpadWithRevision
+            // (SetSupportedNpadIdType, 102, carries a buffer: see `prepare`)
+            103 | 104 | 107 | 109 => Ok(ServiceReply::default()),
+            // AcquireNpadStyleSetUpdateEventHandle: signalled once (controller attached)
+            106 => object(Box::new(EventHandle::new(true))),
+            // GetPlayerLedPattern
+            108 => data(1u64.to_le_bytes().to_vec()),
             // SetNpadJoyHoldType
-            123 => Ok(ServiceReply::default()),
+            120 => {
+                config.joy_hold_type = u64::from(input_u32(request)?);
+                Ok(ServiceReply::default())
+            }
             // GetNpadJoyHoldType
-            124 => Ok(ServiceReply {
-                result: 0,
-                data: 0u32.to_le_bytes().to_vec(),
-                moved_objects: Vec::new(),
-                effect: None,
-            }),
-            // SetNpadJoyAssignmentModeSingle
-            125 => Ok(ServiceReply::default()),
-            // GetNpadJoyAssignmentMode
-            126 => Ok(ServiceReply {
-                result: 0,
-                data: 0u32.to_le_bytes().to_vec(),
-                moved_objects: Vec::new(),
-                effect: None,
-            }),
-            // GetActiveVibrationDeviceList
-            200 => Ok(ServiceReply {
-                result: 0,
-                data: 0u32.to_le_bytes().to_vec(),
-                moved_objects: Vec::new(),
-                effect: None,
-            }),
-            // GetVibrationDeviceInfo
-            201 => Ok(ServiceReply {
-                result: 0,
-                data: vec![0u8; 8],
-                moved_objects: Vec::new(),
-                effect: None,
-            }),
-            // SendVibrationValue
-            203 => Ok(ServiceReply::default()),
-            // GetVibrationValue
-            204 => Ok(ServiceReply {
-                result: 0,
-                data: vec![0u8; 16],
-                moved_objects: Vec::new(),
-                effect: None,
-            }),
+            121 => data(config.joy_hold_type.to_le_bytes().to_vec()),
+            // SetNpadJoyAssignmentMode{SingleByDefault,Single,Dual}, MergeSingleJoyAsDualJoy,
+            // Start/StopLrAssignmentMode
+            122..=127 => Ok(ServiceReply::default()),
+            // SetNpadHandheldActivationMode
+            128 => {
+                config.handheld_activation_mode = u64::from(input_u32(request)?);
+                Ok(ServiceReply::default())
+            }
+            // GetNpadHandheldActivationMode
+            129 => data(config.handheld_activation_mode.to_le_bytes().to_vec()),
+            // SwapNpadAssignment
+            130 => Ok(ServiceReply::default()),
+            // IsUnintendedHomeButtonInputProtectionEnabled
+            131 => data(vec![1]),
+            // EnableUnintendedHomeButtonInputProtection, SetNpadAnalogStickUseCenterClamp,
+            // SetNpadCaptureButtonAssignment, ClearNpadCaptureButtonAssignment
+            132 | 134 | 135 | 136 => Ok(ServiceReply::default()),
+            // GetVibrationDeviceInfo: linear resonant actuator, left/right by handle bit
+            200 => {
+                let handle = input_u32(request)?;
+                let position = if handle >> 24 & 1 == 0 { 1u32 } else { 2 };
+                let mut info = 1u32.to_le_bytes().to_vec();
+                info.extend_from_slice(&position.to_le_bytes());
+                data(info)
+            }
+            // SendVibrationValue, SendVibrationValues, SendVibrationGmvValue,
+            // Begin/EndPermitVibrationSession
+            201 | 206 | 207 | 209 | 210 => Ok(ServiceReply::default()),
+            // GetActualVibrationValue: neutral amplitudes at the default frequencies
+            202 => {
+                let mut value = Vec::with_capacity(16);
+                for field in [0.0f32, 160.0, 0.0, 320.0] {
+                    value.extend_from_slice(&field.to_le_bytes());
+                }
+                data(value)
+            }
+            // CreateActiveVibrationDeviceList
+            203 => object(Box::new(ActiveVibrationDeviceList)),
+            // PermitVibration
+            204 => {
+                config.vibration_permitted = request.data.first().is_some_and(|&b| b != 0);
+                Ok(ServiceReply::default())
+            }
+            // IsVibrationPermitted
+            205 => data(vec![u8::from(config.vibration_permitted)]),
+            // IsVibrationDeviceMounted
+            211 => data(vec![1]),
+            // Activate/Start/StopConsoleSixAxisSensor, Activate/StartSevenSixAxisSensor
+            300..=304 => Ok(ServiceReply::default()),
             // SetNpadCommunicationMode
-            206 => Ok(ServiceReply::default()),
+            1000 => {
+                config.communication_mode = u64::from(input_u32(request)?);
+                Ok(ServiceReply::default())
+            }
             // GetNpadCommunicationMode
-            207 => Ok(ServiceReply {
-                result: 0,
-                data: 0u32.to_le_bytes().to_vec(),
-                moved_objects: Vec::new(),
-                effect: None,
-            }),
+            1001 => data(config.communication_mode.to_le_bytes().to_vec()),
+            // SetTouchScreenConfiguration
+            1002 => Ok(ServiceReply::default()),
             command => Err(ServiceError::UnsupportedCommand {
                 service: "hid",
                 command,
             }),
         }
+    }
+
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        context.require_copy_handles(0)?;
+        if request.command_id != 102 {
+            context.require_buffers(0, 0)?;
+            return self.dispatch(request);
+        }
+        // SetSupportedNpadIdType(u64 ARUID, X buffer: array of u32 npad ids)
+        if request.data.len() != 8 {
+            return Err(ServiceError::InvalidPayload {
+                expected: 8,
+                actual: request.data.len(),
+            });
+        }
+        let ids = context.pointer_send(0)?;
+        let length = ids.as_ref().map_or(0, |view| view.len());
+        if length % 4 != 0 {
+            return Err(ServiceError::InvalidPayload {
+                expected: length & !3,
+                actual: length,
+            });
+        }
+        Ok(ServiceReply::default())
     }
 }

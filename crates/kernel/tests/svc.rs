@@ -473,7 +473,7 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
 
     // Condition variable wait (timeout 0) / signal
     cpu.x[0] = 0x1000; // mutex_addr
-    cpu.x[1] = 0x2000; // key_addr
+    cpu.x[1] = 0x1010; // key_addr
     cpu.x[2] = 1;      // thread_handle / tag
     cpu.x[3] = 0;      // timeout_ns = 0 -> immediate timeout
     assert_eq!(
@@ -481,17 +481,32 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], RESULT_TIMEOUT);
+    // Horizon publishes "has waiters" in the key so userland signals reach the kernel.
+    assert_eq!(memory.read_u32(0x1010).unwrap(), 1);
 
-    cpu.x[0] = 0x2000; // key_addr
+    cpu.x[0] = 0x1010; // key_addr
     cpu.x[1] = 1;      // count
     assert_eq!(
         kernel.dispatch(SVC_SIGNAL_PROCESS_WIDE_KEY, &mut cpu, &mut memory).unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
+    assert_eq!(memory.read_u32(0x1010).unwrap(), 0, "no waiters left clears the key");
 
-    // Break
+    // A fatal break stops the guest instead of returning to it.
     cpu.x[0] = 0x42;
+    cpu.x[1] = 0x100;
+    cpu.x[2] = 0x200;
+    assert!(matches!(
+        kernel.dispatch(SVC_BREAK, &mut cpu, &mut memory),
+        Err(emulator_kernel::KernelError::GuestBreak {
+            reason: 0x42,
+            info1: 0x100,
+            info2: 0x200
+        })
+    ));
+    // A notification-only break (bit 31) is logged and continues.
+    cpu.x[0] = 0x8000_0042;
     cpu.x[1] = 0x100;
     cpu.x[2] = 0x200;
     assert_eq!(
@@ -548,6 +563,7 @@ fn test_condvar_wait_signal_requeue_cycle() {
     );
     // Mutex should now be unlocked (0)
     assert_eq!(memory.read_u32(0x4000).unwrap(), 0);
+    assert_eq!(memory.read_u32(0x4010).unwrap(), 1, "key marks a waiter");
 
     // Thread 0 is blocked waiting on condvar, so scheduler runs Thread 1
     let mut cpu1 = Cpu::default();
@@ -591,4 +607,61 @@ fn test_condvar_wait_signal_requeue_cycle() {
     }
     assert_eq!(kernel.prepare_execution(&mut cpu0), emulator_kernel::ScheduleOutcome::Ready);
     assert_eq!(kernel.current_thread_id(), 0);
+}
+
+#[test]
+fn map_memory_aliases_hides_the_source_and_unmap_requires_the_exact_pair() {
+    use emulator_kernel::{
+        RESULT_INVALID_CURRENT_MEMORY, RESULT_INVALID_SIZE, SVC_MAP_MEMORY, SVC_UNMAP_MEMORY,
+    };
+    let mut memory = AddressSpace::default();
+    memory
+        .map(0x10000, vec![7; 0x2000], Permissions::READ_WRITE)
+        .unwrap();
+    memory.map(0x20000, vec![1; 0x1000], Permissions::READ).unwrap();
+    let mut kernel = Kernel::default();
+    let call = |kernel: &mut Kernel, memory: &mut AddressSpace, id, d: u64, s: u64, n: u64| {
+        let mut cpu = Cpu::new(0, 0);
+        (cpu.x[0], cpu.x[1], cpu.x[2]) = (d, s, n);
+        kernel.dispatch(id, &mut cpu, memory).unwrap();
+        cpu.x[0]
+    };
+    // Rejections leave both ranges untouched.
+    for (d, s, n, expected) in [
+        (0x40800, 0x10000, 0x1000, RESULT_INVALID_ADDRESS),
+        (0x40000, 0x10000, 0x800, RESULT_INVALID_SIZE),
+        (0x40000, 0x10000, 0, RESULT_INVALID_SIZE),
+        (0x11000, 0x10000, 0x2000, RESULT_INVALID_SIZE),
+        (0x40000, 0x20000, 0x1000, RESULT_INVALID_CURRENT_MEMORY),
+        (0x40000, 0x30000, 0x1000, RESULT_INVALID_CURRENT_MEMORY),
+        (0x20000, 0x10000, 0x1000, RESULT_INVALID_CURRENT_MEMORY),
+    ] {
+        assert_eq!(call(&mut kernel, &mut memory, SVC_MAP_MEMORY, d, s, n), expected);
+        assert_eq!(memory.read_u8(0x10000).unwrap(), 7);
+        assert!(memory.read_u8(0x40000).is_err());
+    }
+    assert_eq!(call(&mut kernel, &mut memory, SVC_MAP_MEMORY, 0x40000, 0x10000, 0x2000), 0);
+    assert!(memory.read_u8(0x10000).is_err());
+    assert!(memory.write_u8(0x11000, 1).is_err());
+    assert_eq!(memory.read_u8(0x41fff).unwrap(), 7);
+    memory.write_u8(0x40004, 9).unwrap();
+    // A hidden source cannot be mapped again, and partial unmaps are refused.
+    assert_eq!(
+        call(&mut kernel, &mut memory, SVC_MAP_MEMORY, 0x50000, 0x10000, 0x1000),
+        RESULT_INVALID_CURRENT_MEMORY
+    );
+    for (d, s, n) in [(0x40000, 0x10000, 0x1000), (0x40000, 0x11000, 0x2000), (0x50000, 0x10000, 0x2000)] {
+        assert_eq!(
+            call(&mut kernel, &mut memory, SVC_UNMAP_MEMORY, d, s, n),
+            RESULT_INVALID_CURRENT_MEMORY
+        );
+    }
+    assert_eq!(call(&mut kernel, &mut memory, SVC_UNMAP_MEMORY, 0x40000, 0x10000, 0x2000), 0);
+    assert!(memory.read_u8(0x40000).is_err());
+    assert_eq!(memory.read_u8(0x10004).unwrap(), 9);
+    memory.write_u8(0x11000, 3).unwrap();
+    assert_eq!(
+        call(&mut kernel, &mut memory, SVC_UNMAP_MEMORY, 0x40000, 0x10000, 0x2000),
+        RESULT_INVALID_CURRENT_MEMORY
+    );
 }

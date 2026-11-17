@@ -4,9 +4,14 @@ use std::collections::BTreeMap;
 
 pub(crate) const NOT_SUPPORTED: u32 = 2;
 pub(crate) const BAD_PARAMETER: u32 = 4;
+/// `NVMAP_IOC_FROM_ID` / `NVMAP_IOC_GET_ID`.
+pub(crate) const FROM_ID: u32 = 0xc0080103;
+pub(crate) const GET_ID: u32 = 0xc008010e;
 pub(crate) const NO_MEMORY: u32 = 6;
 const INVALID_STATE: u32 = 8;
-pub(crate) const IMPORT_BYTES: usize = 64 * 1024 * 1024;
+/// Cap on guest bytes imported into nvmap / GPU spaces. Backing stays in
+/// guest memory (views are pinned, not copied), so this bounds bookkeeping.
+pub(crate) const IMPORT_BYTES: usize = 4 * 1024 * 1024 * 1024;
 pub(crate) const IMPORT_SPANS: usize = 4096;
 
 #[derive(Clone, Copy)]
@@ -70,6 +75,7 @@ impl NvMap {
             0xc0200104 => Some(32),
             0xc00c0109 => Some(12),
             0xc0180105 => Some(24),
+            FROM_ID | GET_ID => Some(8),
             _ => None,
         }
     }
@@ -96,10 +102,12 @@ impl NvMap {
         let mut output = input.to_vec();
         match code {
             0xc0080101 => {
+                // nvmap rounds object sizes up to whole pages.
                 let size = word(0);
-                if size == 0 || size % 4096 != 0 || size as usize > IMPORT_BYTES {
+                if size == 0 || size as usize > IMPORT_BYTES {
                     return Err(BAD_PARAMETER);
                 }
+                let size = size.next_multiple_of(4096);
                 if self.objects.values().filter(|o| o.owner == fd).count() >= 64 {
                     return Err(NO_MEMORY);
                 }
@@ -135,7 +143,9 @@ impl NvMap {
                     return Err(BAD_PARAMETER);
                 }
                 let alignment = requested.max(4096);
-                if alignment as usize > IMPORT_BYTES || address % u64::from(alignment) != 0 {
+                // The alignment constrains later GPU mappings; the CPU backing
+                // only has to be page aligned.
+                if alignment as usize > IMPORT_BYTES || address % 4096 != 0 {
                     return Err(BAD_PARAMETER);
                 }
                 if object.size as usize > budget.bytes {
@@ -191,6 +201,17 @@ impl NvMap {
                 output[8..16].copy_from_slice(&address.to_le_bytes());
                 output[16..20].copy_from_slice(&object.size.to_le_bytes());
                 output[20..24].fill(0);
+            }
+            // {id out, handle in}: ids are the (process-unique) handles.
+            GET_ID => {
+                self.objects.get(&word(4)).ok_or(BAD_PARAMETER)?;
+                output[0..4].copy_from_slice(&word(4).to_le_bytes());
+            }
+            // {id in, handle out}: every device of this client shares the
+            // object table, so the id resolves to the same handle.
+            FROM_ID => {
+                self.objects.get(&word(0)).ok_or(BAD_PARAMETER)?;
+                output[4..8].copy_from_slice(&word(0).to_le_bytes());
             }
             _ => return Err(NOT_SUPPORTED),
         }

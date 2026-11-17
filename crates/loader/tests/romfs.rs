@@ -56,8 +56,9 @@ fn test_romfs_ivfc_section_parsing() {
     hash_data[4..8].copy_from_slice(&0x00020000u32.to_le_bytes()); // version
     hash_data[8..12].copy_from_slice(&0x20u32.to_le_bytes()); // master hash size
 
-    // Level 5 at offset 0x0C + 5 * 24 = 0x0C + 120 = 0x84 = 132
-    let l5_off = 0x0C + 5 * 24;
+    hash_data[12..16].copy_from_slice(&7u32.to_le_bytes()); // max layers
+    // Level table starts at 0x10; level 5 entry at 0x10 + 5 * 0x18.
+    let l5_off = 0x10 + 5 * 24;
     hash_data[l5_off..l5_off + 8].copy_from_slice(&data_offset.to_le_bytes());
     hash_data[l5_off + 8..l5_off + 16].copy_from_slice(&data_size.to_le_bytes());
     hash_data[l5_off + 16..l5_off + 20].copy_from_slice(&9u32.to_le_bytes()); // block size power

@@ -34,7 +34,8 @@ fn threads_validate_entry_stack_priority_core_and_publish_atomically() {
         (3, 0x5001),
         (3, 0x1000),
         (4, 64),
-        (5, 1),
+        (5, 3), // Core 3 is reserved for the system.
+        (5, 0xffff_fffd),
     ] {
         c.x[1] = 0x1000;
         c.x[2] = 42;
@@ -324,4 +325,72 @@ fn thread_creation_at_handle_capacity_does_not_map_tls_or_consume_identity() {
     assert_eq!(k.scheduler_stats().threads_created, 2);
     call(&mut k, &mut c, &mut m, SVC_START_THREAD, 0xffff);
     assert_eq!(c.x[0], RESULT_INVALID_HANDLE);
+}
+
+fn arbiter(k: &mut Kernel, c: &mut Cpu, m: &mut AddressSpace, svc: u16, args: [u64; 4]) -> u64 {
+    c.x[..4].copy_from_slice(&args);
+    k.dispatch(svc, c, m).unwrap();
+    c.x[0]
+}
+
+#[test]
+fn address_arbiter_rejects_bad_arguments_and_unmet_conditions_without_blocking() {
+    let (mut k, mut c, mut m) = setup();
+    let w = SVC_WAIT_FOR_ADDRESS;
+    let s = SVC_SIGNAL_TO_ADDRESS;
+    m.write_u32(0x4100, 5).unwrap();
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, w, [0x4102, 2, 5, u64::MAX]), RESULT_INVALID_ADDRESS);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, w, [0x4100, 3, 5, u64::MAX]), RESULT_INVALID_ENUM_VALUE);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, w, [0x9000_0000, 2, 0, u64::MAX]), RESULT_INVALID_CURRENT_MEMORY);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, w, [0x4100, 2, 4, u64::MAX]), RESULT_INVALID_STATE);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, w, [0x4100, 0, 5, u64::MAX]), RESULT_INVALID_STATE);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, w, [0x4100, 2, 5, 0]), RESULT_TIMEOUT);
+    // DecrementAndWaitIfLessThan decrements before the (zero) timeout fires.
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, w, [0x4100, 1, 6, 0]), RESULT_TIMEOUT);
+    assert_eq!(m.read_u32(0x4100).unwrap(), 4);
+    // Signal variants that compare leave memory untouched on mismatch.
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, s, [0x4100, 1, 9, 1]), RESULT_INVALID_STATE);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, s, [0x4100, 4, 1, 1]), RESULT_INVALID_ENUM_VALUE);
+    assert_eq!(m.read_u32(0x4100).unwrap(), 4);
+    // With no waiters: IncrementIfEqual and ModifyByWaitingCount both add one.
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, s, [0x4100, 1, 4, 1]), 0);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, s, [0x4100, 2, 5, 1]), 0);
+    assert_eq!(m.read_u32(0x4100).unwrap(), 6);
+    assert_eq!(k.scheduler_stats().blocking_waits, 0);
+}
+
+#[test]
+fn address_arbiter_blocks_until_signalled_and_forgets_timed_out_waiters() {
+    let (mut k, mut c, mut m) = setup();
+    let child = create(&mut k, &mut c, &mut m, 44);
+    call(&mut k, &mut c, &mut m, SVC_START_THREAD, child.into());
+
+    // Main waits for 0x4100 == 0; the child runs and signals with a count of 1.
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, SVC_WAIT_FOR_ADDRESS, [0x4100, 2, 0, u64::MAX]), 0);
+    k.prepare_execution(&mut c);
+    assert_eq!(k.current_thread_id(), 1);
+    // One waiter and count 1: SignalAndModifyByWaitingCountIfEqual stores value - 1.
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, SVC_SIGNAL_TO_ADDRESS, [0x4100, 2, 0, 1]), 0);
+    assert_eq!(m.read_u32(0x4100).unwrap() as i32, -1);
+    call(&mut k, &mut c, &mut m, SVC_SLEEP_THREAD, 0);
+    k.prepare_execution(&mut c);
+    assert_eq!(k.current_thread_id(), 0);
+    assert_eq!(c.x[0], 0);
+
+    // A finite wait that expires must not count as a waiter afterwards.
+    m.write_u32(0x4200, 7).unwrap();
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, SVC_WAIT_FOR_ADDRESS, [0x4200, 0, 8, 3]), 0);
+    k.prepare_execution(&mut c);
+    assert_eq!(k.current_thread_id(), 1);
+    for _ in 0..3 {
+        k.instruction_completed().unwrap();
+        k.prepare_execution(&mut c);
+    }
+    assert_eq!(k.scheduler_stats().timeouts, 1);
+    assert_eq!(arbiter(&mut k, &mut c, &mut m, SVC_SIGNAL_TO_ADDRESS, [0x4200, 2, 7, 1]), 0);
+    assert_eq!(m.read_u32(0x4200).unwrap(), 8, "no live waiters: value + 1");
+    call(&mut k, &mut c, &mut m, SVC_SLEEP_THREAD, 0);
+    k.prepare_execution(&mut c);
+    assert_eq!(k.current_thread_id(), 0);
+    assert_eq!(c.x[0], RESULT_TIMEOUT);
 }

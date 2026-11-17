@@ -580,11 +580,12 @@ pub fn run() -> Vec<CaseResult> {
             r.channel = r.open(b"/dev/nvhost-gpu");
             assert_eq!(r.io(r.channel, ALLOC_FIFO, &[8, 0, 1, 0, 0, 0, 0, 0]), 3);
             assert_eq!(r.io(r.asfd, INIT, &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 0);
-            assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.channel]), 3);
+            // Binding may precede SET_NVMAP; a second bind is refused.
+            assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.channel]), 0);
             assert_eq!(r.io(r.channel, SET_NVMAP, &[r.asfd]), 4);
             assert_eq!(r.io(r.channel, SET_NVMAP, &[r.nv]), 0);
             assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.nv]), 4);
-            assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.channel]), 0);
+            assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.channel]), 8);
             assert_eq!(r.io(r.channel, ALLOC_FIFO, &[3, 0, 1, 0, 0, 0, 0, 0]), 4);
         }),
         ("open-and-setup-reply-rollback", |r| {
@@ -595,7 +596,7 @@ pub fn run() -> Vec<CaseResult> {
             assert_eq!(r.io(r.asfd, INIT, &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 0);
             r.channel = r.open(b"/dev/nvhost-gpu");
             assert!(r.io_at(r.channel, SET_NVMAP, &[r.nv], 101, 0x6000).is_err());
-            assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.channel]), 3);
+            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[8, 0, 1, 0, 0, 0, 0, 0]), 3);
             assert_eq!(r.io(r.channel, SET_NVMAP, &[r.nv]), 0);
             assert!(r
                 .io_at(r.asfd, BIND_CHANNEL, &[r.channel], 101, 0x6000)

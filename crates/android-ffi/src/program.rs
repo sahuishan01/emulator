@@ -143,6 +143,12 @@ impl std::ops::Deref for ProgramBacking {
     }
 }
 
+impl AsRef<[u8]> for ProgramBacking {
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
 impl<T: AsRef<[u8]>> PartialEq<T> for ProgramBacking {
     fn eq(&self, other: &T) -> bool {
         self.as_slice() == other.as_ref()
@@ -453,7 +459,13 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
                 return Err("Nintendo Switch decryption keys (prod.keys) are required to decrypt and run NSP packages. Please install prod.keys in Settings -> Decryption Keys.".into());
             }
             let service_manager = emulator_services::ServiceManager::with_graphics(graphics);
-            p.session = Some(Session::from_nsp_with_services(&p.bytes, &mut keys, service_manager).map_err(|e| e.to_string())?);
+            // Hand the (possibly memory-mapped) package to the session without
+            // copying: the RomFS is read from it lazily for the session's lifetime.
+            let backing = std::mem::replace(&mut p.bytes, ProgramBacking::Heap(Vec::new()));
+            p.session = Some(
+                Session::from_nsp_shared(std::rc::Rc::new(backing), &mut keys, service_manager)
+                    .map_err(|e| e.to_string())?,
+            );
             p.is_package = true;
         } else {
             p.session = Some(Session::from_nro_with_graphics(&p.bytes, graphics).map_err(|e| e.to_string())?);

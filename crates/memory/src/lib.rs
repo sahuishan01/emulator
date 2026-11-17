@@ -356,6 +356,11 @@ impl AddressSpace {
         }
         Ok(())
     }
+    /// Bytes that can still be allocated before the budget is exhausted.
+    pub fn remaining_budget(&self) -> usize {
+        self.budget.limit.saturating_sub(self.budget.used.get())
+    }
+
     /// Originating allocations remain charged while any CPU/GPU view owns them.
     pub fn resident_bytes(&self) -> usize {
         self.budget.used.get()

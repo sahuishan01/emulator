@@ -3,6 +3,11 @@
 use emulator_memory::{AddressSpace, MemoryError};
 use std::fmt;
 
+mod crypto;
+mod ext;
+
+pub use ext::COUNTER_FREQUENCY_HZ;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Nzcv {
     pub negative: bool,
@@ -68,6 +73,7 @@ impl Width {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Instruction {
     Nop,
+    ClearExclusive,
     ReadThreadLocal {
         rd: u8,
     },
@@ -162,6 +168,15 @@ enum Instruction {
         rd: u8,
         rn: u8,
         op: u8,
+    },
+    /// LDXP / LDAXP / STXP / STLXP: two 32- or 64-bit registers.
+    ExclusivePair {
+        wide: bool,
+        rt: u8,
+        rt2: u8,
+        rn: u8,
+        rs: u8,
+        load: bool,
     },
     ExclusiveLoadStore {
         size: u8,
@@ -300,13 +315,6 @@ enum Instruction {
         sub: bool,
         neg: bool,
     },
-    FpConvertInt {
-        sf: bool,
-        double: bool,
-        rd: u8,
-        rn: u8,
-        op: u8,
-    },
     FpLoadStore {
         size: u8,
         rt: u8,
@@ -335,12 +343,6 @@ enum Instruction {
         load: bool,
         pre_index: bool,
         post_index: bool,
-    },
-    VectorBitwise {
-        rd: u8,
-        rn: u8,
-        rm: u8,
-        op: u8,
     },
 }
 
@@ -386,9 +388,31 @@ pub struct Cpu {
     pub pc: u64,
     pub nzcv: Nzcv,
     pub tpidrro_el0: u64,
+    /// Guest-writable thread pointer (`TPIDR_EL0`).
+    pub tpidr_el0: u64,
+    /// Value observed through `CNTPCT_EL0` / `CNTVCT_EL0`; the embedder advances it.
+    pub counter: u64,
     pub v: [u128; 32],
     pub fpcr: u32,
     pub fpsr: u32,
+    /// Local exclusive monitor: (address, access bytes, value observed by the
+    /// load-exclusive). Cleared by CLREX, a store-exclusive and context switches.
+    pub exclusive: Option<ExclusiveReservation>,
+}
+
+/// Reservation taken by LDXR/LDAXR/LDXP/LDAXP.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExclusiveReservation {
+    pub address: u64,
+    pub bytes: u8,
+    pub value: u128,
+}
+
+impl Cpu {
+    /// Clears the local exclusive monitor (CLREX, exception return, thread switch).
+    pub fn clear_exclusive(&mut self) {
+        self.exclusive = None;
+    }
 }
 
 impl Cpu {
@@ -488,11 +512,16 @@ impl Cpu {
 
     pub fn step(&mut self, memory: &mut AddressSpace) -> Result<StepEvent, ExecutionError> {
         let word = memory.fetch_u32(self.pc)?;
+        if ext::execute(self, memory, word)? {
+            self.pc = self.pc.wrapping_add(4);
+            return Ok(StepEvent::Continue);
+        }
         let instruction = decode(self.pc, word)?;
         let mut next_pc = self.pc.wrapping_add(4);
         let mut event = StepEvent::Continue;
         match instruction {
             Instruction::Nop => {}
+            Instruction::ClearExclusive => self.exclusive = None,
             Instruction::ReadThreadLocal { rd } => self.write_zero(rd, self.tpidrro_el0),
             Instruction::Movz { width, rd, value } => self.write_zero(rd, value & width.mask()),
             Instruction::MoveWide {
@@ -889,17 +918,88 @@ impl Cpu {
                         _ => unreachable!(),
                     };
                     self.write_zero(rt, value);
+                    self.exclusive = Some(ExclusiveReservation {
+                        address,
+                        bytes: 1 << size,
+                        value: u128::from(value),
+                    });
                 } else {
                     let value = self.read_zero(rt);
-                    match size {
-                        0 => memory.write_u8(address, value as u8)?,
-                        1 => memory.write_u16(address, value as u16)?,
-                        2 => memory.write_u32(address, value as u32)?,
-                        3 => memory.write_u64(address, value)?,
+                    let current = match size {
+                        0 => memory.read_u8(address)? as u64,
+                        1 => memory.read_u16(address)? as u64,
+                        2 => memory.read_u32(address)? as u64,
+                        3 => memory.read_u64(address)?,
                         _ => unreachable!(),
+                    };
+                    // Succeeds only with a matching reservation whose value no
+                    // other thread changed since the load-exclusive.
+                    let held = self.exclusive.take().is_some_and(|r| {
+                        r.address == address && r.bytes == 1 << size && r.value == u128::from(current)
+                    });
+                    if held {
+                        match size {
+                            0 => memory.write_u8(address, value as u8)?,
+                            1 => memory.write_u16(address, value as u16)?,
+                            2 => memory.write_u32(address, value as u32)?,
+                            3 => memory.write_u64(address, value)?,
+                            _ => unreachable!(),
+                        }
                     }
-                    // In single-threaded guest interpreter model, exclusive store always succeeds (status 0)
-                    self.write_zero(rs, 0);
+                    self.write_zero(rs, u64::from(!held));
+                }
+            }
+            Instruction::ExclusivePair {
+                wide,
+                rt,
+                rt2,
+                rn,
+                rs,
+                load,
+            } => {
+                let address = self.read_sp(rn);
+                let step = if wide { 8 } else { 4 };
+                if load {
+                    let (first, second) = if wide {
+                        (memory.read_u64(address)?, memory.read_u64(address + 8)?)
+                    } else {
+                        (
+                            u64::from(memory.read_u32(address)?),
+                            u64::from(memory.read_u32(address + 4)?),
+                        )
+                    };
+                    self.write_zero(rt, first);
+                    self.write_zero(rt2, second);
+                    self.exclusive = Some(ExclusiveReservation {
+                        address,
+                        bytes: step as u8 * 2,
+                        value: u128::from(first) | (u128::from(second) << 64),
+                    });
+                } else {
+                    let (first, second) = (self.read_zero(rt), self.read_zero(rt2));
+                    // Check both halves before writing so a fault leaves memory intact.
+                    memory.read_u8(address)?;
+                    memory.read_u8(address + step + step - 1)?;
+                    let current = if wide {
+                        u128::from(memory.read_u64(address)?)
+                            | (u128::from(memory.read_u64(address + 8)?) << 64)
+                    } else {
+                        u128::from(memory.read_u32(address)?)
+                            | (u128::from(memory.read_u32(address + 4)?) << 64)
+                    };
+                    let held = self.exclusive.take().is_some_and(|r| {
+                        r.address == address && r.bytes == step as u8 * 2 && r.value == current
+                    });
+                    if held {
+                        if wide {
+                            memory.write_u64(address, first)?;
+                            memory.write_u64(address + 8, second)?;
+                        } else {
+                            memory.write_u32(address, first as u32)?;
+                            memory.write_u32(address + 4, second as u32)?;
+                        }
+                    }
+                    self.write_zero(rs, u64::from(!held));
                 }
             }
             Instruction::Branch { displacement, link } => {
@@ -1329,10 +1429,10 @@ impl Cpu {
                         1 => a / b,
                         2 => a + b,
                         3 => a - b,
-                        4 => a.max(b),
-                        5 => a.min(b),
-                        6 => if a.is_nan() { b } else if b.is_nan() { a } else { a.max(b) },
-                        7 => if a.is_nan() { b } else if b.is_nan() { a } else { a.min(b) },
+                        4 => ext::Fp::arm_max(a, b),
+                        5 => ext::Fp::arm_min(a, b),
+                        6 => ext::Fp::arm_maxnm(a, b),
+                        7 => ext::Fp::arm_minnm(a, b),
                         8 => -(a * b),
                         _ => 0.0,
                     };
@@ -1345,10 +1445,10 @@ impl Cpu {
                         1 => a / b,
                         2 => a + b,
                         3 => a - b,
-                        4 => a.max(b),
-                        5 => a.min(b),
-                        6 => if a.is_nan() { b } else if b.is_nan() { a } else { a.max(b) },
-                        7 => if a.is_nan() { b } else if b.is_nan() { a } else { a.min(b) },
+                        4 => ext::Fp::arm_max(a, b),
+                        5 => ext::Fp::arm_min(a, b),
+                        6 => ext::Fp::arm_maxnm(a, b),
+                        7 => ext::Fp::arm_minnm(a, b),
                         8 => -(a * b),
                         _ => 0.0,
                     };
@@ -1410,87 +1510,26 @@ impl Cpu {
                     let a = self.read_v_f64(ra);
                     let n = self.read_v_f64(rn);
                     let m = self.read_v_f64(rm);
-                    let prod = n * m;
+                    // Fused: the product is not rounded before the addition.
                     let res = match (sub, neg) {
-                        (false, false) => a + prod,
-                        (true, false) => a - prod,
-                        (false, true) => -a - prod,
-                        (true, true) => -a + prod,
+                        (false, false) => n.mul_add(m, a),
+                        (true, false) => (-n).mul_add(m, a),
+                        (false, true) => (-n).mul_add(m, -a),
+                        (true, true) => n.mul_add(m, -a),
                     };
                     self.write_v_f64(rd, res);
                 } else {
                     let a = self.read_v_f32(ra);
                     let n = self.read_v_f32(rn);
                     let m = self.read_v_f32(rm);
-                    let prod = n * m;
+                    // Fused: the product is not rounded before the addition.
                     let res = match (sub, neg) {
-                        (false, false) => a + prod,
-                        (true, false) => a - prod,
-                        (false, true) => -a - prod,
-                        (true, true) => -a + prod,
+                        (false, false) => n.mul_add(m, a),
+                        (true, false) => (-n).mul_add(m, a),
+                        (false, true) => (-n).mul_add(m, -a),
+                        (true, true) => n.mul_add(m, -a),
                     };
                     self.write_v_f32(rd, res);
-                }
-            }
-            Instruction::FpConvertInt { sf, double, rd, rn, op } => {
-                match op {
-                    0 => {
-                        let val: i64 = if double {
-                            self.read_v_f64(rn) as i64
-                        } else {
-                            self.read_v_f32(rn) as i64
-                        };
-                        let res = if sf { val as u64 } else { (val as u32) as u64 };
-                        self.write_zero(rd, res);
-                    }
-                    1 => {
-                        let val: u64 = if double {
-                            self.read_v_f64(rn) as u64
-                        } else {
-                            self.read_v_f32(rn) as u64
-                        };
-                        let res = if sf { val } else { (val as u32) as u64 };
-                        self.write_zero(rd, res);
-                    }
-                    2 => {
-                        let int_val: i64 = if sf {
-                            self.read_zero(rn) as i64
-                        } else {
-                            (self.read_zero(rn) as i32) as i64
-                        };
-                        if double {
-                            self.write_v_f64(rd, int_val as f64);
-                        } else {
-                            self.write_v_f32(rd, int_val as f32);
-                        }
-                    }
-                    3 => {
-                        let uint_val: u64 = if sf {
-                            self.read_zero(rn)
-                        } else {
-                            self.read_zero(rn) as u32 as u64
-                        };
-                        if double {
-                            self.write_v_f64(rd, uint_val as f64);
-                        } else {
-                            self.write_v_f32(rd, uint_val as f32);
-                        }
-                    }
-                    6 => {
-                        if sf && double {
-                            self.write_v_u64(rd, self.read_zero(rn));
-                        } else if !sf && !double {
-                            self.write_v_u32(rd, self.read_zero(rn) as u32);
-                        }
-                    }
-                    7 => {
-                        if sf && double {
-                            self.write_zero(rd, self.read_v_u64(rn));
-                        } else if !sf && !double {
-                            self.write_zero(rd, self.read_v_u32(rn) as u64);
-                        }
-                    }
-                    _ => {}
                 }
             }
             Instruction::FpLoadStore {
@@ -1682,19 +1721,6 @@ impl Cpu {
                     self.write_sp(rn, base.wrapping_add_signed(offset));
                 }
             }
-            Instruction::VectorBitwise { rd, rn, rm, op } => {
-                let a = self.read_v_u128(rn);
-                let b = self.read_v_u128(rm);
-                let res = match op {
-                    0 => a & b,
-                    1 => a & (!b),
-                    2 => a | b,
-                    3 => a | (!b),
-                    4 => a ^ b,
-                    _ => 0,
-                };
-                self.write_v_u128(rd, res);
-            }
         }
         self.pc = next_pc;
         Ok(event)
@@ -1709,7 +1735,11 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
     };
     let rd = (word & 31) as u8;
     let rn = ((word >> 5) & 31) as u8;
-    // HINT (NOP, YIELD, WFE, WFI, SEV, BTI, PACIASP, AUTIASP, etc.), Barriers (DMB, DSB, ISB), and CLREX
+    // CLREX (any CRm)
+    if word & 0xffff_f0ff == 0xd503_305f {
+        return Ok(Instruction::ClearExclusive);
+    }
+    // HINT (NOP, YIELD, WFE, WFI, SEV, BTI, PACIASP, AUTIASP, etc.) and barriers (DMB, DSB, ISB)
     if word & 0xffff_e01f == 0xd503_201f {
         return Ok(Instruction::Nop);
     }
@@ -1871,6 +1901,22 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             rn,
             rs,
             load: is_load,
+        });
+    }
+    // Load / Store Exclusive Pair: 1 sz 001000 0 L 1 Rs o0 Rt2 Rn Rt
+    if word & 0xbfa0_0000 == 0x8820_0000 {
+        let load = word & (1 << 22) != 0;
+        let rs = ((word >> 16) & 31) as u8;
+        if load && rs != 31 {
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
+        return Ok(Instruction::ExclusivePair {
+            wide: word & (1 << 30) != 0,
+            rt: (word & 31) as u8,
+            rt2: ((word >> 10) & 31) as u8,
+            rn: ((word >> 5) & 31) as u8,
+            rs,
+            load,
         });
     }
     // Load-Acquire / Store-Release (non-exclusive): LDAR, STLR, LDARB, STLRB, LDARH, STLRH
@@ -2092,6 +2138,10 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             _ => (false, false, Width::W32),
         };
 
+        // PRFM (immediate): a cache hint with no architectural effect.
+        if size == 3 && opc == 2 {
+            return Ok(Instruction::Nop);
+        }
         if opc != 3 || size < 2 {
             return Ok(Instruction::LoadStore {
                 size,
@@ -2133,6 +2183,13 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             _ => (false, false, Width::W32),
         };
 
+        // PRFUM (mode 0) is a hint; size=3/opc=2 with any other mode is unallocated.
+        if size == 3 && opc == 2 {
+            if mode == 0 {
+                return Ok(Instruction::Nop);
+            }
+            return Err(ExecutionError::ReservedEncoding { pc, word });
+        }
         if opc != 3 || size < 2 {
             return Ok(Instruction::LoadStore {
                 size,
@@ -2174,6 +2231,10 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             _ => (false, false, Width::W32),
         };
 
+        // PRFM (register): a cache hint with no architectural effect.
+        if size == 3 && opc == 2 {
+            return Ok(Instruction::Nop);
+        }
         if opc != 3 || size < 2 {
             return Ok(Instruction::LoadStoreRegister {
                 size,
@@ -2197,7 +2258,8 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
         let opc = (word >> 30) & 3;
         let mode = (word >> 23) & 3;
         let is_load = (word & (1 << 22)) != 0;
-        if mode != 0 && (opc == 0 || opc == 2 || (opc == 1 && is_load)) {
+        // mode 00 is LDNP / STNP: a signed-offset pair with a non-temporal hint.
+        if opc == 0 || opc == 2 || (opc == 1 && is_load && mode != 0) {
             let width = if opc == 0 { Width::W32 } else { Width::X64 };
             let sign_extend = opc == 1;
             let scale: i64 = if opc == 2 { 8 } else { 4 };
@@ -2298,40 +2360,20 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
         }
     }
 
-    // Conversion between FP and Integer / FMOV
-    if word & 0x5f20_fc00 == 0x1e20_0000 {
-        let sf = (word >> 31) & 1 != 0;
-        let fptype = (word >> 22) & 3;
-        if fptype <= 1 {
-            let double = fptype == 1;
-            let op = ((word >> 16) & 7) as u8;
-            let rn = ((word >> 5) & 31) as u8;
-            let rd = (word & 31) as u8;
-            return Ok(Instruction::FpConvertInt {
-                sf,
-                double,
-                rd,
-                rn,
-                op,
-            });
-        }
-    }
-
     // SIMD & FP Load / Store (unsigned immediate offset)
     // S: size=2, D: size=3, Q: size=0 with opc=10/11
     if word & 0x3f00_0000 == 0x3d00_0000 {
         let size_bits = (word >> 30) & 3;
         let opc = (word >> 22) & 3;
-        let (size, scale) = if size_bits == 0 && (opc == 2 || opc == 3) {
-            (4u8, 16u64)
-        } else if size_bits == 2 {
-            (2u8, 4u64)
-        } else if size_bits == 3 {
-            (3u8, 8u64)
-        } else {
-            (0u8, 0u64)
+        let layout = match (size_bits, opc) {
+            (0, 2 | 3) => Some((4u8, 16u64)),
+            (0, 0 | 1) => Some((0u8, 1u64)),
+            (1, 0 | 1) => Some((1u8, 2u64)),
+            (2, 0 | 1) => Some((2u8, 4u64)),
+            (3, 0 | 1) => Some((3u8, 8u64)),
+            _ => None,
         };
-        if size != 0 {
+        if let Some((size, scale)) = layout {
             let imm12 = u64::from((word >> 10) & 0xfff);
             let offset = (imm12 * scale) as i64;
             let load = if size == 4 { opc == 3 } else { opc == 1 };
@@ -2425,7 +2467,7 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             2 => (4u8, 16i64),
             _ => (0u8, 0i64),
         };
-        if size != 0 && mode != 0 {
+        if size != 0 {
             let imm7 = signed_field((word >> 15) & 0x7f, 7);
             let offset = imm7 * scale;
             let rt1 = (word & 31) as u8;
@@ -2441,32 +2483,6 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
                 post_index: mode == 1,
             });
         }
-    }
-
-    // Vector Bitwise (AdvSIMD three same: AND, BIC, ORR, ORN, EOR)
-    // Format: [0][Q][U] 01110 [size] 1 [Rm] 000111 [Rn] [Rd]
-    if word & 0x9f20_fc00 == 0x0e20_1c00 {
-        let u = (word >> 29) & 1;
-        let size = (word >> 22) & 3;
-        let op = if u == 0 {
-            match size {
-                0 => 0, // AND
-                1 => 1, // BIC
-                2 => 2, // ORR
-                3 => 3, // ORN
-                _ => unreachable!(),
-            }
-        } else if size == 0 {
-            4 // EOR
-        } else {
-            return Err(ExecutionError::UnsupportedInstruction { pc, word });
-        };
-        return Ok(Instruction::VectorBitwise {
-            rd,
-            rn,
-            rm: ((word >> 16) & 31) as u8,
-            op,
-        });
     }
 
     if word & 0xffe0_001f == 0xd400_0001 {
@@ -2553,6 +2569,7 @@ pub fn disassemble(pc: u64, word: u32) -> String {
     };
     match inst {
         Instruction::Nop => "nop".to_string(),
+        Instruction::ClearExclusive => "clrex".to_string(),
         Instruction::ReadThreadLocal { rd } => format!("mrs x{rd}, tpidrro_el0"),
         Instruction::Movz { width, rd, value } => format!("movz {}{rd}, {value:#x}", reg_prefix(width)),
         Instruction::MoveWide { width, rd, value, operation, .. } => {
@@ -2652,12 +2669,21 @@ pub fn disassemble(pc: u64, word: u32) -> String {
             let name = match op {
                 0 => "rbit",
                 1 => "rev16",
-                2 => "rev",
-                3 => "clz",
-                4 => "cls",
+                2 if width == Width::X64 => "rev32",
+                2 | 3 => "rev",
+                4 => "clz",
+                5 => "cls",
                 _ => "dp1",
             };
             format!("{name} {p}{rd}, {p}{rn}")
+        }
+        Instruction::ExclusivePair { wide, rt, rt2, rn, rs, load } => {
+            let p = if wide { "x" } else { "w" };
+            if load {
+                format!("ldaxp {p}{rt}, {p}{rt2}, [x{rn}]")
+            } else {
+                format!("stlxp w{rs}, {p}{rt}, {p}{rt2}, [x{rn}]")
+            }
         }
         Instruction::ExclusiveLoadStore { rt, rn, load, .. } => {
             format!("{} x{rt}, [x{rn}]", if load { "ldaxr" } else { "stlxr" })
@@ -2770,7 +2796,6 @@ pub fn disassemble(pc: u64, word: u32) -> String {
         Instruction::FpData2 { rd, rn, rm, .. } => format!("fadd d{rd}, d{rn}, d{rm}"),
         Instruction::FpCompare { rn, rm, .. } => format!("fcmp d{rn}, d{rm}"),
         Instruction::FpMultiplyAdd { rd, rn, rm, ra, .. } => format!("fmadd d{rd}, d{rn}, d{rm}, d{ra}"),
-        Instruction::FpConvertInt { rd, rn, .. } => format!("fcvt d{rd}, s{rn}"),
         Instruction::FpLoadStore { rt, rn, offset, load, .. } => {
             format!("{} q{rt}, [x{rn}, #{offset}]", if load { "ldr" } else { "str" })
         }
@@ -2780,8 +2805,21 @@ pub fn disassemble(pc: u64, word: u32) -> String {
         Instruction::FpLoadStorePair { rt1, rt2, rn, offset, load, .. } => {
             format!("{} d{rt1}, d{rt2}, [x{rn}, #{offset}]", if load { "ldp" } else { "stp" })
         }
-        Instruction::VectorBitwise { rd, rn, rm, .. } => {
-            format!("eor v{rd}.16b, v{rn}.16b, v{rm}.16b")
-        }
     }
+}
+
+/// Reports whether the interpreter has a decoder for `word`.
+///
+/// This is a coverage probe for offline corpus audits; it does not execute anything.
+#[must_use]
+pub fn is_decodable(word: u32) -> bool {
+    if decode(0, word).is_ok() {
+        return true;
+    }
+    // The extension module decodes and executes in one pass, so probe it against a
+    // scratch CPU with nothing mapped: a memory fault still proves the encoding was
+    // recognised, because validation precedes every guest memory access.
+    let mut scratch = Cpu::default();
+    let mut memory = AddressSpace::default();
+    !matches!(ext::execute(&mut scratch, &mut memory, word), Ok(false))
 }

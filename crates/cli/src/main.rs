@@ -9,6 +9,8 @@ const STACK_BASE: u64 = 0x8000_0000;
 const STACK_SIZE: usize = 0x1_0000;
 const MAX_IMAGE: usize = 16 * 1024 * 1024;
 const DEFAULT_STEPS: u64 = 100_000;
+const NSP_MAX_STEPS: u64 = 1_000_000_000_000;
+const NSP_SAMPLE_INTERVAL: u64 = 4096;
 const DEMO: &[u8] = include_bytes!("../../../examples/a64/demo.bin");
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -116,10 +118,21 @@ fn run_nro(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+/// Real console dumps carry RSA blobs and other entries that are not 16/32-byte
+/// AES keys, so explicit files use the lenient parser (as the Android path does).
+/// A file that yields no usable key at all is still an explicit error.
+fn read_key_file(path: &str) -> Result<emulator_crypto::keys::KeyFile, Box<dyn std::error::Error>> {
+    let content = std::fs::read(path)?;
+    let keys = emulator_crypto::keys::KeyFile::parse_lenient(&content);
+    if keys.entry_count() == 0 {
+        return Err(format!("{path}: no usable 16- or 32-byte `name = hex` entries").into());
+    }
+    Ok(keys)
+}
+
 fn load_keys(keys_path: Option<&str>, titlekeys_path: Option<&str>) -> Result<emulator_crypto::keys::KeyFile, Box<dyn std::error::Error>> {
     let mut keys = if let Some(path) = keys_path {
-        let content = std::fs::read(path)?;
-        emulator_crypto::keys::KeyFile::parse(&content)?
+        read_key_file(path)?
     } else {
         let default_paths = ["prod.keys", "keys.dat", "/root/.switch/prod.keys"];
         let mut loaded = None;
@@ -135,8 +148,7 @@ fn load_keys(keys_path: Option<&str>, titlekeys_path: Option<&str>) -> Result<em
     };
 
     if let Some(path) = titlekeys_path {
-        let content = std::fs::read(path)?;
-        let title_keys = emulator_crypto::keys::KeyFile::parse(&content)?;
+        let title_keys = read_key_file(path)?;
         keys.merge(&title_keys);
     } else {
         let default_title_paths = ["title.keys", "/root/.switch/title.keys"];
@@ -191,7 +203,7 @@ fn run_nca(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    let file = file.ok_or("usage: emulator-cli run-nca FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N]")?;
+    let file = file.ok_or("usage: emulator-cli run-nca FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]...")?;
     if budget == 0 || budget > 10_000_000 {
         return Err("step limit must be between 1 and 10000000".into());
     }
@@ -248,6 +260,8 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut keys_path: Option<&str> = None;
     let mut titlekeys_path: Option<&str> = None;
     let mut budget = DEFAULT_STEPS;
+    let mut disasm: Vec<(u64, u64)> = Vec::new();
+    let mut peek: Vec<(u64, u64)> = Vec::new();
 
     let mut i = 1;
     while i < arguments.len() {
@@ -273,6 +287,28 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 budget = arguments[i].parse::<u64>()?;
             }
+            "--disasm" => {
+                i += 1;
+                let spec = arguments.get(i).ok_or("--disasm requires ADDR:COUNT")?;
+                let (address, count) = spec.split_once(':').ok_or("--disasm expects ADDR:COUNT")?;
+                let address = u64::from_str_radix(address.trim_start_matches("0x"), 16)?;
+                let count = count.parse::<u64>()?;
+                if count == 0 || count > 4096 {
+                    return Err("--disasm COUNT must be between 1 and 4096".into());
+                }
+                disasm.push((address, count));
+            }
+            "--peek" => {
+                i += 1;
+                let spec = arguments.get(i).ok_or("--peek requires ADDR:COUNT")?;
+                let (address, count) = spec.split_once(':').ok_or("--peek expects ADDR:COUNT")?;
+                let address = u64::from_str_radix(address.trim_start_matches("0x"), 16)?;
+                let count = count.parse::<u64>()?;
+                if count == 0 || count > 4096 {
+                    return Err("--peek COUNT must be between 1 and 4096".into());
+                }
+                peek.push((address, count));
+            }
             arg if !arg.starts_with("--") && file.is_none() => {
                 file = Some(arg);
             }
@@ -281,9 +317,11 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N]")?;
-    if budget == 0 || budget > 10_000_000 {
-        return Err("step limit must be between 1 and 10000000".into());
+    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]...")?;
+    // Commercial titles need far more than the microprogram cap; the caller bounds
+    // wall-clock time (the smoke sandbox sets a runtime limit).
+    if budget == 0 || budget > NSP_MAX_STEPS {
+        return Err(format!("step limit must be between 1 and {NSP_MAX_STEPS}").into());
     }
 
     let mut keys = load_keys(keys_path, titlekeys_path)?;
@@ -312,14 +350,32 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut session = Session::from_nsp(&nsp_bytes, &mut keys)?;
+    let mut session = Session::from_nsp_owned(std::rc::Rc::new(nsp_bytes), &mut keys)?;
     println!(
         "Program successfully mapped into guest address space. Initial PC={:#x}, SP={:#x}",
         session.cpu().pc,
         session.cpu().sp
     );
 
-    let outcome = session.run(budget);
+    // Run in slices and sample the PC at each boundary: a cheap profile that
+    // separates real progress from a spin loop when the budget runs out.
+    let started = std::time::Instant::now();
+    let mut samples: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+    let mut remaining = budget;
+    let outcome = loop {
+        let slice = remaining.min(NSP_SAMPLE_INTERVAL);
+        match session.run(slice) {
+            Ok(RunOutcome::BudgetExhausted) => {
+                remaining -= slice;
+                *samples.entry(session.cpu().pc).or_insert(0) += 1;
+                if remaining == 0 {
+                    break Ok(RunOutcome::BudgetExhausted);
+                }
+            }
+            other => break other,
+        }
+    };
+    let elapsed = started.elapsed().as_secs_f64();
     for record in session.debug_records() {
         let text = String::from_utf8_lossy(record);
         for character in text.chars() {
@@ -327,6 +383,28 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 print!("{}", character.escape_default());
             } else {
                 print!("{character}");
+            }
+        }
+    }
+
+    print_run_report(&session, &samples, elapsed);
+    for (start, count) in &peek {
+        println!("peek {start:#x} (+{count} u64):");
+        for index in 0..*count {
+            let address = start.wrapping_add(index * 8);
+            match session.memory().read_u64(address) {
+                Ok(value) => println!("  {address:#010x}: {value:#018x}"),
+                Err(_) => println!("  {address:#010x}: <unmapped>"),
+            }
+        }
+    }
+    for (start, count) in &disasm {
+        println!("disassembly {start:#x} (+{count} instructions):");
+        for index in 0..*count {
+            let address = start.wrapping_add(index * 4);
+            match session.memory().read_u32(address) {
+                Ok(word) => println!("  {address:#010x}: {word:08x}  {}", emulator_a64::disassemble(address, word)),
+                Err(_) => println!("  {address:#010x}: <unmapped>"),
             }
         }
     }
@@ -352,6 +430,153 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 }
+
+/// Host-side diagnostics after a commercial-title run: where the guest is, what it
+/// last asked the kernel for, and where the sampled time went.
+fn print_run_report(session: &Session, samples: &std::collections::BTreeMap<u64, u64>, elapsed: f64) {
+    let cpu = session.cpu();
+    let kernel = session.kernel();
+    let steps = session.instructions();
+    println!("--- run report ---");
+    println!(
+        "steps={steps} elapsed={elapsed:.2}s rate={:.1} MIPS state={:?}",
+        if elapsed > 0.0 { steps as f64 / elapsed / 1e6 } else { 0.0 },
+        session.state()
+    );
+    println!(
+        "svc_count={} last_svc={:#x} last_svc_pc={:#x} ipc_count={} live_handles={}",
+        kernel.svc_count(),
+        kernel.last_svc_id(),
+        kernel.last_svc_pc(),
+        kernel.ipc_count(),
+        kernel.live_handle_count()
+    );
+    println!("threads (saved context; current = live registers below):");
+    let current = kernel.current_thread_id();
+    for t in kernel.thread_summaries() {
+        let [a0, a1, a2, a3] = t.args;
+        println!(
+            "  {}{:<3} prio={:<2} pc={:#x} lr={:#x} fp={:#x} x0..3=({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x}) {}",
+            if t.id == current { '*' } else { ' ' },
+            t.id, t.priority, t.pc, t.lr, t.fp, t.state
+        );
+    }
+    // Resolve WaitSynchronization handle lists of blocked threads.
+    for t in kernel.thread_summaries() {
+        let (pc, [_, list, count, _]) = if t.id == current {
+            (cpu.pc, [cpu.x[0], cpu.x[1], cpu.x[2], cpu.x[3]])
+        } else {
+            (t.pc, t.args)
+        };
+        let svc_word = session.memory().read_u32(pc.wrapping_sub(4)).unwrap_or(0);
+        if svc_word != 0xd400_0301 || count == 0 || count > 64 {
+            continue;
+        }
+        for i in 0..count {
+            if let Ok(h) = session.memory().read_u32(list + i * 4) {
+                let what = kernel.describe_handle(h).unwrap_or_else(|| "invalid".into());
+                println!("  thread {} waits on handle {h:#x}: {what}", t.id);
+            }
+        }
+    }
+        println!("recent supervisor calls (oldest first):");
+    for record in kernel.svc_records() {
+        let [a0, a1, a2, a3] = record.arguments;
+        match record.results {
+            Some([r0, r1, r2]) => println!(
+                "  #{:<4} svc {:#04x} pc={:#x} in=({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x}) out=({r0:#x}, {r1:#x}, {r2:#x})",
+                record.sequence, record.id, record.pc
+            ),
+            None => println!(
+                "  #{:<4} svc {:#04x} pc={:#x} in=({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x}) REJECTED",
+                record.sequence, record.id, record.pc
+            ),
+        }
+    }
+    println!("recent IPC messages (oldest first):");
+    for record in kernel.ipc_trace() {
+        let kind = match (record.control, record.tipc) {
+            (true, _) => "control",
+            (_, true) => "tipc",
+            _ => "cmif",
+        };
+        let command = record
+            .command_id
+            .map_or_else(|| "close".to_string(), |id| format!("cmd {id}"));
+        let object = record
+            .domain_object
+            .map_or_else(String::new, |id| format!(" object={id}"));
+        let outcome = record
+            .result
+            .map_or_else(|| "REJECTED".to_string(), |code| format!("result={code:#x}"));
+        let [a, b, x, c] = record.buffers;
+        println!(
+            "  #{:<4} handle={:#x} {} {kind} {command}{object} data={} buffers(a/b/x/c)={a}/{b}/{x}/{c} copy={} {outcome}",
+            record.sequence,
+            record.handle,
+            record.service.rsplit("::").next().unwrap_or(record.service),
+            record.request_bytes,
+            record.copy_handles
+        );
+        {
+            let words: Vec<String> = record.words.iter().map(|w| format!("{w:08x}")).collect();
+            println!("        words: {}", words.join(" "));
+        }
+    }
+    println!(
+        "pc={:#x} sp={:#x} lr={:#x} tpidrro_el0={:#x} tpidr_el0={:#x} nzcv={:?}",
+        cpu.pc, cpu.sp, cpu.x[30], cpu.tpidrro_el0, cpu.tpidr_el0, cpu.nzcv
+    );
+    for row in 0..8 {
+        let base = row * 4;
+        let cells: Vec<String> = (base..(base + 4).min(31))
+            .map(|index| format!("x{index:<2}={:016x}", cpu.x[index]))
+            .collect();
+        println!("  {}", cells.join(" "));
+    }
+    // Frame-pointer backtrace: walk the AAPCS64 x29 chain ([fp] = caller fp,
+    // [fp + 8] = return address). Stops on unmapped, misaligned or
+    // non-ascending frames so a corrupt chain cannot loop.
+    println!("backtrace (frame pointers):");
+    println!("  #0  pc={:#x} lr={:#x}", cpu.pc, cpu.x[30]);
+    let mut fp = cpu.x[29];
+    for depth in 1..=24 {
+        if fp == 0 || fp % 16 != 0 {
+            break;
+        }
+        let (Ok(next), Ok(ret)) = (session.memory().read_u64(fp), session.memory().read_u64(fp + 8)) else {
+            break;
+        };
+        println!("  #{depth:<2} fp={fp:#x} ret={ret:#x}");
+        if next <= fp {
+            break;
+        }
+        fp = next;
+    }
+    println!("code around pc:");
+    for offset in -8i64..=8 {
+        let address = cpu.pc.wrapping_add((offset * 4) as u64);
+        match session.memory().read_u32(address) {
+            Ok(word) => println!(
+                "  {}{address:#010x}: {word:08x}  {}",
+                if offset == 0 { ">" } else { " " },
+                emulator_a64::disassemble(address, word)
+            ),
+            Err(_) => println!("   {address:#010x}: <unmapped>"),
+        }
+    }
+    let total: u64 = samples.values().sum();
+    if total > 0 {
+        let mut hot: Vec<(u64, u64)> = samples.iter().map(|(pc, count)| (*pc, *count)).collect();
+        hot.sort_by(|left, right| right.1.cmp(&left.1));
+        println!("pc samples: {total} taken, {} distinct; hottest:", hot.len());
+        for (pc, count) in hot.iter().take(12) {
+            println!("  {pc:#010x}: {count} ({:.1}%)", *count as f64 * 100.0 / total as f64);
+        }
+    }
+    println!("--- end report ---");
+}
+
 
 fn read_image(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();

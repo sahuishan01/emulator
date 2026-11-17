@@ -5,8 +5,28 @@ use emulator_a64::Cpu;
 use std::cell::Cell;
 use std::rc::Rc;
 
-pub const MAX_THREADS: usize = 16;
+pub const MAX_THREADS: usize = 256;
+/// TLS pages of threads 0..LOW_TLS_THREADS sit below the config page; later
+/// threads use a second arena near the top of the 39-bit address space.
 pub const THREAD_TLS_ARENA: u64 = 0x7ffe_0000;
+pub const LOW_TLS_THREADS: usize = 16;
+pub const HIGH_TLS_ARENA: u64 = 0x7f_f000_0000;
+
+/// Guest address of thread `id`'s 4 KiB TLS page.
+pub fn thread_tls_page(id: usize) -> u64 {
+    if id < LOW_TLS_THREADS {
+        THREAD_TLS_ARENA + id as u64 * 4096
+    } else {
+        HIGH_TLS_ARENA + (id - LOW_TLS_THREADS) as u64 * 4096
+    }
+}
+
+/// Whether `[address, end)` overlaps any TLS arena.
+pub fn overlaps_tls(address: u64, end: u64) -> bool {
+    let low_end = THREAD_TLS_ARENA + LOW_TLS_THREADS as u64 * 4096;
+    let high_end = HIGH_TLS_ARENA + (MAX_THREADS - LOW_TLS_THREADS) as u64 * 4096;
+    (address < low_end && THREAD_TLS_ARENA < end) || (address < high_end && HIGH_TLS_ARENA < end)
+}
 pub const THREAD_QUANTUM: u32 = 64;
 const MAIN_PRIORITY: u8 = 44;
 
@@ -31,6 +51,19 @@ pub struct SchedulerStats {
     pub timeouts: u64,
     pub virtual_time_ns: u64,
     pub cancelled_waits: u64,
+}
+
+/// Diagnostic snapshot of one guest thread (saved context; the running
+/// thread's live registers belong to the caller's CPU instead).
+#[derive(Clone, Debug)]
+pub struct ThreadSummary {
+    pub id: usize,
+    pub state: String,
+    pub priority: u8,
+    pub pc: u64,
+    pub lr: u64,
+    pub fp: u64,
+    pub args: [u64; 4],
 }
 
 #[derive(Clone, Debug)]
@@ -215,6 +248,31 @@ impl Scheduler {
     pub fn stats(&self) -> SchedulerStats {
         self.stats
     }
+    pub fn thread_summaries(&self) -> Vec<ThreadSummary> {
+        self.threads
+            .iter()
+            .enumerate()
+            .map(|(id, t)| ThreadSummary {
+                id,
+                state: match &t.state {
+                    State::Created => "created".into(),
+                    State::Runnable => "runnable".into(),
+                    State::Waiting { targets, deadline } => format!(
+                        "waiting(targets={}, deadline={})",
+                        targets.len(),
+                        deadline.map_or("none".into(), |d| d.to_string())
+                    ),
+                    State::Sleeping { deadline } => format!("sleeping(until={deadline})"),
+                    State::Exited => "exited".into(),
+                },
+                priority: t.priority,
+                pc: t.cpu.pc,
+                lr: t.cpu.x[30],
+                fp: t.cpu.x[29],
+                args: [t.cpu.x[0], t.cpu.x[1], t.cpu.x[2], t.cpu.x[3]],
+            })
+            .collect()
+    }
     pub fn current(&self) -> usize {
         self.current
     }
@@ -343,12 +401,18 @@ impl Scheduler {
         let Some(next) = best else {
             return ScheduleOutcome::Blocked;
         };
+        let previous = self.current;
         if next != self.current {
             self.stats.context_switches += 1;
             self.quantum_used = 0;
             self.current = next;
         }
         *cpu = self.threads[next].cpu.clone();
+        // A thread switch is an exception return on hardware, which clears the
+        // local exclusive monitor; a preempted LDXR/STXR pair must retry.
+        if next != previous {
+            cpu.clear_exclusive();
+        }
         ScheduleOutcome::Ready
     }
 }

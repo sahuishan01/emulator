@@ -29,8 +29,14 @@ fn build_test_nso() -> Vec<u8> {
 fn build_test_npdm() -> Vec<u8> {
     let mut npdm = vec![0u8; NPDM_HEADER_SIZE];
     npdm[0..4].copy_from_slice(NPDM_MAGIC);
-    npdm[0x10..0x1a].copy_from_slice(b"TEST-GAME\0");
-    npdm[0x20..0x28].copy_from_slice(&0x0100_1234_5678_0000u64.to_le_bytes());
+    npdm[0x30..0x3a].copy_from_slice(b"TEST-GAME\0");
+    // ACI0 directly after the header carries the program ID at +0x10.
+    npdm[0x70..0x74].copy_from_slice(&(NPDM_HEADER_SIZE as u32).to_le_bytes());
+    npdm[0x74..0x78].copy_from_slice(&0x40u32.to_le_bytes());
+    let mut aci = vec![0u8; 0x40];
+    aci[0..4].copy_from_slice(b"ACI0");
+    aci[0x10..0x18].copy_from_slice(&0x0100_1234_5678_0000u64.to_le_bytes());
+    npdm.extend_from_slice(&aci);
     npdm
 }
 

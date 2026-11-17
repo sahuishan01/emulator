@@ -2,8 +2,106 @@
 //! Provides filesystem handles, RomFS and savedata mount interfaces.
 
 use emulator_ipc::Request;
-use emulator_kernel::service::{Service, ServiceError, ServiceReply};
+use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
 use emulator_loader::RomFsArchive;
+
+/// fs result: access outside a storage (module 2, desc 3005, OutOfRange).
+pub const RESULT_FS_OUT_OF_RANGE: u32 = (3005 << 9) | 2;
+/// fs result: operation not supported by this storage (module 2, desc 6300).
+pub const RESULT_FS_UNSUPPORTED_WRITE: u32 = (6300 << 9) | 2;
+
+/// IStorage over the program's data storage (OpenDataStorageByCurrentProcess).
+/// Read-only: Write and SetSize fail explicitly.
+#[derive(Clone, Debug)]
+pub struct StorageProxy {
+    storage: crate::DataStorage,
+}
+
+impl StorageProxy {
+    pub fn new(storage: crate::DataStorage) -> Self {
+        Self { storage }
+    }
+}
+
+/// Largest single IStorage::Read served (bounds host allocation per request).
+pub const MAX_STORAGE_READ: u64 = 64 * 1024 * 1024;
+
+fn result(code: u32) -> ServiceReply {
+    ServiceReply {
+        result: code,
+        ..ServiceReply::default()
+    }
+}
+
+impl Service for StorageProxy {
+    fn clone_for_request(&self) -> Box<dyn Service> {
+        Box::new(self.clone())
+    }
+
+    fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
+        match request.command_id {
+            // Read needs its output buffer: see `prepare`.
+            0 => Err(ServiceError::MissingMemoryContext),
+            // Write / SetSize on read-only storage
+            1 | 3 => Ok(result(RESULT_FS_UNSUPPORTED_WRITE)),
+            // Flush
+            2 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply::default())
+            }
+            // GetSize
+            4 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply {
+                    data: self.storage.size().to_le_bytes().to_vec(),
+                    ..ServiceReply::default()
+                })
+            }
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IStorage",
+                command,
+            }),
+        }
+    }
+
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        context.require_copy_handles(0)?;
+        if request.command_id != 0 {
+            context.require_buffers(0, 0)?;
+            return self.dispatch(request);
+        }
+        // Read(u64 offset, u64 size, B buffer)
+        crate::payload(request, 16)?;
+        context.require_buffers(0, 1)?;
+        let offset = u64::from_le_bytes(request.data[0..8].try_into().unwrap());
+        let size = u64::from_le_bytes(request.data[8..16].try_into().unwrap());
+        let output = context.receive_buffer(0)?;
+        let end = offset.checked_add(size);
+        if size > output.len() as u64 || end.is_none_or(|end| end > self.storage.size()) {
+            return Ok(result(RESULT_FS_OUT_OF_RANGE));
+        }
+        if size > MAX_STORAGE_READ {
+            return Err(ServiceError::BufferLimit);
+        }
+        let mut reply = ServiceReply::default();
+        if size != 0 {
+            let mut bytes = vec![0; size as usize];
+            self.storage
+                .read(offset, &mut bytes)
+                .map_err(|error| ServiceError::DeviceFault(format!("data storage: {error:?}")))?;
+            let mut view = output;
+            if view.len() as u64 != size {
+                view = view.slice(0, size as usize).map_err(ServiceError::Memory)?;
+            }
+            reply.effect = Some(Box::new(crate::BufferWrite::new(view, bytes)));
+        }
+        Ok(reply)
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct FileProxy {
@@ -256,11 +354,17 @@ impl Service for FileSystemProxy {
 #[derive(Clone, Debug, Default)]
 pub struct FspSrvService {
     romfs: Option<RomFsArchive>,
+    data_storage: Option<crate::DataStorage>,
 }
 
 impl FspSrvService {
     pub fn with_romfs(romfs: Option<RomFsArchive>) -> Self {
-        Self { romfs }
+        let data_storage = romfs.clone().map(|romfs| std::rc::Rc::new(romfs) as crate::DataStorage);
+        Self { romfs, data_storage }
+    }
+
+    pub fn with_storage(romfs: Option<RomFsArchive>, data_storage: Option<crate::DataStorage>) -> Self {
+        Self { romfs, data_storage }
     }
 }
 
@@ -299,18 +403,29 @@ impl Service for FspSrvService {
                     effect: None,
                 })
             }
-            // OpenDataStorageByCurrentProcess (Command 200), OpenDataStorageByProgramId (202),
-            // OpenDataStorageByDataId (203), OpenRomStorage (204)
-            200 | 202 | 203 | 204 => {
+            // OpenDataStorageByCurrentProcess -> IStorage over the RomFS image.
+            // Other titles' data storages are not available and fail explicitly.
+            200 => {
+                crate::payload(request, 0)?;
+                let storage = self.data_storage.clone().ok_or(ServiceError::UnsupportedCommand {
+                    service: "fsp-srv (no data storage loaded)",
+                    command: 200,
+                })?;
                 Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: vec![Box::new(FileSystemProxy::new(self.romfs.clone()))],
-                    effect: None,
+                    moved_objects: vec![Box::new(StorageProxy::new(storage))],
+                    ..ServiceReply::default()
                 })
             }
-            // SetGlobalAccessLogMode (Command 1005)
-            1005 => Ok(ServiceReply::default()),
+            // SetGlobalAccessLogMode(u32), OutputAccessLogToSdCard(buffer)
+            1004 | 1006 => Ok(ServiceReply::default()),
+            // GetGlobalAccessLogMode: logging disabled
+            1005 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply {
+                    data: 0u32.to_le_bytes().to_vec(),
+                    ..ServiceReply::default()
+                })
+            }
             command => Err(ServiceError::UnsupportedCommand {
                 service: "fsp-srv",
                 command,

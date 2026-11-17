@@ -6,11 +6,11 @@ pub mod service;
 mod sync;
 
 use emulator_a64::Cpu;
-use emulator_ipc::{encode_reply, parse_request, CommandType, IpcError, IPC_BUFFER_SIZE};
+use emulator_ipc::{encode_reply, CommandType, IpcError, IPC_BUFFER_SIZE};
 use emulator_memory::{Access, AddressSpace, MemoryError, Permissions};
 pub use handles::{HandleError, Object, ProcessIdentity, TransferMemory};
 use handles::{HandleTable, ThreadObject};
-pub use scheduler::{
+pub use scheduler::{ThreadSummary, 
     ScheduleOutcome, SchedulerError, SchedulerStats, MAX_THREADS, THREAD_QUANTUM, THREAD_TLS_ARENA,
 };
 use scheduler::{Scheduler, WaitTarget};
@@ -24,14 +24,17 @@ use std::rc::Rc;
 pub const SVC_SET_HEAP_SIZE: u16 = 0x01;
 pub const SVC_SET_MEMORY_PERMISSION: u16 = 0x02;
 pub const SVC_SET_MEMORY_ATTRIBUTE: u16 = 0x03;
+pub const SVC_MAP_MEMORY: u16 = 0x04;
+pub const SVC_UNMAP_MEMORY: u16 = 0x05;
 pub const SVC_QUERY_MEMORY: u16 = 0x06;
 pub const SVC_EXIT_PROCESS: u16 = 0x07;
 pub const SVC_CREATE_THREAD: u16 = 0x08;
 pub const SVC_START_THREAD: u16 = 0x09;
 pub const SVC_EXIT_THREAD: u16 = 0x0a;
 pub const SVC_SLEEP_THREAD: u16 = 0x0b;
-pub const SVC_SET_THREAD_PRIORITY: u16 = 0x0c;
-pub const SVC_GET_THREAD_PRIORITY: u16 = 0x0d;
+// Horizon numbering: 0x0C reads the priority, 0x0D writes it.
+pub const SVC_GET_THREAD_PRIORITY: u16 = 0x0c;
+pub const SVC_SET_THREAD_PRIORITY: u16 = 0x0d;
 pub const SVC_GET_THREAD_CORE_MASK: u16 = 0x0e;
 pub const SVC_SET_THREAD_CORE_MASK: u16 = 0x0f;
 pub const SVC_GET_CURRENT_PROCESSOR_NUMBER: u16 = 0x10;
@@ -56,20 +59,42 @@ pub const SVC_GET_THREAD_ID: u16 = 0x25;
 pub const SVC_BREAK: u16 = 0x26;
 pub const SVC_OUTPUT_DEBUG_STRING: u16 = 0x27;
 pub const SVC_GET_INFO: u16 = 0x29;
+pub const SVC_MAP_PHYSICAL_MEMORY: u16 = 0x2c;
+pub const SVC_UNMAP_PHYSICAL_MEMORY: u16 = 0x2d;
+pub const SVC_WAIT_FOR_ADDRESS: u16 = 0x34;
+pub const SVC_SIGNAL_TO_ADDRESS: u16 = 0x35;
 pub const SVC_CREATE_EVENT: u16 = 0x45;
 pub const CURRENT_PROCESS_HANDLE: u32 = 0xffff_8001;
-pub const MAX_TRANSFER_MEMORY_BYTES: usize = 16 * 1024 * 1024;
+/// Upper bound for one transfer memory. Leases share the guest's backing (no
+/// copy), so this only rejects absurd sizes; games lend tens of MiB to services.
+pub const MAX_TRANSFER_MEMORY_BYTES: usize = 1024 * 1024 * 1024;
 pub const MAX_TRANSFER_MEMORY_OBJECTS: usize = 32;
 pub const RESULT_INVALID_SIZE: u64 = 0xca01;
+/// The addressed range is not in the state the call requires.
+pub const RESULT_INVALID_CURRENT_MEMORY: u64 = 0xd401;
 pub const RESULT_OUT_OF_MEMORY: u64 = 0xcc01;
 pub const RESULT_INVALID_HANDLE: u64 = 0xe401;
 pub const RESULT_INVALID_ADDRESS: u64 = 0xe601;
 pub const RESULT_TIMEOUT: u64 = 0xea01;
 pub const RESULT_INTERRUPTED: u64 = 0xec01;
 pub const RESULT_TOO_MANY_HANDLES: u64 = 0xee01;
+pub const RESULT_SESSION_CLOSED: u64 = 0xf601;
 pub const RESULT_INVALID_STATE: u64 = 0xfa01;
 pub const MAIN_THREAD_HANDLE: u64 = handles::MAIN_THREAD_HANDLE as u64;
 pub const DEFAULT_HEAP_BASE: u64 = 0x9000_0000;
+/// Heap region size of a 39-bit application address space.
+pub const HEAP_REGION_SIZE: u64 = 0x1_8000_0000;
+/// Application memory pool reported as total (non-system) memory.
+pub const APPLICATION_POOL_SIZE: u64 = 0xcd50_0000;
+/// Kernel result for an unknown enumeration value (module 1, desc 120).
+pub const RESULT_INVALID_ENUM_VALUE: u64 = 0xf001;
+/// Kernel result for an address outside the required region (desc 110).
+pub const RESULT_INVALID_MEMORY_REGION: u64 = 0xdc01;
+/// Alias region of the 39-bit application layout (InfoType 2/3).
+pub const ALIAS_REGION_BASE: u64 = 0x20_0000_0000;
+pub const ALIAS_REGION_SIZE: u64 = 0x10_0000_0000;
+/// Memory state of pages backed by svcMapPhysicalMemory (Normal).
+pub const PHYSICAL_MEMORY_STATE: u32 = 0x05;
 const MAX_DEBUG_MESSAGE: usize = 16 * 1024;
 const MAX_DEBUG_BYTES: usize = 1024 * 1024;
 const MAX_DEBUG_RECORDS: usize = 4096;
@@ -89,6 +114,9 @@ pub enum KernelError {
     DuplicatePort(String),
     InvalidThreadLocalRegion,
     UnsupportedControl(u32),
+    /// Domain message naming an object the session does not own, or passing
+    /// input objects (unsupported).
+    InvalidDomainObject(u32),
     IpcTraceLimit,
     InvalidWaitCount(i32),
     Scheduler(SchedulerError),
@@ -96,6 +124,8 @@ pub enum KernelError {
     InvalidThreadStack(u64),
     InvalidThreadPriority(i32),
     UnsupportedProcessor(i32),
+    /// The guest aborted itself with svcBreak.
+    GuestBreak { reason: u32, info1: u64, info2: u64 },
     InvalidTransferMemory {
         address: u64,
         size: u64,
@@ -125,6 +155,7 @@ impl fmt::Display for KernelError {
                 write!(f, "guest thread-local region must be 16-byte aligned")
             }
             Self::UnsupportedControl(id) => write!(f, "unsupported CMIF control command {id}"),
+            Self::InvalidDomainObject(id) => write!(f, "invalid CMIF domain object {id}"),
             Self::IpcTraceLimit => write!(f, "guest IPC trace limit exceeded"),
             Self::InvalidWaitCount(count) => write!(f, "invalid guest wait handle count {count}"),
             Self::Scheduler(error) => write!(f, "guest scheduler error: {error:?}"),
@@ -145,6 +176,14 @@ impl fmt::Display for KernelError {
             Self::UnsupportedCopyHandle(handle) => {
                 write!(f, "unsupported copied handle type: {handle:#x}")
             }
+            Self::GuestBreak {
+                reason,
+                info1,
+                info2,
+            } => write!(
+                f,
+                "guest aborted with svcBreak: reason={reason:#x} info1={info1:#x} info2={info2:#x}"
+            ),
             Self::UnsupportedProcessor(core) => write!(f, "unsupported guest processor {core}"),
         }
     }
@@ -170,14 +209,85 @@ pub struct IpcRecord {
     pub copy_handles: usize,
 }
 
+/// Number of IPC messages kept for post-mortem diagnostics.
+pub const IPC_TRACE_CAPACITY: usize = 48;
+
+/// One IPC message as far as it was understood. `result` is `None` when the
+/// kernel or service rejected the message instead of replying.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IpcTrace {
+    pub sequence: u64,
+    pub handle: u32,
+    pub service: &'static str,
+    pub control: bool,
+    pub tipc: bool,
+    pub domain_object: Option<u32>,
+    pub command_id: Option<u32>,
+    pub request_bytes: usize,
+    pub buffers: [usize; 4],
+    pub copy_handles: usize,
+    pub result: Option<u32>,
+    /// First words of the message as sent, for diagnosing rejections.
+    pub words: [u32; 20],
+}
+
+/// Number of supervisor calls kept for post-mortem diagnostics.
+/// Per-session pointer buffer size reported by QueryPointerBufferSize.
+pub const POINTER_BUFFER_SIZE: u16 = 0x8000;
+
+pub const SVC_TRACE_CAPACITY: usize = 128;
+
+/// One dispatched supervisor call: register arguments on entry and, when the
+/// handler completed, `x0..x2` on return. `results` is `None` for a call the
+/// kernel rejected as unsupported or faulting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SvcRecord {
+    pub sequence: u64,
+    pub id: u16,
+    pub pc: u64,
+    pub arguments: [u64; 4],
+    pub results: Option<[u64; 3]>,
+}
+
+type SessionObject = Rc<std::cell::RefCell<Box<dyn Service>>>;
+
+/// Object table of one session converted with ConvertCurrentObjectToDomain.
+/// The session is identified by a weak reference, so a dropped session can
+/// never alias a later allocation.
+#[derive(Debug)]
+struct Domain {
+    session: std::rc::Weak<std::cell::RefCell<Box<dyn Service>>>,
+    objects: BTreeMap<u32, SessionObject>,
+    next_id: u32,
+}
+pub const MAX_DOMAIN_OBJECTS: usize = 4096;
+pub const MAX_IPC_RECORDS: usize = 4096;
+pub const MAX_MEMORY_ALIASES: usize = 1024;
+
+/// Page-aligned, non-empty, non-overlapping alias request size.
+fn alias_size(destination: u64, source: u64, size: u64) -> Option<usize> {
+    let size = usize::try_from(size).ok()?;
+    let aligned = destination % 4096 == 0 && source % 4096 == 0 && size % 4096 == 0;
+    let destination_end = destination.checked_add(size as u64)?;
+    let source_end = source.checked_add(size as u64)?;
+    (aligned && size != 0 && (destination_end <= source || source_end <= destination))
+        .then_some(size)
+}
+
 #[derive(Debug)]
 pub struct Kernel {
+    domains: Vec<Domain>,
+    /// Live svcMapMemory aliases as (destination, source, size).
+    memory_aliases: Vec<(u64, u64, usize)>,
     debug_records: Vec<Vec<u8>>,
     debug_bytes: usize,
     exited: bool,
     handles: HandleTable,
+    /// Diagnostic only: which service command (or SVC) produced each handle.
+    handle_origins: BTreeMap<u32, String>,
     ports: BTreeMap<String, Box<dyn Service>>,
     ipc_records: Vec<IpcRecord>,
+    ipc_trace: std::collections::VecDeque<IpcTrace>,
     scheduler: Scheduler,
     process: ProcessIdentity,
     transfer_quota: Rc<Cell<usize>>,
@@ -186,8 +296,13 @@ pub struct Kernel {
     aslr_base: u64,
     aslr_size: u64,
     program_id: u64,
+    /// NPDM system resource size; nonzero enables svcMapPhysicalMemory.
+    system_resource_size: u64,
+    /// Bytes currently backed through svcMapPhysicalMemory.
+    physical_mapped: u64,
     sync: FutexArbitrator,
     svc_count: u64,
+    svc_records: std::collections::VecDeque<SvcRecord>,
     last_svc_id: u16,
     last_svc_pc: u64,
     ipc_count: u64,
@@ -198,12 +313,16 @@ impl Default for Kernel {
     fn default() -> Self {
         let main = ThreadObject::new(0);
         Self {
+            domains: Vec::new(),
+            memory_aliases: Vec::new(),
             debug_records: Vec::new(),
             debug_bytes: 0,
             exited: false,
             handles: HandleTable::new(main.clone()),
+            handle_origins: BTreeMap::new(),
             ports: BTreeMap::new(),
             ipc_records: Vec::new(),
+            ipc_trace: std::collections::VecDeque::with_capacity(IPC_TRACE_CAPACITY),
             scheduler: Scheduler::new(main),
             process: ProcessIdentity::new(),
             transfer_quota: Rc::new(Cell::new(0)),
@@ -212,8 +331,11 @@ impl Default for Kernel {
             aslr_base: 0x10_0000,
             aslr_size: 0x7f_ff00_0000,
             program_id: 0x0100_0000_0000_1000,
+            system_resource_size: 0,
+            physical_mapped: 0,
             sync: FutexArbitrator::default(),
             svc_count: 0,
+            svc_records: std::collections::VecDeque::with_capacity(SVC_TRACE_CAPACITY),
             last_svc_id: 0,
             last_svc_pc: 0,
             ipc_count: 0,
@@ -244,6 +366,114 @@ impl Kernel {
         self.program_id = program_id;
     }
 
+    pub fn set_system_resource_size(&mut self, size: u64) {
+        self.system_resource_size = size;
+    }
+
+    pub fn physical_mapped(&self) -> u64 {
+        self.physical_mapped
+    }
+
+    /// Validates an svc(Un)MapPhysicalMemory range: page aligned, nonempty,
+    /// inside the alias region, and only for processes with a system resource.
+    fn physical_range(&self, address: u64, size: u64) -> Result<u64, u64> {
+        if address % 4096 != 0 {
+            return Err(RESULT_INVALID_ADDRESS);
+        }
+        if size == 0 || size % 4096 != 0 {
+            return Err(RESULT_INVALID_SIZE);
+        }
+        let end = address.checked_add(size).ok_or(RESULT_INVALID_MEMORY_REGION)?;
+        if address < ALIAS_REGION_BASE || end > ALIAS_REGION_BASE + ALIAS_REGION_SIZE {
+            return Err(RESULT_INVALID_MEMORY_REGION);
+        }
+        if self.system_resource_size == 0 {
+            return Err(RESULT_INVALID_STATE);
+        }
+        Ok(end)
+    }
+
+    /// svcMapPhysicalMemory: back every unmapped page of the range with zeroed
+    /// RW memory; already-mapped pages are kept. All-or-nothing on failure.
+    fn map_physical_memory(&mut self, cpu: &mut Cpu, memory: &mut AddressSpace) {
+        let (address, size) = (cpu.x[0], cpu.x[1]);
+        cpu.x[0] = (|| {
+            let end = match self.physical_range(address, size) {
+                Ok(end) => end,
+                Err(result) => return result,
+            };
+            let mut gaps = Vec::new();
+            let mut cursor = address;
+            while cursor < end {
+                let block = memory.query_memory(cursor);
+                let block_end = block.base_address.saturating_add(block.size).min(end);
+                if block_end <= cursor {
+                    return RESULT_INVALID_CURRENT_MEMORY;
+                }
+                if block.state == 0 {
+                    gaps.push((cursor, block_end - cursor));
+                } else if block.state != PHYSICAL_MEMORY_STATE {
+                    return RESULT_INVALID_CURRENT_MEMORY;
+                }
+                cursor = block_end;
+            }
+            let needed: u64 = gaps.iter().map(|(_, length)| length).sum();
+            if needed > memory.remaining_budget() as u64 {
+                return RESULT_OUT_OF_MEMORY;
+            }
+            let mut mapped: Vec<(u64, u64)> = Vec::new();
+            for &(start, length) in &gaps {
+                if memory
+                    .map(start, vec![0; length as usize], Permissions::READ_WRITE)
+                    .is_err()
+                {
+                    for &(done, done_length) in &mapped {
+                        memory.unmap(done, done_length as usize).expect("mapped by this call");
+                    }
+                    return RESULT_OUT_OF_MEMORY;
+                }
+                let _ = memory.set_state(start, length as usize, PHYSICAL_MEMORY_STATE);
+                mapped.push((start, length));
+            }
+            self.physical_mapped += mapped.iter().map(|(_, length)| length).sum::<u64>();
+            0
+        })();
+    }
+
+    /// svcUnmapPhysicalMemory: release the physically backed pages of the
+    /// range. Any other kind of mapping inside it rejects the whole call.
+    fn unmap_physical_memory(&mut self, cpu: &mut Cpu, memory: &mut AddressSpace) {
+        let (address, size) = (cpu.x[0], cpu.x[1]);
+        cpu.x[0] = (|| {
+            let end = match self.physical_range(address, size) {
+                Ok(end) => end,
+                Err(result) => return result,
+            };
+            let mut backed = Vec::new();
+            let mut cursor = address;
+            while cursor < end {
+                let block = memory.query_memory(cursor);
+                let block_end = block.base_address.saturating_add(block.size).min(end);
+                if block_end <= cursor {
+                    return RESULT_INVALID_CURRENT_MEMORY;
+                }
+                match block.state {
+                    0 => {}
+                    PHYSICAL_MEMORY_STATE => backed.push((cursor, block_end - cursor)),
+                    _ => return RESULT_INVALID_CURRENT_MEMORY,
+                }
+                cursor = block_end;
+            }
+            for &(start, length) in &backed {
+                if memory.unmap(start, length as usize).is_err() {
+                    return RESULT_INVALID_CURRENT_MEMORY;
+                }
+                self.physical_mapped -= length;
+            }
+            0
+        })();
+    }
+
     pub fn live_transfer_memory_count(&self) -> usize {
         self.transfer_quota.get()
     }
@@ -266,7 +496,7 @@ impl Kernel {
             || size == 0
             || size % 4096 != 0
             || size_usize > MAX_TRANSFER_MEMORY_BYTES
-            || (address < THREAD_TLS_ARENA + MAX_THREADS as u64 * 4096 && THREAD_TLS_ARENA < end)
+            || scheduler::overlaps_tls(address, end)
         {
             return Err(invalid());
         }
@@ -320,6 +550,26 @@ impl Kernel {
     pub fn scheduler_stats(&self) -> SchedulerStats {
         self.scheduler.stats()
     }
+    /// Diagnostic description of a live handle: object kind, signal state and origin.
+    pub fn describe_handle(&self, handle: u32) -> Option<String> {
+        let object = self.handles.get(handle).ok()?;
+        let kind = match &object {
+            Object::Thread(t) => format!("thread #{}", t.id),
+            Object::Process(_) => "process".into(),
+            Object::TransferMemory(_) => "transfer memory".into(),
+            Object::Session(s) => format!("session {}", short_type_name(s.borrow().name())),
+            Object::WritableEvent(e) => format!("writable event (signaled={})", e.get()),
+            Object::ReadableEvent(e) => format!("readable event (signaled={})", e.get()),
+            Object::SharedMemory(_) => "shared memory".into(),
+        };
+        Some(match self.handle_origins.get(&handle) {
+            Some(origin) => format!("{kind} from {origin}"),
+            None => kind,
+        })
+    }
+    pub fn thread_summaries(&self) -> Vec<ThreadSummary> {
+        self.scheduler.thread_summaries()
+    }
     pub fn current_thread_id(&self) -> usize {
         self.scheduler.current()
     }
@@ -347,6 +597,14 @@ impl Kernel {
     }
     pub fn ipc_records(&self) -> &[IpcRecord] {
         &self.ipc_records
+    }
+    /// Most recent IPC messages, oldest first (bounded diagnostic ring).
+    pub fn ipc_trace(&self) -> impl Iterator<Item = &IpcTrace> {
+        self.ipc_trace.iter()
+    }
+    /// Most recent supervisor calls, oldest first (bounded diagnostic ring).
+    pub fn svc_records(&self) -> impl Iterator<Item = &SvcRecord> {
+        self.svc_records.iter()
     }
     pub fn svc_count(&self) -> u64 {
         self.svc_count
@@ -422,6 +680,28 @@ impl Kernel {
     }
 
     fn send_sync(&mut self, cpu: &mut Cpu, memory: &mut AddressSpace) -> Result<(), KernelError> {
+        let mut trace = IpcTrace {
+            handle: cpu.x[0] as u32,
+            ..IpcTrace::default()
+        };
+        let outcome = self.send_sync_traced(cpu, memory, &mut trace);
+        trace.sequence = self.ipc_count;
+        if outcome.is_err() {
+            trace.result = None;
+        }
+        if self.ipc_trace.len() == IPC_TRACE_CAPACITY {
+            self.ipc_trace.pop_front();
+        }
+        self.ipc_trace.push_back(trace);
+        outcome
+    }
+
+    fn send_sync_traced(
+        &mut self,
+        cpu: &mut Cpu,
+        memory: &mut AddressSpace,
+        trace: &mut IpcTrace,
+    ) -> Result<(), KernelError> {
         let handle = cpu.x[0] as u32;
         let service = match self.handles.get(handle) {
             Ok(Object::Session(service)) => service,
@@ -433,12 +713,15 @@ impl Kernel {
         if cpu.tpidrro_el0 % 16 != 0 {
             return Err(KernelError::InvalidThreadLocalRegion);
         }
-        if self.ipc_records.len() >= 4096 {
-            return Err(KernelError::IpcTraceLimit);
+        // Only the first MAX_IPC_RECORDS messages are kept in full; later ones
+        // are still counted and visible in the bounded trace ring.
+        let record_ipc = self.ipc_records.len() < MAX_IPC_RECORDS;
+        if record_ipc {
+            self.ipc_records
+                .try_reserve(1)
+                .map_err(|_| KernelError::IpcTraceLimit)?;
         }
-        self.ipc_records
-            .try_reserve(1)
-            .map_err(|_| KernelError::IpcTraceLimit)?;
+        trace.service = service.borrow().name();
         let mut input = [0; IPC_BUFFER_SIZE];
         memory
             .read(cpu.tpidrro_el0, &mut input)
@@ -446,32 +729,102 @@ impl Kernel {
         memory
             .check_access(cpu.tpidrro_el0, IPC_BUFFER_SIZE, Access::Write)
             .map_err(KernelError::Memory)?;
-        let mut request = parse_request(&input).map_err(KernelError::Ipc)?;
+        self.domains.retain(|domain| domain.session.strong_count() != 0);
+        for (index, word) in trace.words.iter_mut().enumerate() {
+            *word = u32::from_le_bytes(input[index * 4..index * 4 + 4].try_into().expect("word"));
+        }
+        let domain_index = self
+            .domains
+            .iter()
+            .position(|domain| domain.session.as_ptr() == Rc::as_ptr(&service));
+        let mut request = emulator_ipc::parse_session_request(&input, domain_index.is_some())
+            .map_err(KernelError::Ipc)?;
         self.ipc_count = self.ipc_count.saturating_add(1);
         self.last_ipc_cmd = request.command_id;
+        trace.control = request.kind == CommandType::Control;
+        trace.tipc = request.tipc;
+        trace.domain_object = request.domain.as_ref().map(|domain| domain.object_id);
+        trace.command_id = (!request.domain.as_ref().is_some_and(|domain| domain.close))
+            .then_some(request.command_id);
+        trace.request_bytes = request.data.len();
+        trace.buffers = [
+            request.send_buffers.len(),
+            request.receive_buffers.len(),
+            request.pointer_send.len(),
+            request.pointer_receive.len(),
+        ];
+        trace.copy_handles = request.copy_handles.len();
         if request.pid.is_some() {
             request.pid = Some(1);
         } // Owned guest process ID, never the host PID.
-        if request.kind == CommandType::Control {
-            if request.command_id != 2 {
-                return Err(KernelError::UnsupportedControl(request.command_id));
+        if request.kind == CommandType::Close {
+            // The session is finished: drop its domain objects now. The guest
+            // gets the kernel's session-closed result and no reply bytes, and
+            // releases the handle itself with svcCloseHandle.
+            if let Some(index) = domain_index {
+                self.domains.swap_remove(index);
             }
-            if !request.data.is_empty() || request.pid.is_some() {
+            trace.command_id = None;
+            trace.result = Some(RESULT_SESSION_CLOSED as u32);
+            cpu.x[0] = RESULT_SESSION_CLOSED;
+            return Ok(());
+        }
+        if request.kind == CommandType::Control {
+            // 0: ConvertCurrentObjectToDomain, 1: CopyFromCurrentDomain(u32 id),
+            // 2: CloneCurrentObject, 3: QueryPointerBufferSize,
+            // 4: CloneCurrentObjectEx(u32 tag).
+            let payload = match request.command_id {
+                0 | 2 | 3 => 0,
+                1 | 4 => 4,
+                other => return Err(KernelError::UnsupportedControl(other)),
+            };
+            if request.data.len() != payload || request.pid.is_some() {
                 return Err(KernelError::Ipc(IpcError::UnsupportedLayout));
             }
-            let pending = self
-                .handles
-                .stage(vec![Object::Session(service)])
-                .map_err(KernelError::Handle)?;
-            let encoded = encode_reply(0, &[], &pending.ids).map_err(KernelError::Ipc)?;
+            let mut staged = Vec::new();
+            let mut data = Vec::new();
+            let mut convert = false;
+            match request.command_id {
+                0 => {
+                    // The session's own object becomes domain object 1.
+                    if domain_index.is_some() {
+                        return Err(KernelError::UnsupportedControl(0));
+                    }
+                    convert = true;
+                    data = 1_u32.to_le_bytes().to_vec();
+                }
+                1 => {
+                    let id = u32::from_le_bytes(request.data[..4].try_into().expect("checked"));
+                    let object = domain_index
+                        .and_then(|index| self.domains[index].objects.get(&id))
+                        .ok_or(KernelError::InvalidDomainObject(id))?;
+                    staged.push(Object::Session(Rc::clone(object)));
+                }
+                3 => data = u32::from(POINTER_BUFFER_SIZE).to_le_bytes().to_vec(),
+                _ => staged.push(Object::Session(Rc::clone(&service))),
+            }
+            let pending = self.handles.stage(staged).map_err(KernelError::Handle)?;
+            let encoded = encode_reply(0, &data, &pending.ids).map_err(KernelError::Ipc)?;
+            if convert {
+                self.domains.push(Domain {
+                    session: Rc::downgrade(&service),
+                    objects: [(1, Rc::clone(&service))].into(),
+                    next_id: 2,
+                });
+            }
             memory
                 .write(cpu.tpidrro_el0, &encoded)
                 .map_err(KernelError::Memory)?;
             self.handles.commit(pending);
+            trace.result = Some(0);
+            cpu.x[0] = 0;
+            if !record_ipc {
+                return Ok(());
+            }
             self.ipc_records.push(IpcRecord {
                 handle,
                 kind: request.kind,
-                command_id: 2,
+                command_id: request.command_id,
                 request_bytes: 0,
                 reply_bytes: 0,
                 send_buffers: 0,
@@ -482,6 +835,34 @@ impl Kernel {
             cpu.x[0] = 0;
             return Ok(());
         }
+        // On a domain session the message addresses one of its objects.
+        let service = match (&request.domain, domain_index) {
+            (Some(target), Some(index)) => {
+                if !target.input_objects.is_empty() {
+                    return Err(KernelError::InvalidDomainObject(target.input_objects[0]));
+                }
+                if target.close {
+                    // Dropping an unknown ID is harmless and reported as success.
+                    self.domains[index].objects.remove(&target.object_id);
+                    let encoded = emulator_ipc::encode_session_reply(0, &[], &[], &[], Some(&[]))
+                        .map_err(KernelError::Ipc)?;
+                    memory
+                        .write(cpu.tpidrro_el0, &encoded)
+                        .map_err(KernelError::Memory)?;
+                    trace.result = Some(0);
+                    cpu.x[0] = 0;
+                    return Ok(());
+                }
+                Rc::clone(
+                    self.domains[index]
+                        .objects
+                        .get(&target.object_id)
+                        .ok_or(KernelError::InvalidDomainObject(target.object_id))?,
+                )
+            }
+            _ => service,
+        };
+        trace.service = service.borrow().name();
         let reply_view = memory
             .pin(
                 cpu.tpidrro_el0,
@@ -496,9 +877,12 @@ impl Kernel {
             .validate_reply(&reply_view)
             .map_err(KernelError::Service)?;
         let mut candidate = service.borrow().clone_for_request();
-        let reply = candidate
+        let mut reply = candidate
             .prepare(&request, &context)
             .map_err(KernelError::Service)?;
+        // Raw data travels in whole words; sub-word outputs (bool, u8) are
+        // zero-padded exactly as the wire format requires.
+        reply.data.resize(reply.data.len().next_multiple_of(4), 0);
         if let Some(effect) = &reply.effect {
             let writes = effect.write_ranges();
             if writes.len() > 4096
@@ -515,17 +899,60 @@ impl Kernel {
                 return Err(KernelError::Service(ServiceError::InvalidEffect));
             }
         }
-        let staged_objects: Vec<Object> = reply
-            .moved_objects
-            .into_iter()
-            .map(|s| s.as_handle().unwrap_or_else(|| Object::session(s)))
-            .collect();
+        // Interfaces returned on a domain session become domain objects;
+        // kernel objects (events, shared memory) are always real handles.
+        let in_domain = request.domain.as_ref().and(domain_index);
+        // Kernel objects are staged first so their IDs lead `pending.ids`.
+        let mut staged_objects = Vec::new();
+        let mut sessions = Vec::new();
+        let mut domain_objects = Vec::new();
+        for moved in reply.moved_objects {
+            match (moved.as_handle(), in_domain) {
+                (Some(object), _) => staged_objects.push(object),
+                (None, Some(_)) => {
+                    domain_objects.push(Rc::new(std::cell::RefCell::new(moved)))
+                }
+                (None, None) => sessions.push(Object::session(moved)),
+            }
+        }
+        let copied_count = staged_objects.len();
+        staged_objects.append(&mut sessions);
+        let domain_ids: Option<Vec<u32>> = match in_domain {
+            Some(index) => {
+                let domain = &self.domains[index];
+                let end = domain
+                    .next_id
+                    .checked_add(domain_objects.len() as u32)
+                    .filter(|_| {
+                        domain.objects.len() + domain_objects.len() <= MAX_DOMAIN_OBJECTS
+                    })
+                    .ok_or(KernelError::Handle(handles::HandleError::Limit))?;
+                Some((domain.next_id..end).collect())
+            }
+            None => None,
+        };
         let pending = self
             .handles
             .stage(staged_objects)
             .map_err(KernelError::Handle)?;
-        let encoded =
-            encode_reply(reply.result, &reply.data, &pending.ids).map_err(KernelError::Ipc)?;
+        // Events and shared memory reach the guest as copy handles, sessions
+        // as move handles. TIPC (sm:) only ever returns sessions.
+        let (copied_ids, moved_ids) = pending.ids.split_at(copied_count);
+        let encoded = if request.tipc {
+            if copied_count != 0 {
+                return Err(KernelError::Ipc(IpcError::UnsupportedLayout));
+            }
+            emulator_ipc::encode_tipc_reply(reply.result, &reply.data, moved_ids)
+        } else {
+            emulator_ipc::encode_session_reply(
+                reply.result,
+                &reply.data,
+                copied_ids,
+                moved_ids,
+                domain_ids.as_deref(),
+            )
+        }
+        .map_err(KernelError::Ipc)?;
         // All validation, encoding and handle staging precede effects. Pins are
         // stable and cannot alias reply writes; the single executor has no
         // callbacks or mapping changes during this infallible publication phase.
@@ -536,8 +963,24 @@ impl Kernel {
         reply_view
             .write(0, &encoded)
             .expect("prepared IPC reply pin");
+        let origin = format!("{} cmd {}", short_type_name(candidate.name()), request.command_id);
+        for id in &pending.ids {
+            self.handle_origins.insert(*id, origin.clone());
+        }
         self.handles.commit(pending);
         *service.borrow_mut() = candidate;
+        if let (Some(index), Some(ids)) = (in_domain, domain_ids) {
+            let domain = &mut self.domains[index];
+            for (id, object) in ids.into_iter().zip(domain_objects) {
+                domain.objects.insert(id, object);
+                domain.next_id = id + 1;
+            }
+        }
+        trace.result = Some(reply.result);
+        cpu.x[0] = 0;
+        if !record_ipc {
+            return Ok(());
+        }
         self.ipc_records.push(IpcRecord {
             handle,
             kind: request.kind,
@@ -570,6 +1013,9 @@ impl Kernel {
         cpu.x[0] = 0;
         cpu.x[1] = u64::from(pending.ids[0]);
         cpu.x[2] = u64::from(pending.ids[1]);
+        for id in &pending.ids {
+            self.handle_origins.insert(*id, "svcCreateEvent".into());
+        }
         self.handles.commit(pending);
         Ok(())
     }
@@ -599,7 +1045,8 @@ impl Kernel {
             return Err(KernelError::InvalidThreadPriority(priority));
         }
         let core = cpu.x[5] as u32 as i32;
-        if core != 0 && core != -2 {
+        // Applications may use cores 0..=2; -2 selects the process default.
+        if !(0..3).contains(&core) && core != -2 {
             return Err(KernelError::UnsupportedProcessor(core));
         }
         let object = ThreadObject::new(id);
@@ -607,7 +1054,7 @@ impl Kernel {
             .handles
             .stage(vec![Object::Thread(object.clone())])
             .map_err(KernelError::Handle)?;
-        let tls_page = THREAD_TLS_ARENA + id as u64 * 4096;
+        let tls_page = scheduler::thread_tls_page(id);
         let mut context = Cpu::new(entry, stack);
         context.x[0] = cpu.x[2];
         context.tpidrro_el0 = tls_page + 0x200;
@@ -711,6 +1158,68 @@ impl Kernel {
         Ok(())
     }
 
+    /// svcMapMemory: alias read-write source pages at an unmapped destination
+    /// (thread stacks). The source stays inaccessible until svcUnmapMemory.
+    fn map_memory(&mut self, cpu: &mut Cpu, memory: &mut AddressSpace) {
+        let (destination, source) = (cpu.x[0], cpu.x[1]);
+        cpu.x[0] = (|| {
+            let Some(size) = alias_size(destination, source, cpu.x[2]) else {
+                return if destination % 4096 != 0 || source % 4096 != 0 {
+                    RESULT_INVALID_ADDRESS
+                } else {
+                    RESULT_INVALID_SIZE
+                };
+            };
+            if self.memory_aliases.len() >= MAX_MEMORY_ALIASES {
+                return RESULT_OUT_OF_MEMORY;
+            }
+            let Ok(view) = memory.pin(source, size, Permissions::READ_WRITE) else {
+                return RESULT_INVALID_CURRENT_MEMORY;
+            };
+            if memory
+                .map_alias(destination, &view, Permissions::READ_WRITE)
+                .is_err()
+            {
+                return RESULT_INVALID_CURRENT_MEMORY;
+            }
+            drop(view);
+            if memory.protect(source, size, Permissions::NONE).is_err() {
+                memory
+                    .unmap(destination, size)
+                    .expect("alias mapped by this call");
+                return RESULT_INVALID_CURRENT_MEMORY;
+            }
+            let _ = memory.set_state(destination, size, 0x0b);
+            self.memory_aliases.push((destination, source, size));
+            0
+        })();
+    }
+
+    /// svcUnmapMemory: only an exact, live svcMapMemory pair can be undone.
+    fn unmap_memory(&mut self, cpu: &mut Cpu, memory: &mut AddressSpace) {
+        let (destination, source) = (cpu.x[0], cpu.x[1]);
+        cpu.x[0] = (|| {
+            let Some(size) = alias_size(destination, source, cpu.x[2]) else {
+                return RESULT_INVALID_SIZE;
+            };
+            let Some(index) = self
+                .memory_aliases
+                .iter()
+                .position(|alias| *alias == (destination, source, size))
+            else {
+                return RESULT_INVALID_CURRENT_MEMORY;
+            };
+            if memory.unmap(destination, size).is_err() {
+                return RESULT_INVALID_CURRENT_MEMORY;
+            }
+            memory
+                .protect(source, size, Permissions::READ_WRITE)
+                .expect("source hidden by svcMapMemory stays committed");
+            self.memory_aliases.swap_remove(index);
+            0
+        })();
+    }
+
     fn set_heap_size(
         &mut self,
         cpu: &mut Cpu,
@@ -720,6 +1229,10 @@ impl Kernel {
         let size = cpu.x[1] as usize;
         if size % 4096 != 0 {
             cpu.x[0] = RESULT_INVALID_SIZE;
+            return Ok(());
+        }
+        if size as u64 > HEAP_REGION_SIZE {
+            cpu.x[0] = RESULT_OUT_OF_MEMORY;
             return Ok(());
         }
         let heap_base = self.heap_base;
@@ -734,6 +1247,10 @@ impl Kernel {
         }
         if size > current_size {
             let additional = size - current_size;
+            if additional > memory.remaining_budget() {
+                cpu.x[0] = RESULT_OUT_OF_MEMORY;
+                return Ok(());
+            }
             let start = heap_base + current_size as u64;
             if memory
                 .map(
@@ -773,9 +1290,35 @@ impl Kernel {
         if self.exited {
             return Err(KernelError::ProcessAlreadyExited);
         }
+        // SVC entry/return is an exception round trip: the monitor is cleared.
+        cpu.clear_exclusive();
         self.svc_count = self.svc_count.saturating_add(1);
         self.last_svc_id = id;
         self.last_svc_pc = cpu.pc;
+        let mut record = SvcRecord {
+            sequence: self.svc_count,
+            id,
+            pc: cpu.pc,
+            arguments: [cpu.x[0], cpu.x[1], cpu.x[2], cpu.x[3]],
+            results: None,
+        };
+        let outcome = self.dispatch_service_call(id, cpu, memory);
+        if outcome.is_ok() {
+            record.results = Some([cpu.x[0], cpu.x[1], cpu.x[2]]);
+        }
+        if self.svc_records.len() == SVC_TRACE_CAPACITY {
+            self.svc_records.pop_front();
+        }
+        self.svc_records.push_back(record);
+        outcome
+    }
+
+    fn dispatch_service_call(
+        &mut self,
+        id: u16,
+        cpu: &mut Cpu,
+        memory: &mut AddressSpace,
+    ) -> Result<KernelEvent, KernelError> {
         match id {
             SVC_SET_HEAP_SIZE => {
                 self.set_heap_size(cpu, memory)?;
@@ -805,8 +1348,24 @@ impl Kernel {
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }
+            SVC_MAP_MEMORY => {
+                self.map_memory(cpu, memory);
+                Ok(KernelEvent::Continue)
+            }
+            SVC_UNMAP_MEMORY => {
+                self.unmap_memory(cpu, memory);
+                Ok(KernelEvent::Continue)
+            }
             SVC_QUERY_MEMORY => {
                 self.query_memory(cpu, memory)?;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_MAP_PHYSICAL_MEMORY => {
+                self.map_physical_memory(cpu, memory);
+                Ok(KernelEvent::Continue)
+            }
+            SVC_UNMAP_PHYSICAL_MEMORY => {
+                self.unmap_physical_memory(cpu, memory);
                 Ok(KernelEvent::Continue)
             }
             SVC_EXIT_PROCESS => {
@@ -1041,7 +1600,7 @@ impl Kernel {
                     cpu.x[0] = RESULT_INVALID_ADDRESS;
                     return Ok(KernelEvent::Continue);
                 }
-                if memory.read_u32(mutex_addr).is_err() {
+                if memory.read_u32(mutex_addr).is_err() || memory.read_u32(key_addr).is_err() {
                     cpu.x[0] = RESULT_INVALID_ADDRESS;
                     return Ok(KernelEvent::Continue);
                 }
@@ -1059,6 +1618,12 @@ impl Kernel {
                     let _ = memory.write_u32(mutex_addr, new_tag);
                 } else {
                     let _ = memory.write_u32(mutex_addr, 0);
+                }
+                // The key word tells userland a waiter exists; without it the
+                // guest's condition-variable signal skips svcSignalProcessWideKey.
+                if memory.write_u32(key_addr, 1).is_err() {
+                    cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
+                    return Ok(KernelEvent::Continue);
                 }
                 if timeout_ns == 0 {
                     cpu.x[0] = RESULT_TIMEOUT;
@@ -1099,6 +1664,98 @@ impl Kernel {
                 if self.sync.condvar_waiter_count(key_addr) == 0 {
                     let _ = memory.write_u32(key_addr, 0);
                 }
+                cpu.x[0] = 0;
+                Ok(KernelEvent::Continue)
+            }
+            SVC_WAIT_FOR_ADDRESS => {
+                let addr = cpu.x[0];
+                let kind = cpu.x[1] as u32;
+                let value = cpu.x[2] as i32;
+                let timeout_ns = cpu.x[3] as i64;
+                if addr & 3 != 0 {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                if kind > 2 {
+                    cpu.x[0] = RESULT_INVALID_ENUM_VALUE;
+                    return Ok(KernelEvent::Continue);
+                }
+                let current = match memory.read_u32(addr) {
+                    Ok(v) => v as i32,
+                    Err(_) => {
+                        cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
+                        return Ok(KernelEvent::Continue);
+                    }
+                };
+                // 0: WaitIfLessThan, 1: DecrementAndWaitIfLessThan, 2: WaitIfEqual.
+                let should_wait = if kind == 2 { current == value } else { current < value };
+                if !should_wait {
+                    cpu.x[0] = RESULT_INVALID_STATE;
+                    return Ok(KernelEvent::Continue);
+                }
+                if kind == 1 && memory.write_u32(addr, current.wrapping_sub(1) as u32).is_err() {
+                    cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
+                    return Ok(KernelEvent::Continue);
+                }
+                if timeout_ns == 0 {
+                    cpu.x[0] = RESULT_TIMEOUT;
+                    return Ok(KernelEvent::Continue);
+                }
+                let signal = self.sync.wait_address(self.scheduler.current(), addr);
+                if self.scheduler.wait(vec![WaitTarget(signal)], timeout_ns).is_err() {
+                    cpu.x[0] = RESULT_INVALID_STATE;
+                } else {
+                    cpu.x[0] = 0;
+                }
+                Ok(KernelEvent::Continue)
+            }
+            SVC_SIGNAL_TO_ADDRESS => {
+                let addr = cpu.x[0];
+                let kind = cpu.x[1] as u32;
+                let value = cpu.x[2] as i32;
+                let count = cpu.x[3] as i32;
+                if addr & 3 != 0 {
+                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    return Ok(KernelEvent::Continue);
+                }
+                if kind > 2 {
+                    cpu.x[0] = RESULT_INVALID_ENUM_VALUE;
+                    return Ok(KernelEvent::Continue);
+                }
+                if kind != 0 {
+                    let current = match memory.read_u32(addr) {
+                        Ok(v) => v as i32,
+                        Err(_) => {
+                            cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
+                            return Ok(KernelEvent::Continue);
+                        }
+                    };
+                    if current != value {
+                        cpu.x[0] = RESULT_INVALID_STATE;
+                        return Ok(KernelEvent::Continue);
+                    }
+                    // 1: SignalAndIncrementIfEqual.
+                    // 2: SignalAndModifyByWaitingCountIfEqual.
+                    let new_value = if kind == 1 {
+                        value.wrapping_add(1)
+                    } else {
+                        let waiters = self.sync.address_waiter_count(addr);
+                        if waiters == 0 {
+                            value.wrapping_add(1)
+                        } else if count <= 0 {
+                            value.wrapping_sub(2)
+                        } else if waiters <= count as usize {
+                            value.wrapping_sub(1)
+                        } else {
+                            value
+                        }
+                    };
+                    if memory.write_u32(addr, new_value as u32).is_err() {
+                        cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
+                        return Ok(KernelEvent::Continue);
+                    }
+                }
+                self.sync.signal_address(addr, count);
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }
@@ -1146,12 +1803,12 @@ impl Kernel {
                 let val: u64 = match info_type {
                     0 => 7, // InfoType_CoreMask (cores 0, 1, 2)
                     1 => !0u64, // InfoType_PriorityMask (all priorities)
-                    2 => 0x20_0000_0000, // InfoType_AliasRegionAddress
-                    3 => 0x10_0000_0000, // InfoType_AliasRegionSize
+                    2 => ALIAS_REGION_BASE, // InfoType_AliasRegionAddress
+                    3 => ALIAS_REGION_SIZE, // InfoType_AliasRegionSize
                     4 => self.heap_base, // InfoType_HeapRegionAddress
-                    5 => 0x4000_0000, // InfoType_HeapRegionSize (1 GB)
-                    6 => 0x1_0000_0000, // InfoType_TotalMemorySize (4 GB)
-                    7 => 0x2000_0000, // InfoType_UsedMemorySize (512 MB)
+                    5 => HEAP_REGION_SIZE, // InfoType_HeapRegionSize (6 GiB, 39-bit layout)
+                    6 => APPLICATION_POOL_SIZE, // InfoType_TotalMemorySize
+                    7 => memory.mapped_bytes() as u64, // InfoType_UsedMemorySize
                     8 => 0, // InfoType_DebuggerAttached
                     9 => 0, // InfoType_ResourceLimit
                     10 => 0, // InfoType_IdleTickCount
@@ -1160,18 +1817,23 @@ impl Kernel {
                     13 => self.aslr_size, // InfoType_AslrRegionSize
                     14 => 0x70_0000_0000, // InfoType_StackRegionAddress
                     15 => 0x1000_0000, // InfoType_StackRegionSize
-                    16 => 0, // InfoType_SystemResourceSizeTotal
-                    17 => 0, // InfoType_SystemResourceSizeUsed
+                    16 => self.system_resource_size, // InfoType_SystemResourceSizeTotal
+                    17 => self.physical_mapped.min(self.system_resource_size), // InfoType_SystemResourceSizeUsed
                     18 => self.program_id, // InfoType_ProgramId
                     19 => 0, // InfoType_InitialProcessIdRange
                     20 => 0, // InfoType_UserExceptionContextAddress
-                    21 => 0x1_0000_0000, // InfoType_TotalNonSystemMemorySize
-                    22 => 0x2000_0000, // InfoType_UsedNonSystemMemorySize
+                    21 => APPLICATION_POOL_SIZE, // InfoType_TotalNonSystemMemorySize
+                    22 => memory.mapped_bytes() as u64, // InfoType_UsedNonSystemMemorySize
                     23 => 1, // InfoType_IsApplication (true)
                     24 => 128, // InfoType_FreeThreadCount
                     25 => 0, // InfoType_ThreadTickCount
                     26 => 1, // InfoType_IsSvcPermitted
-                    _ => 0,
+                    27 => 0, // InfoType_IoRegionHint
+                    28 => 0, // InfoType_AliasRegionExtraSize
+                    _ => {
+                        cpu.x[0] = RESULT_INVALID_ENUM_VALUE;
+                        return Ok(KernelEvent::Continue);
+                    }
                 };
                 if out_ptr != 0 && out_ptr % 4 == 0 {
                     let _ = memory.write_u64(out_ptr, val);
@@ -1180,13 +1842,22 @@ impl Kernel {
                 cpu.x[1] = val;
                 Ok(KernelEvent::Continue)
             }
-            SVC_BREAK | 0x2c => {
+            SVC_BREAK => {
                 let reason = cpu.x[0] as u32;
                 let info1 = cpu.x[1];
                 let info2 = cpu.x[2];
                 let pc = cpu.pc;
                 let msg = format!("guest svcBreak: reason={reason:#x}, info1={info1:#x}, info2={info2:#x} at pc={pc:#x}\n");
                 self.debug_records.push(msg.into_bytes());
+                // Only a notification break (bit 31) returns to the guest;
+                // any other break is the guest aborting itself.
+                if reason >> 31 == 0 {
+                    return Err(KernelError::GuestBreak {
+                        reason,
+                        info1,
+                        info2,
+                    });
+                }
                 cpu.x[0] = 0;
                 Ok(KernelEvent::Continue)
             }
@@ -1205,7 +1876,9 @@ impl Kernel {
                 Ok(KernelEvent::Continue)
             }
             SVC_CLOSE_HANDLE => {
-                cpu.x[0] = if self.handles.close(cpu.x[0] as u32).is_ok() {
+                let handle = cpu.x[0] as u32;
+                cpu.x[0] = if self.handles.close(handle).is_ok() {
+                    self.handle_origins.remove(&handle);
                     0
                 } else {
                     RESULT_INVALID_HANDLE
@@ -1329,4 +2002,8 @@ pub fn homebrew_config() -> Vec<u8> {
         bytes.extend_from_slice(&value1.to_le_bytes());
     }
     bytes
+}
+
+fn short_type_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
 }

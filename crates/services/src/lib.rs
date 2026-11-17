@@ -5,12 +5,17 @@ mod nvas;
 mod nvchannel;
 mod nvmap;
 pub mod acc;
+pub mod aoc;
 pub mod apm;
+pub mod ectx;
 pub mod applet;
 pub mod aud;
+pub mod binder;
 pub mod event;
 pub mod fspsrv;
 pub mod hid;
+pub mod lm;
+pub mod pctl;
 pub mod reference;
 pub mod setsys;
 pub mod timesys;
@@ -30,6 +35,32 @@ pub use setsys::SetSysService;
 pub use timesys::TimeService;
 pub use vi::ViManagerService;
 
+/// Deferred write of reply bytes into a pinned guest receive buffer.
+#[derive(Debug)]
+pub(crate) struct BufferWrite {
+    pub(crate) view: emulator_memory::MemoryView,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) ranges: Vec<emulator_memory::BackingRange>,
+}
+
+impl BufferWrite {
+    pub(crate) fn new(view: emulator_memory::MemoryView, bytes: Vec<u8>) -> Self {
+        let ranges = view.backing_ranges().collect();
+        Self { view, bytes, ranges }
+    }
+}
+
+impl emulator_kernel::service::PreparedServiceEffect for BufferWrite {
+    fn write_ranges(&self) -> &[emulator_memory::BackingRange] {
+        &self.ranges
+    }
+    fn commit(self: Box<Self>) {
+        self.view
+            .write(0, &self.bytes)
+            .expect("prepared output pin");
+    }
+}
+
 fn payload(request: &Request, length: usize) -> Result<(), ServiceError> {
     if request.data.len() == length {
         Ok(())
@@ -46,26 +77,36 @@ pub struct ServiceManager {
     initialized: bool,
     graphics: Option<std::rc::Rc<dyn emulator_gpu::GraphicsBackend>>,
     romfs: Option<emulator_loader::RomFsArchive>,
+    /// Raw data storage of the current program (OpenDataStorageByCurrentProcess).
+    data_storage: Option<DataStorage>,
 }
+
+/// Shared read-only storage handed to every fsp-srv session.
+pub type DataStorage = std::rc::Rc<dyn emulator_loader::storage::ReadOnlyStorage>;
+
 impl ServiceManager {
     pub fn with_graphics(graphics: std::rc::Rc<dyn emulator_gpu::GraphicsBackend>) -> Self {
         Self {
-            initialized: false,
             graphics: Some(graphics),
-            romfs: None,
+            ..Self::default()
         }
     }
 
+    /// In-memory RomFS: serves both the RomFS filesystem and the raw data storage.
     pub fn with_romfs(romfs: emulator_loader::RomFsArchive) -> Self {
-        Self {
-            initialized: false,
-            graphics: None,
-            romfs: Some(romfs),
-        }
+        let mut manager = Self::default();
+        manager.set_romfs(romfs);
+        manager
     }
 
     pub fn set_romfs(&mut self, romfs: emulator_loader::RomFsArchive) {
+        self.data_storage = Some(std::rc::Rc::new(romfs.clone()));
         self.romfs = Some(romfs);
+    }
+
+    /// Raw data storage only (large RomFS read lazily from the container).
+    pub fn set_data_storage(&mut self, storage: DataStorage) {
+        self.data_storage = Some(storage);
     }
 }
 impl Service for ServiceManager {
@@ -75,7 +116,9 @@ impl Service for ServiceManager {
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
             0 => {
-                payload(request, 8)?;
+                // CMIF carries an 8-byte PID placeholder; TIPC sends only the
+                // kernel-filled process ID descriptor.
+                payload(request, if request.tipc { 0 } else { 8 })?;
                 if request.pid.is_none() {
                     return Err(ServiceError::MissingSenderIdentity);
                 }
@@ -101,7 +144,7 @@ impl Service for ServiceManager {
                     b"nvdrv\0\0\0" | b"nvdrv:a\0" | b"nvdrv:s\0" | b"nvdrv:t\0" => {
                         Box::new(NvDriver::with_graphics(self.graphics.clone()))
                     }
-                    b"fsp-srv\0" | b"fsp-pr\0\0" => Box::new(FspSrvService::with_romfs(self.romfs.clone())),
+                    b"fsp-srv\0" | b"fsp-pr\0\0" => Box::new(FspSrvService::with_storage(self.romfs.clone(), self.data_storage.clone())),
                     b"set:sys\0" | b"set\0\0\0\0\0" => Box::new(SetSysService::default()),
                     b"time:s\0\0" | b"time:u\0\0" | b"time:a\0\0" => Box::new(TimeService::default()),
                     b"vi:m\0\0\0\0" | b"vi:u\0\0\0\0" | b"vi:s\0\0\0\0" => {
@@ -114,6 +157,12 @@ impl Service for ServiceManager {
                     }
                     b"apm\0\0\0\0\0" | b"apm:p\0\0\0" | b"apm:sys\0" => Box::new(ApmService::default()),
                     b"audren:u" => Box::new(AudioRendererManager::default()),
+                    b"lm\0\0\0\0\0\0" => Box::new(lm::LogManager),
+                    b"aoc:u\0\0\0" => Box::new(aoc::AddOnContentManager),
+                    b"ectx:aw\0" => Box::new(ectx::ErrorContextWriter),
+                    b"pctl\0\0\0\0" | b"pctl:s\0\0" | b"pctl:a\0\0" | b"pctl:r\0\0" => {
+                        Box::new(pctl::ParentalControlFactory)
+                    }
                     b"audout:u" => Box::new(AudioOutManager::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };

@@ -65,6 +65,12 @@ impl Service for CommonStateGetter {
                     effect: None,
                 })
             }
+            // SetRequestExitToLibraryAppletAtExecuteNextProgramEnabled: a flag
+            // with no effect here because no library applet ever requests exit.
+            900 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply::default())
+            }
             command => Err(ServiceError::UnsupportedCommand {
                 service: "ICommonStateGetter",
                 command,
@@ -106,18 +112,38 @@ impl Service for SelfController {
                     effect: None,
                 })
             }
-            // CreateManagedDisplaySeparableLayer: returns LayerId (u64)
-            41 => {
-                let layer_id = 1u64;
+            // CreateManagedDisplaySeparableLayer (10.0.0+): the display layer
+            // plus a recording (capture) layer. The SDK requires both to be
+            // valid, openable layers.
+            44 => {
+                let mut data = 1u64.to_le_bytes().to_vec();
+                data.extend_from_slice(&2u64.to_le_bytes());
                 Ok(ServiceReply {
                     result: 0,
-                    data: layer_id.to_le_bytes().to_vec(),
+                    data,
                     moved_objects: Vec::new(),
                     effect: None,
                 })
             }
             // SetHandlesRequestToDisplay, SetAlbumImageOrientation
             50 | 62 => Ok(ServiceReply::default()),
+            // GetAccumulatedSuspendedTickValue: the guest is never suspended.
+            90 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply {
+                    data: 0_u64.to_le_bytes().to_vec(),
+                    ..ServiceReply::default()
+                })
+            }
+            // GetAccumulatedSuspendedTickChangedEvent: never signaled, because
+            // the accumulated value above never changes.
+            91 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply {
+                    moved_objects: vec![Box::new(EventHandle::new(false))],
+                    ..ServiceReply::default()
+                })
+            }
             command => Err(ServiceError::UnsupportedCommand {
                 service: "ISelfController",
                 command,
@@ -279,6 +305,18 @@ impl Service for ApplicationFunctions {
             }
             // InitializeGamePlayRecording, SetGamePlayRecordingState
             66 | 67 => Ok(ServiceReply::default()),
+            // GetGpuErrorDetectedSystemEvent (130),
+            // GetFriendInvitationStorageChannelEvent (140),
+            // GetNotificationStorageChannelEvent (150),
+            // GetHealthWarningDisappearedSystemEvent (160): none of these
+            // conditions can occur here, so the events are never signaled.
+            130 | 140 | 150 | 160 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply {
+                    moved_objects: vec![Box::new(EventHandle::new(false))],
+                    ..ServiceReply::default()
+                })
+            }
             command => Err(ServiceError::UnsupportedCommand {
                 service: "IApplicationFunctions",
                 command,
@@ -321,16 +359,14 @@ impl Service for ApplicationProxy {
                 moved_objects: vec![Box::new(CommonStateGetter::default())],
                 effect: None,
             }),
-            // GetSelfController (command 1) -> ISelfController (also includes user_id in data for legacy compatibility)
-            1 => {
-                let user_id = 1u64;
-                Ok(ServiceReply {
-                    result: 0,
-                    data: user_id.to_le_bytes().to_vec(),
-                    moved_objects: vec![Box::new(SelfController::default())],
-                    effect: None,
-                })
-            }
+            // GetSelfController (command 1) -> ISelfController. The reply has no
+            // payload: any data here shifts where the guest reads the object ID.
+            1 => Ok(ServiceReply {
+                result: 0,
+                data: Vec::new(),
+                moved_objects: vec![Box::new(SelfController::default())],
+                effect: None,
+            }),
             // GetWindowController (command 2) -> IWindowController
             2 => Ok(ServiceReply {
                 result: 0,
@@ -420,5 +456,20 @@ impl Service for AppletManagerService {
                 command,
             }),
         }
+    }
+
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &emulator_kernel::service::ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        // Proxy opens identify the caller with its own process handle.
+        context.require_buffers(0, 0)?;
+        if matches!(request.command_id, 0 | 200) {
+            context.require_own_process(0)?;
+        } else {
+            context.require_copy_handles(0)?;
+        }
+        self.dispatch(request)
     }
 }

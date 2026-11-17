@@ -194,8 +194,8 @@ fn test_conversions_and_fmov() {
         0x1e22c001,
         // FCVTZS W2, D1 (double to signed int): 0x1e780000 | (1 << 5) | 2
         0x1e780022,
-        // FMOV W3, S0: 0x1e270000 | (0 << 5) | 3
-        0x1e270003,
+        // FMOV W3, S0: 0x1e260000 | (0 << 5) | 3 (0x1e27.... is the reverse FMOV Sd, Wn)
+        0x1e260003,
         // SVC #99
         0xd4000c61,
     ];

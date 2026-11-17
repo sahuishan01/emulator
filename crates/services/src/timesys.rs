@@ -1,7 +1,6 @@
 //! Original `time:s` / `time:u` / `time:a` (Time Service) implementation.
 //! Provides steady clock, POSIX timestamps, system clock, and timezone interfaces for Switch runtimes.
 
-use crate::event::EventHandle;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};
 
@@ -185,60 +184,43 @@ impl Service for TimeService {
 
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
-            // GetCurrentTime: returns POSIX seconds as u64
-            0 => {
-                let timestamp = 1767225600u64;
-                Ok(ServiceReply {
-                    result: 0,
-                    data: timestamp.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
-            // CalculateUserLocalSystemClockContext / CalculateSpanBetween
-            1 | 2 => {
-                let mut ctx = vec![0u8; 0x20];
-                ctx[..8].copy_from_slice(&1767225600u64.to_le_bytes());
-                Ok(ServiceReply {
-                    result: 0,
-                    data: ctx,
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
-            // GetStandardUserSystemClock -> ISystemClock
-            3 => Ok(ServiceReply {
-                result: 0,
-                data: Vec::new(),
-                moved_objects: vec![Box::new(SystemClockService::default())],
-                effect: None,
-            }),
-            // GetStandardNetworkSystemClock -> ISystemClock
-            4 => Ok(ServiceReply {
+            // IStaticService command table (time:u / time:a / time:s).
+            // GetStandardUserSystemClock / GetStandardNetworkSystemClock /
+            // GetStandardLocalSystemClock / GetEphemeralNetworkSystemClock
+            0 | 1 | 4 | 5 => Ok(ServiceReply {
                 result: 0,
                 data: Vec::new(),
                 moved_objects: vec![Box::new(SystemClockService::default())],
                 effect: None,
             }),
             // GetStandardSteadyClock -> ISteadyClock
-            5 => Ok(ServiceReply {
+            2 => Ok(ServiceReply {
                 result: 0,
                 data: Vec::new(),
                 moved_objects: vec![Box::new(SteadyClockService::default())],
                 effect: None,
             }),
             // GetTimeZoneService -> ITimeZoneService
-            6 => Ok(ServiceReply {
+            3 => Ok(ServiceReply {
                 result: 0,
                 data: Vec::new(),
                 moved_objects: vec![Box::new(TimeZoneService::default())],
+                effect: None,
+            }),
+            // IsStandardUserSystemClockAutomaticCorrectionEnabled: false
+            100 => Ok(ServiceReply {
+                result: 0,
+                data: vec![0],
+                moved_objects: Vec::new(),
                 effect: None,
             }),
             // GetSharedMemoryNativeHandle (command 20)
             20 => Ok(ServiceReply {
                 result: 0,
                 data: Vec::new(),
-                moved_objects: vec![Box::new(EventHandle::new(true))],
+                moved_objects: vec![Box::new(crate::hid::SharedMemoryHandle(
+                    time_shared_memory(),
+                ))],
                 effect: None,
             }),
             command => Err(ServiceError::UnsupportedCommand {
@@ -247,4 +229,28 @@ impl Service for TimeService {
             }),
         }
     }
+}
+
+/// Fixed identity of the emulated steady clock source.
+const CLOCK_SOURCE_ID: [u8; 16] = *b"emu-steady-clock";
+
+/// Time shared memory page. Each entry is a lock-free pair: a u32 update
+/// counter followed (8-byte aligned) by two copies of the value, of which
+/// copy `counter & 1` is current. Counters stay 0, so copy 0 is filled.
+///
+/// - 0x00 steady clock: base time point (ns) + clock source ID.
+/// - 0x38 local and 0x80 network system clock contexts: offset (s) +
+///   steady time point (s) + clock source ID.
+/// - 0xc8 automatic correction flag (off), 0xd0 continuous adjustment (unset).
+///
+/// The guest clock is deterministic: the same fixed epoch as `ISystemClock`
+/// plus emulated uptime, never host time.
+fn time_shared_memory() -> std::rc::Rc<std::cell::RefCell<Vec<u8>>> {
+    let mut page = vec![0_u8; 0x1000];
+    page[0x10..0x20].copy_from_slice(&CLOCK_SOURCE_ID);
+    for context in [0x38, 0x80] {
+        page[context + 8..context + 16].copy_from_slice(&1767225600_u64.to_le_bytes());
+        page[context + 24..context + 40].copy_from_slice(&CLOCK_SOURCE_ID);
+    }
+    std::rc::Rc::new(std::cell::RefCell::new(page))
 }

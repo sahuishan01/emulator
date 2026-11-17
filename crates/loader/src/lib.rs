@@ -10,6 +10,7 @@ mod nso;
 pub mod pfs0;
 pub mod reloc;
 pub mod romfs;
+pub mod storage;
 pub mod ticket;
 pub use cnmt::Cnmt;
 pub use nso::{LoadedNsoModule, NsoImage, NsoProgram};

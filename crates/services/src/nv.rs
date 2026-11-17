@@ -1,5 +1,5 @@
 //! Original bounded NV protocol, synchronous channels and transactional effects.
-use crate::nvas::{NvAddressSpace, BIND_CHANNEL};
+use crate::nvas::{NvAddressSpace, BIND_CHANNEL, GET_VA_REGIONS};
 use crate::nvchannel::{self, Channel, SET_NVMAP, SYNC_READ, SYNC_WAIT};
 use crate::nvmap::{
     ImportBudget, NvMap, BAD_PARAMETER, IMPORT_BYTES, IMPORT_SPANS, NOT_SUPPORTED, NO_MEMORY,
@@ -14,10 +14,20 @@ use emulator_memory::{BackingRange, MemoryView, Permissions};
 use std::rc::Rc;
 
 pub(crate) const ZCULL_GET_CTX_SIZE: u32 = 0x80044701;
-pub(crate) const ZCULL_GET_INFO: u32 = 0x80044702;
-pub(crate) const ZBC_SET_TABLE: u32 = 0x80044703;
-pub(crate) const ZBC_QUERY_TABLE: u32 = 0x80044704;
-pub(crate) const GET_CHARACTERISTICS: u32 = 0x80044705;
+/// `_IOR('G', 2, nvgpu_gpu_zcull_get_info_args)`: ten u32 out.
+pub(crate) const ZCULL_GET_INFO: u32 = 0x80284702;
+/// `_IOW('G', 3, nvgpu_gpu_zbc_set_table_args)`.
+pub(crate) const ZBC_SET_TABLE: u32 = 0x402c4703;
+/// `_IOWR('G', 4, nvgpu_gpu_zbc_query_table_args)`.
+pub(crate) const ZBC_QUERY_TABLE: u32 = 0xc0344704;
+/// `NVGPU_GPU_IOCTL_GET_CHARACTERISTICS`: 16-byte request header
+/// (buf_size, buf_addr) followed by the 0xA0-byte characteristics.
+pub(crate) const GET_CHARACTERISTICS: u32 = 0xc0b04705;
+const CHARACTERISTICS_SIZE: usize = 0xa0;
+/// `NVGPU_GPU_IOCTL_GET_TPC_MASKS` with the 0x18-byte header
+/// {mask_buf_size, reserved[3], mask (u64)}; GM20B has one GPC with TPCs 0-1.
+pub(crate) const GET_TPC_MASKS_INLINE: u32 = 0xc0184706;
+const TPC_MASK: u32 = 0x3;
 pub(crate) const GET_TPC_MASKS: u32 = 0x80044706;
 pub(crate) const SYNC_INCR: u32 = 0xc0040015;
 #[derive(Clone, Debug)]
@@ -60,22 +70,7 @@ enum DeviceObject {
     Channel(Box<Channel>),
     Control,
 }
-#[derive(Debug)]
-struct BufferWrite {
-    view: MemoryView,
-    bytes: Vec<u8>,
-    ranges: Vec<BackingRange>,
-}
-impl PreparedServiceEffect for BufferWrite {
-    fn write_ranges(&self) -> &[BackingRange] {
-        &self.ranges
-    }
-    fn commit(self: Box<Self>) {
-        self.view
-            .write(0, &self.bytes)
-            .expect("prepared ioctl output pin");
-    }
-}
+use crate::BufferWrite;
 #[derive(Debug)]
 struct SubmitEffect {
     work: PreparedSubmission,
@@ -266,36 +261,13 @@ impl NvDriver {
                 *p = p.wrapping_add(1);
             }
             GET_CHARACTERISTICS => {
-                if output.len() >= 40 {
-                    output[0..4].copy_from_slice(&0x120u32.to_le_bytes()); // NVGPU_GPU_ARCH_GM200
-                    output[4..8].copy_from_slice(&0x0bu32.to_le_bytes());  // NVGPU_GPU_IMPL_GM20B
-                    output[8..12].copy_from_slice(&0xa1u32.to_le_bytes()); // rev
-                    output[12..16].copy_from_slice(&1u32.to_le_bytes());  // num_gpc
-                    output[16..20].copy_from_slice(&2u32.to_le_bytes());  // num_tpc_per_gpc
-                    output[20..24].copy_from_slice(&1u32.to_le_bytes());  // num_sm_per_tpc
-                    output[24..28].copy_from_slice(&0u32.to_le_bytes());  // bus_type
-                    output[28..32].copy_from_slice(&0x1_0000u32.to_le_bytes()); // big_page_size
-                    output[32..36].copy_from_slice(&0x1_0000u32.to_le_bytes()); // compression_page_size
-                    output[36..40].copy_from_slice(&27u32.to_le_bytes()); // pde_coverage_bit_count
-                }
-                if output.len() >= 104 {
-                    output[40..44].copy_from_slice(&0x1_0000u32.to_le_bytes()); // available_big_page_sizes
-                    output[44..48].copy_from_slice(&1u32.to_le_bytes()); // flags
-                    output[48..52].copy_from_slice(&0x902du32.to_le_bytes()); // twod_class (FERMI_TWOD_A)
-                    output[52..56].copy_from_slice(&0xb197u32.to_le_bytes()); // threed_class (MAXWELL_B)
-                    output[56..60].copy_from_slice(&0xb1c0u32.to_le_bytes()); // compute_class (MAXWELL_COMPUTE_B)
-                    output[60..64].copy_from_slice(&0xb06fu32.to_le_bytes()); // gpfifo_class (MAXWELL_CHANNEL_GPFIFO_A)
-                    output[64..68].copy_from_slice(&0xa140u32.to_le_bytes()); // inline_to_memory_class (KEPLER_INLINE_TO_MEMORY_B)
-                    output[68..72].copy_from_slice(&0xb0b5u32.to_le_bytes()); // dma_copy_class (MAXWELL_DMA_COPY_A)
-                    output[72..76].copy_from_slice(&1u32.to_le_bytes()); // max_fbps_count
-                    output[76..80].copy_from_slice(&1u32.to_le_bytes()); // fbp_en_mask
-                    output[80..84].copy_from_slice(&2u32.to_le_bytes()); // max_ltc_per_fbp
-                    output[84..88].copy_from_slice(&1u32.to_le_bytes()); // max_lts_per_ltc
-                    output[88..92].copy_from_slice(&0u32.to_le_bytes()); // max_tex_per_tpc
-                    output[92..96].copy_from_slice(&1u32.to_le_bytes()); // max_gpc_count
-                    output[96..100].copy_from_slice(&1u32.to_le_bytes()); // rop_l2_en_mask_0
-                    output[100..104].copy_from_slice(&0u32.to_le_bytes()); // rop_l2_en_mask_1
-                }
+                // Header: report the full struct size, keep the guest address.
+                output[0..8].copy_from_slice(&(CHARACTERISTICS_SIZE as u64).to_le_bytes());
+                output[16..].copy_from_slice(&gpu_characteristics());
+            }
+            GET_TPC_MASKS_INLINE => {
+                output[0..4].copy_from_slice(&4u32.to_le_bytes());
+                output[16..20].copy_from_slice(&TPC_MASK.to_le_bytes());
             }
             ZCULL_GET_CTX_SIZE => {
                 if output.len() >= 4 {
@@ -312,7 +284,17 @@ impl NvDriver {
                     output[8..12].copy_from_slice(&0x3u32.to_le_bytes());
                 }
             }
-            ZCULL_GET_INFO | ZBC_SET_TABLE | ZBC_QUERY_TABLE => {}
+            ZCULL_GET_INFO => {
+                // GM20B zcull geometry: width/height align, pixel squares per
+                // aliquot, aliquot total, region byte multiplier, region and
+                // subregion header sizes, subregion width/height align, count.
+                let info = [0x20u32, 0x20, 0x400, 0x800, 0x20, 0x20, 0xc0, 0x20, 0x40, 0x10];
+                for (i, v) in info.iter().enumerate() {
+                    output[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+                }
+            }
+            // ZBC clear-colour table: entries are accepted, queries report empty.
+            ZBC_SET_TABLE | ZBC_QUERY_TABLE => {}
             _ => return Err(NOT_SUPPORTED),
         }
         Ok(output)
@@ -327,9 +309,7 @@ impl NvDriver {
         else {
             return Err(BAD_PARAMETER);
         };
-        if channel.nvmap.is_none() {
-            return Err(3);
-        }
+        // Binding may precede SET_NVMAP; submission requires both.
         if channel.space.is_some() {
             return Err(8);
         }
@@ -358,6 +338,7 @@ impl NvDriver {
         let DeviceObject::Channel(channel) = &self.devices[at].object else {
             unreachable!()
         };
+        channel.nvmap.ok_or(3_u32)?;
         let space = self.space(channel.space.ok_or(3_u32)?).core()?;
         if input.len() < 24 {
             return Err(BAD_PARAMETER);
@@ -411,18 +392,54 @@ impl NvDriver {
         response.effect = Some(Box::new(effect));
         Ok(response)
     }
-    fn ioctl(&mut self, r: &Request, c: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
-        super::payload(r, 8)?;
+    /// Ioctl (1), Ioctl2 (11, extra inline input) and Ioctl3 (12, extra
+    /// inline output). No implemented ioctl consumes or produces inline data,
+    /// so a non-empty inline buffer is rejected rather than ignored.
+    fn ioctl(
+        &mut self,
+        r: &Request,
+        c: &ServiceContext<'_>,
+        inline: Inline,
+    ) -> Result<ServiceReply, ServiceError> {
+        // Auto-select receive buffers append one u16 size each (padded).
+        if r.data.len() < 8 || r.data.len() > 16 {
+            super::payload(r, 8)?;
+        }
         let fd = input_word(r, 0);
         let code = input_word(r, 4);
         let send = usize::from(code & (1 << 30) != 0);
         let receive = usize::from(code & (1 << 31) != 0);
-        c.require_buffers(send, receive)?;
+        // Slot 0 is the ioctl argument, slot 1 the inline buffer.
+        let (want_send, want_receive) = match inline {
+            Inline::None => (send, receive),
+            Inline::Input => (2, receive),
+            Inline::Output => (send, 2),
+        };
+        c.require_auto_buffers(want_send, want_receive)?;
+        let inline_len = match inline {
+            Inline::None => 0,
+            Inline::Input => c.auto_send(1)?.map_or(0, |v| v.len()),
+            Inline::Output => c.auto_receive(1)?.map_or(0, |v| v.len()),
+        };
         if self.arena.is_none() {
             return Ok(reply(&[3]));
         }
         let Some(at) = self.devices.iter().position(|d| d.fd == fd) else {
             return Ok(reply(&[BAD_PARAMETER]));
+        };
+        // Ioctl3 forms implemented here copy the payload after a 16-byte
+        // header into the inline output buffer.
+        let inline_capable = match self.devices[at].object {
+            DeviceObject::Control => matches!(code, GET_CHARACTERISTICS | GET_TPC_MASKS_INLINE),
+            DeviceObject::AddressSpace => code == GET_VA_REGIONS,
+            _ => false,
+        };
+        let inline_output = if inline_len == 0 {
+            None
+        } else if inline == Inline::Output && inline_capable {
+            c.auto_receive(1)?
+        } else {
+            return Ok(reply(&[NOT_SUPPORTED]));
         };
         let size = match &self.devices[at].object {
             DeviceObject::NvMap => NvMap::argument_size(code),
@@ -434,9 +451,10 @@ impl NvDriver {
                 SYNC_INCR | 0x80040015 => Some(4),
                 ZCULL_GET_CTX_SIZE => Some(4),
                 ZCULL_GET_INFO => Some(40),
-                ZBC_SET_TABLE => Some(44),
-                ZBC_QUERY_TABLE => Some(44),
-                GET_CHARACTERISTICS => Some(160),
+                ZBC_SET_TABLE => Some(0x2c),
+                ZBC_QUERY_TABLE => Some(0x34),
+                GET_CHARACTERISTICS => Some(16 + CHARACTERISTICS_SIZE),
+                GET_TPC_MASKS_INLINE => Some(0x18),
                 GET_TPC_MASKS | 0x800c4706 | 0xc00c4706 => {
                     Some(if code & 0x3fff_0000 == 0x0004_0000 { 4 } else { 12 })
                 }
@@ -451,17 +469,15 @@ impl NvDriver {
         }
         let mut bytes = vec![0; size];
         if send == 1 {
-            let input = c.send_buffer(0)?;
-            if input.len() != size {
+            let Some(input) = c.auto_send(0)?.filter(|v| v.len() == size) else {
                 return Ok(reply(&[BAD_PARAMETER]));
-            }
+            };
             input.read(0, &mut bytes).map_err(ServiceError::Memory)?;
         }
         let output = if receive == 1 {
-            let out = c.receive_buffer(0)?;
-            if out.len() != size {
+            let Some(out) = c.auto_receive(0)?.filter(|v| v.len() == size) else {
                 return Ok(reply(&[BAD_PARAMETER]));
-            }
+            };
             Some(out)
         } else {
             None
@@ -530,18 +546,86 @@ impl NvDriver {
                     bytes[8..16].fill(0)
                 }
                 let mut response = reply(&[0]);
+                let mut writes = Vec::new();
+                if let Some(view) = inline_output {
+                    // The inline copy is the payload after the 16-byte header.
+                    let len = view.len().min(bytes.len() - 16);
+                    writes.push(BufferWrite::new(view, bytes[16..16 + len].to_vec()));
+                }
                 if let Some(view) = output {
-                    let ranges = view.backing_ranges().collect();
-                    response.effect = Some(Box::new(BufferWrite {
-                        view,
-                        bytes,
-                        ranges,
-                    }));
+                    writes.push(BufferWrite::new(view, bytes));
+                }
+                if !writes.is_empty() {
+                    response.effect = Some(Box::new(BufferWrites::new(writes)));
                 }
                 Ok(response)
             }
         }
     }
+}
+/// Several deferred buffer writes committed together.
+#[derive(Debug)]
+struct BufferWrites {
+    writes: Vec<BufferWrite>,
+    ranges: Vec<emulator_memory::BackingRange>,
+}
+impl BufferWrites {
+    fn new(writes: Vec<BufferWrite>) -> Self {
+        let ranges = writes.iter().flat_map(|w| w.ranges.iter().cloned()).collect();
+        Self { writes, ranges }
+    }
+}
+impl emulator_kernel::service::PreparedServiceEffect for BufferWrites {
+    fn write_ranges(&self) -> &[emulator_memory::BackingRange] {
+        &self.ranges
+    }
+    fn commit(self: Box<Self>) {
+        for write in self.writes {
+            Box::new(write).commit();
+        }
+    }
+}
+
+/// `nvgpu_gpu_characteristics` for the Tegra X1 GM20B.
+fn gpu_characteristics() -> [u8; CHARACTERISTICS_SIZE] {
+    let mut c = [0u8; CHARACTERISTICS_SIZE];
+    let mut put32 = |at: usize, v: u32| c[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    put32(0x00, 0x120); // arch: GM200
+    put32(0x04, 0x0b); // impl: GM20B
+    put32(0x08, 0xa1); // rev
+    put32(0x0c, 1); // num_gpc
+    put32(0x10, 0x40000); // L2 cache size (u64)
+    // 0x18: on-board video memory size (u64) = 0, unified memory.
+    put32(0x20, 2); // num_tpc_per_gpc
+    put32(0x24, 0x20); // bus_type: platform
+    put32(0x28, 0x20000); // big_page_size
+    put32(0x2c, 0x20000); // compression_page_size
+    put32(0x30, 27); // pde_coverage_bit_count
+    put32(0x34, 0x30000); // available_big_page_sizes
+    put32(0x38, 0x7); // flags (u64): sparse, sync fence fds, cycle stats
+    put32(0x40, 0x902d); // twod_class: FERMI_TWOD_A
+    put32(0x44, 0xb197); // threed_class: MAXWELL_B
+    put32(0x48, 0xb1c0); // compute_class: MAXWELL_COMPUTE_B
+    put32(0x4c, 0xb06f); // gpfifo_class: MAXWELL_CHANNEL_GPFIFO_A
+    put32(0x50, 0xa140); // inline_to_memory_class: KEPLER_INLINE_TO_MEMORY_B
+    put32(0x54, 0xb0b5); // dma_copy_class: MAXWELL_DMA_COPY_A
+    put32(0x58, 1); // max_fbps_count
+    put32(0x5c, 0); // fbp_en_mask
+    put32(0x60, 2); // max_ltc_per_fbp
+    put32(0x64, 1); // max_lts_per_ltc
+    put32(0x68, 0); // max_tex_per_tpc
+    put32(0x6c, 1); // max_gpc_count
+    put32(0x70, 0x21); // rop_l2_en_mask_0
+    put32(0x74, 0); // rop_l2_en_mask_1
+    c[0x78..0x7e].copy_from_slice(b"gm20b\0"); // chipname (u64)
+    c
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Inline {
+    None,
+    Input,
+    Output,
 }
 impl Service for NvDriver {
     fn clone_for_request(&self) -> Box<dyn Service> {
@@ -565,10 +649,13 @@ impl Service for NvDriver {
             context.require_copy_handles(0)?;
             return match request.command_id {
                 0 => self.open(request, context),
-                1 | 13 => self.ioctl(request, context),
+                1 => self.ioctl(request, context, Inline::None),
+                11 => self.ioctl(request, context, Inline::Input),
+                12 => self.ioctl(request, context, Inline::Output),
                 2 => self.close(request, context),
                 4 => self.query_event(request, context),
-                8 | 11 => Ok(reply(&[0])),
+                // SetAruid (8), SetGraphicsFirmwareMemoryMarginEnabled (13).
+                8 | 13 => Ok(reply(&[0])),
                 _ => self.dispatch(request),
             };
         }

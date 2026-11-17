@@ -219,7 +219,7 @@ impl NcaFsHeader {
             NcaHashType::HierarchicalIntegrity | NcaHashType::HierarchicalIntegritySha3 => {
                 if self.hash_data.len() >= 0x9C && &self.hash_data[0..4] == IVFC_MAGIC {
                     for level_idx in (0..6).rev() {
-                        let off = 0x0C + level_idx * 0x18;
+                        let off = 0x10 + level_idx * 0x18; // level table after the 0x10-byte IVFC prologue
                         if off + 16 <= self.hash_data.len() {
                             let lvl_offset = u64::from_le_bytes(
                                 self.hash_data[off..off + 8].try_into().unwrap(),

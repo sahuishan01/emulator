@@ -410,7 +410,8 @@ fn test_bitfield_and_exclusive_load_store() {
     // bits [7:0] of x1 is 0xef (-17 signed)
     assert_eq!(cpu.x[3], 0xffff_ffff_ffff_ffef);
 
-    // Step 3: STXR
+    // Step 3: STXR (with the reservation a preceding LDXR of the zeroed word takes)
+    cpu.exclusive = Some(emulator_a64::ExclusiveReservation { address: 0x8000_2000, bytes: 8, value: 0 });
     cpu.step(&mut mem).unwrap();
     assert_eq!(cpu.x[4], 0); // exclusive store status 0 (success)
     assert_eq!(mem.read_u64(0x8000_2000).unwrap(), 0x0123_4567_89ab_cdef);
@@ -1209,3 +1210,88 @@ fn test_disassemble_common_instructions() {
 }
 
 
+
+#[test]
+fn prefetch_hints_do_not_write_memory_and_writeback_forms_are_reserved() {
+    // Regression: PRFM (size=3, opc=2) used to execute as a 32-bit store of Rt,
+    // clobbering a guest spin-lock word with a code address.
+    let words: [u32; 5] = [
+        0xf98002f0, // prfm pstl1strm, [x23]
+        0xf88002f0, // prfum pstl1strm, [x23]
+        0xf8a16af0, // prfm pstl1strm, [x23, x1]
+        0xf94002e2, // ldr x2, [x23]
+        0xd4000021, // svc #1
+    ];
+    let program: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let (mut cpu, mut memory) = machine(&program);
+    cpu.x[16] = 0x61b9_5d0;
+    cpu.x[23] = 0x2000;
+    cpu.x[2] = 0xdead;
+    assert_eq!(next_svc(&mut cpu, &mut memory), (1, 5));
+    assert_eq!(cpu.x[2], 0, "prefetch must leave memory untouched");
+
+    // PRFM-shaped encodings with pre/post-index writeback are unallocated.
+    for word in [0xf8800ef0_u32, 0xf88006f0] {
+        let (mut cpu, mut memory) = machine(&word.to_le_bytes());
+        cpu.x[23] = 0x2000;
+        let saved = cpu.clone();
+        assert!(cpu.step(&mut memory).is_err(), "{word:#x} must fault");
+        assert_eq!(cpu, saved);
+    }
+}
+
+#[test]
+fn store_exclusive_requires_a_live_matching_reservation() {
+    let words: [u32; 2] = [
+        0x885f7c20, // ldxr w0, [x1]
+        0x88027c23, // stxr w2, w3, [x1]
+    ];
+    let program: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+
+    // Uncontended pair succeeds and stores.
+    let (mut cpu, mut memory) = machine(&program);
+    cpu.x[1] = 0x2000;
+    cpu.x[3] = 7;
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+    assert_eq!((cpu.x[2], memory.read_u32(0x2000).unwrap()), (0, 7));
+    assert_eq!(cpu.exclusive, None);
+
+    // Another thread changed the word between the pair: the store fails.
+    let (mut cpu, mut memory) = machine(&program);
+    cpu.x[1] = 0x2000;
+    cpu.x[3] = 7;
+    cpu.step(&mut memory).unwrap();
+    memory.write_u32(0x2000, 5).unwrap();
+    cpu.step(&mut memory).unwrap();
+    assert_eq!((cpu.x[2], memory.read_u32(0x2000).unwrap()), (1, 5));
+
+    // A cleared monitor (context switch / CLREX) fails even if the value matches.
+    let (mut cpu, mut memory) = machine(&program);
+    cpu.x[1] = 0x2000;
+    cpu.x[3] = 7;
+    cpu.step(&mut memory).unwrap();
+    cpu.clear_exclusive();
+    cpu.step(&mut memory).unwrap();
+    assert_eq!((cpu.x[2], memory.read_u32(0x2000).unwrap()), (1, 0));
+
+    // A store-exclusive without any load-exclusive, or to another address, fails.
+    let (mut cpu, mut memory) = machine(&0x88027c23_u32.to_le_bytes());
+    cpu.x[1] = 0x2000;
+    cpu.x[3] = 7;
+    cpu.step(&mut memory).unwrap();
+    assert_eq!((cpu.x[2], memory.read_u32(0x2000).unwrap()), (1, 0));
+
+    // CLREX decodes and clears the reservation.
+    let program: Vec<u8> = [0x885f7c20_u32, 0xd503305f, 0x88027c23]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    let (mut cpu, mut memory) = machine(&program);
+    cpu.x[1] = 0x2000;
+    cpu.x[3] = 7;
+    for _ in 0..3 {
+        cpu.step(&mut memory).unwrap();
+    }
+    assert_eq!(cpu.x[2], 1);
+}

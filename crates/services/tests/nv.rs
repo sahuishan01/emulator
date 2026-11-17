@@ -336,13 +336,15 @@ fn nvmap_rejects_unknown_devices_ioctls_handles_sizes_and_malformed_buffers() {
     }
     assert!(r.call(&message(0, &[], Some((0x6000, 0)), None)).is_err());
     let fd = r.open_device(b"/dev/nvmap", 0).0;
-    for size in [0, 1, 4097, 64 * 1024 * 1024 + 4096] {
-        assert_eq!(r.ioctl(fd, 0xc0080101, &[size, 77], 1), 4);
-        assert_eq!(r.m.read_u32(0x6004).unwrap(), 77);
-    }
+    // Zero is rejected; other sizes are rounded up to whole pages (below).
+    assert_eq!(r.ioctl(fd, 0xc0080101, &[0, 77], 1), 4);
+    assert_eq!(r.m.read_u32(0x6004).unwrap(), 77);
     assert_eq!(r.ioctl(999, 0xc0080101, &[4096, 77], 1), 4);
-    assert_eq!(r.ioctl(fd, 0xc008010e, &[1, 2, 3, 4, 5, 6, 7, 8], 1), 2);
+    assert_eq!(r.ioctl(fd, 0xc008010d, &[1, 2, 3, 4, 5, 6, 7, 8], 1), 2);
     assert_eq!(r.m.read_u32(0x601c).unwrap(), 8);
+    // GET_ID / FROM_ID of an unknown handle.
+    assert_eq!(r.ioctl(fd, 0xc008010e, &[0, 1], 1), 4);
+    assert_eq!(r.ioctl(fd, 0xc0080103, &[1, 0], 1), 4);
     assert_eq!(r.ioctl(fd, 0xc0080101, &[4096, 77], 1), 0);
     let handle = r.m.read_u32(0x6004).unwrap();
     assert_eq!(handle, 1);
@@ -550,22 +552,31 @@ fn nvmap_import_and_free_rejected_replies_preserve_pin_lifetimes_and_output() {
     assert_eq!(r.m.read_u64(0x6008).unwrap(), 0x8000);
     let lease = r.m.lend(0x8000, 4096, Permissions::NONE).unwrap();
     drop(lease);
+    assert_eq!(r.ioctl(fd, 0xc0080101, &[4097, 77], 1), 0);
+    assert_eq!(r.m.read_u32(0x6004).unwrap(), 2);
+    // The id of handle 2 resolves back to handle 2.
+    assert_eq!(r.ioctl(fd, 0xc008010e, &[0, 2], 1), 0);
+    let id = r.m.read_u32(0x6000).unwrap();
+    assert_eq!(r.ioctl(fd, 0xc0080103, &[id, 0], 1), 0);
+    assert_eq!(r.m.read_u32(0x6004).unwrap(), 2);
 }
+/// 32 objects of this size fill the 4 GiB import cap.
+const QUOTA_OBJECT: usize = 128 * 1024 * 1024;
 #[test]
 fn nvmap_client_import_quota_counts_all_devices_and_free_and_close_reclaim_it() {
     let mut r = Rig::device_rig(Box::new(NvDriver::default()));
     let fd1 = r.open_device(b"/dev/nvmap", 0).0;
     let fd2 = r.open_device(b"/dev/nvmap", 0).0;
-    r.m.map(0x100000, vec![0; 2 * 1024 * 1024], Permissions::READ_WRITE)
+    r.m.map(0x100000, vec![0; QUOTA_OBJECT], Permissions::READ_WRITE)
         .unwrap();
     for handle in 1..=32 {
-        assert_eq!(r.ioctl(fd1, 0xc0080101, &[2 * 1024 * 1024, 0], 1), 0);
+        assert_eq!(r.ioctl(fd1, 0xc0080101, &[QUOTA_OBJECT as u32, 0], 1), 0);
         assert_eq!(
             r.ioctl(fd1, 0xc0200104, &[handle, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
             0
         );
     }
-    assert_eq!(r.ioctl(fd2, 0xc0080101, &[2 * 1024 * 1024, 0], 1), 0);
+    assert_eq!(r.ioctl(fd2, 0xc0080101, &[QUOTA_OBJECT as u32, 0], 1), 0);
     assert_eq!(
         r.ioctl(fd2, 0xc0200104, &[33, 0, 1, 4096, 0, 0, 0x100000, 0], 1),
         6
@@ -576,12 +587,12 @@ fn nvmap_client_import_quota_counts_all_devices_and_free_and_close_reclaim_it() 
         0
     );
     let baseline = r.m.resident_bytes();
-    r.m.unmap(0x100000, 2 * 1024 * 1024).unwrap();
+    r.m.unmap(0x100000, QUOTA_OBJECT).unwrap();
     assert_eq!(r.m.resident_bytes(), baseline);
     assert_eq!(r.close_fd(fd1), 0);
     assert_eq!(r.m.resident_bytes(), baseline);
     assert_eq!(r.close_fd(fd2), 0);
-    assert_eq!(r.m.resident_bytes(), baseline - 2 * 1024 * 1024);
+    assert_eq!(r.m.resident_bytes(), baseline - QUOTA_OBJECT);
 }
 
 #[test]
@@ -723,17 +734,17 @@ fn gpu_mapping_quota_is_shared_by_address_space_devices_and_unmap_reclaims_it() 
     let as2 = r.open_device(b"/dev/nvhost-as-gpu", 0).0;
     assert_eq!(r.initialize_as(as1, 1).unwrap(), 0);
     assert_eq!(r.initialize_as(as2, 1).unwrap(), 0);
-    r.m.map(0x100000, vec![0; 2 * 1024 * 1024], Permissions::READ_WRITE)
+    r.m.map(0x100000, vec![0; QUOTA_OBJECT], Permissions::READ_WRITE)
         .unwrap();
-    let h = r.import_object(nv, 0x100000, 2 * 1024 * 1024);
+    let h = r.import_object(nv, 0x100000, QUOTA_OBJECT as u32);
     for n in 0..32 {
-        assert_eq!(r.map_object(as1, h), (0, (1 << 32) + n * 2 * 1024 * 1024));
+        assert_eq!(r.map_object(as1, h), (0, (1 << 32) + n * QUOTA_OBJECT as u64));
     }
     assert_eq!(r.map_object(as2, h).0, 6);
     assert_eq!(r.ioctl(as1, AS_UNMAP, &[0, 1], 1), 0);
     assert_eq!(r.map_object(as2, h), (0, 1 << 32));
     assert_eq!(r.close_fd(as1), 0);
-    assert_eq!(r.map_object(as2, h), (0, (1 << 32) + 2 * 1024 * 1024));
+    assert_eq!(r.map_object(as2, h), (0, (1 << 32) + QUOTA_OBJECT as u64));
 }
 #[test]
 fn cloned_receiver_and_rejected_close_keep_gpu_backing_until_final_receiver_close() {
@@ -790,29 +801,32 @@ fn test_nv_ctrl_gpu_and_characteristics() {
     assert_eq!(res, 0);
     assert!(ctrl_fd > 0);
 
-    let char_code = 0x80044705u32;
-    r.m.write(0x6000, &[0u8; 160]).unwrap();
+    // GET_CHARACTERISTICS: 16-byte header + 0xA0-byte nvgpu struct.
+    let char_code = 0xc0b04705u32;
+    let mut request = [0u8; 0xb0];
+    request[0..8].copy_from_slice(&0xa0u64.to_le_bytes());
+    request[8..16].copy_from_slice(&0x1234_5678u64.to_le_bytes());
+    r.m.write(0x6000, &request).unwrap();
     let reply = r.call(&message(
         1,
         &[ctrl_fd, char_code],
-        None,
-        Some((0x6000, 160)),
+        Some((0x6000, 0xb0)),
+        Some((0x6000, 0xb0)),
     ));
     assert!(reply.is_ok());
-    let mut out = [0u8; 104];
+    let mut out = [0u8; 0xb0];
     r.m.read(0x6000, &mut out).unwrap();
-    let arch = u32::from_le_bytes(out[0..4].try_into().unwrap());
-    let impl_id = u32::from_le_bytes(out[4..8].try_into().unwrap());
-    let threed_class = u32::from_le_bytes(out[52..56].try_into().unwrap());
-    let compute_class = u32::from_le_bytes(out[56..60].try_into().unwrap());
-    let gpfifo_class = u32::from_le_bytes(out[60..64].try_into().unwrap());
-    let dma_copy_class = u32::from_le_bytes(out[68..72].try_into().unwrap());
-    assert_eq!(arch, 0x120);
-    assert_eq!(impl_id, 0x0b);
-    assert_eq!(threed_class, 0xb197);
-    assert_eq!(compute_class, 0xb1c0);
-    assert_eq!(gpfifo_class, 0xb06f);
-    assert_eq!(dma_copy_class, 0xb0b5);
+    let word = |at: usize| u32::from_le_bytes(out[at..at + 4].try_into().unwrap());
+    assert_eq!(u64::from_le_bytes(out[0..8].try_into().unwrap()), 0xa0);
+    assert_eq!(u64::from_le_bytes(out[8..16].try_into().unwrap()), 0x1234_5678);
+    let c = 16;
+    assert_eq!(word(c), 0x120); // arch
+    assert_eq!(word(c + 4), 0x0b); // impl
+    assert_eq!(word(c + 0x44), 0xb197); // threed_class
+    assert_eq!(word(c + 0x48), 0xb1c0); // compute_class
+    assert_eq!(word(c + 0x4c), 0xb06f); // gpfifo_class
+    assert_eq!(word(c + 0x54), 0xb0b5); // dma_copy_class
+    assert_eq!(&out[c + 0x78..c + 0x7d], b"gm20b");
 
     // Test GET_TPC_MASKS
     let tpc_code = 0x800c4706u32;
@@ -875,9 +889,12 @@ fn test_nv_query_event_and_extended_commands() {
     let pid_reply = r.call(&message(8, &[100, 0], None, None));
     assert!(pid_reply.is_ok());
 
-    // Command 11: DumpGraphicsMemoryInfo
-    let dump_reply = r.call(&message(11, &[], None, None));
-    assert!(dump_reply.is_ok());
+    // Command 13: SetGraphicsFirmwareMemoryMarginEnabled
+    let margin_reply = r.call(&message(13, &[1], None, None));
+    assert!(margin_reply.is_ok());
+
+    // Command 11 is Ioctl2: it validates its buffers like Ioctl.
+    assert!(r.call(&message(11, &[gpu_fd, 0x8004_4801], None, None)).is_err());
 
     // Invalid FD query event should return BAD_PARAMETER
     let bad_q = r.call(&message(4, &[9999, 1], None, None));

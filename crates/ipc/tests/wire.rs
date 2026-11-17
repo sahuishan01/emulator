@@ -1,4 +1,4 @@
-use emulator_ipc::{encode_reply, parse_request, CommandType, IpcError};
+use emulator_ipc::{encode_reply, encode_tipc_reply, parse_request, CommandType, IpcError};
 
 fn request(pid: bool, data: &[u8]) -> Vec<u8> {
     let start = if pid { 20 } else { 8 };
@@ -51,7 +51,9 @@ fn an_empty_special_header_has_distinct_raw_alignment_without_a_pid() {
 fn unsupported_descriptors_handles_and_context_never_parse_as_success() {
     for (offset, value) in [
         (0, 0x10004_u32),
-        (0, 6),
+        (0, 0x1000_0004),
+        (0, 0x0001_0002),
+        (4, 0x400 | 8),
         (4, 0x400),
         (4, 0x3ff),
         (16, 0),
@@ -175,22 +177,25 @@ fn unsupported_alias_modes_excess_counts_and_control_buffers_are_rejected() {
     bytes[..4].copy_from_slice(&0x0110_0004_u32.to_le_bytes());
     bytes[4..8].copy_from_slice(&8_u32.to_le_bytes());
     bytes[32..36].copy_from_slice(b"SFCI");
-    for mode in [1_u32, 2, 3] {
+    // NonSecure (1) and NonDevice (3) parse like Normal; mode 2 is invalid.
+    for mode in [1_u32, 3] {
         bytes[16..20].copy_from_slice(&mode.to_le_bytes());
-        assert_eq!(
-            parse_request(&bytes),
-            Err(IpcError::UnsupportedBufferMode(mode as u8))
-        );
+        assert_eq!(parse_request(&bytes).unwrap().send_buffers.len(), 1);
     }
+    bytes[16..20].copy_from_slice(&2_u32.to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedBufferMode(2)));
     bytes[16..20].fill(0);
     bytes[..4].copy_from_slice(&0x0140_0004_u32.to_le_bytes());
     assert_eq!(parse_request(&bytes), Err(IpcError::BufferLimit));
     bytes[..4].copy_from_slice(&0x0110_0005_u32.to_le_bytes());
     assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
-    for first in [0x0001_0004_u32, 0x1000_0004] {
-        bytes[..4].copy_from_slice(&first.to_le_bytes());
-        assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
-    }
+    // Exchange descriptors stay unsupported; pointer descriptors are bounded.
+    bytes[..4].copy_from_slice(&0x1000_0004_u32.to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
+    bytes[..4].copy_from_slice(&0x0005_0004_u32.to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::BufferLimit));
+    bytes[..4].copy_from_slice(&0x0001_0005_u32.to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
 }
 #[test]
 fn copied_handles_precede_descriptors_and_preserve_pid_and_cmif_alignment() {
@@ -244,4 +249,126 @@ fn copied_handle_limits_moves_and_control_transfers_remain_explicit_errors() {
     bytes[8..12].copy_from_slice(&2_u32.to_le_bytes());
     bytes[..4].copy_from_slice(&5_u32.to_le_bytes());
     assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
+}
+
+fn tipc(command: u16, pid: bool, data: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&u32::from(16 + command).to_le_bytes());
+    bytes.extend_from_slice(&((data.len() / 4) as u32 | if pid { 1 << 31 } else { 0 }).to_le_bytes());
+    if pid {
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&0x8877665544332211_u64.to_le_bytes());
+    }
+    bytes.extend_from_slice(data);
+    bytes
+}
+
+#[test]
+fn tipc_requests_take_the_command_from_the_type_and_have_no_cmif_header() {
+    let register = parse_request(&tipc(0, true, &[])).unwrap();
+    assert!(register.tipc);
+    assert_eq!(register.kind, CommandType::Request);
+    assert_eq!(register.command_id, 0);
+    assert_eq!(register.pid, Some(0x8877665544332211));
+    assert!(register.data.is_empty());
+
+    let bytes = tipc(1, false, b"fsp-srv\0");
+    let get = parse_request(&bytes).unwrap();
+    assert!(get.tipc);
+    assert_eq!(get.command_id, 1);
+    assert_eq!(get.pid, None);
+    assert_eq!(get.data, b"fsp-srv\0");
+    for size in 0..bytes.len() {
+        assert!(parse_request(&bytes[..size]).is_err(), "prefix {size}");
+    }
+    // CMIF requests are never flagged, and the TIPC close type stays explicit.
+    assert!(!parse_request(&request(false, &[0; 8])).unwrap().tipc);
+    let mut close = tipc(0, false, &[]);
+    close[0] = 15;
+    assert_eq!(parse_request(&close), Err(IpcError::UnsupportedType(15)));
+    // Unsupported descriptor kinds are rejected in TIPC framing too.
+    let mut exchange = tipc(1, false, &[0; 8]);
+    exchange[3] = 0x10;
+    assert_eq!(parse_request(&exchange), Err(IpcError::UnsupportedLayout));
+}
+
+#[test]
+fn tipc_replies_put_the_result_first_and_move_handles_before_it() {
+    let plain = encode_tipc_reply(0xdead_0001, &7_u32.to_le_bytes(), &[]).unwrap();
+    assert_eq!(&plain[..4], &[0; 4]);
+    assert_eq!(u32::from_le_bytes(plain[4..8].try_into().unwrap()), 2);
+    assert_eq!(u32::from_le_bytes(plain[8..12].try_into().unwrap()), 0xdead_0001);
+    assert_eq!(u32::from_le_bytes(plain[12..16].try_into().unwrap()), 7);
+    assert!(plain[16..].iter().all(|byte| *byte == 0));
+
+    let moved = encode_tipc_reply(0, &[], &[0x1234]).unwrap();
+    assert_eq!(u32::from_le_bytes(moved[4..8].try_into().unwrap()), 1 | 1 << 31);
+    assert_eq!(u32::from_le_bytes(moved[8..12].try_into().unwrap()), 1 << 5);
+    assert_eq!(u32::from_le_bytes(moved[12..16].try_into().unwrap()), 0x1234);
+    assert_eq!(u32::from_le_bytes(moved[16..20].try_into().unwrap()), 0);
+    assert!(moved[20..].iter().all(|byte| *byte == 0));
+
+    assert_eq!(encode_tipc_reply(0, &[0; 3], &[]), Err(IpcError::UnalignedPayload));
+    assert_eq!(encode_tipc_reply(0, &[0; 0x100], &[]), Err(IpcError::TooLarge));
+    assert_eq!(encode_tipc_reply(0, &[], &[0; 16]), Err(IpcError::TooLarge));
+}
+
+#[test]
+fn context_requests_need_version_one_and_plain_requests_reject_tokens() {
+    let mut bytes = request(false, &9_u32.to_le_bytes());
+    bytes[0] = 6;
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedVersion(0)));
+    bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[28..32].copy_from_slice(&0xfeed_u32.to_le_bytes());
+    let parsed = parse_request(&bytes).unwrap();
+    assert_eq!(parsed.kind, CommandType::Request);
+    assert_eq!(parsed.command_id, 7);
+    assert_eq!(parsed.data, 9_u32.to_le_bytes());
+    bytes[0] = 7;
+    assert_eq!(parse_request(&bytes).unwrap().kind, CommandType::Control);
+    bytes[0] = 4;
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedVersion(1)));
+}
+
+#[test]
+fn pointer_and_receive_list_descriptors_decode_every_address_and_size_bit() {
+    // One X descriptor, 8 raw words, receive list flag 3 (one C descriptor).
+    let mut bytes = vec![0; 16 + 32 + 8];
+    bytes[..4].copy_from_slice(&0x0001_0004_u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&(8_u32 | 3 << 10).to_le_bytes());
+    // size 0x1234, address 0x2a_b_89abcdef (bits 36.. = 0x2a, bits 32..35 = 0xb).
+    bytes[8..12].copy_from_slice(&(0x1234_u32 << 16 | 0xb << 12 | 0x2a << 6 | 5).to_le_bytes());
+    bytes[12..16].copy_from_slice(&0x89ab_cdef_u32.to_le_bytes());
+    bytes[16..20].copy_from_slice(b"SFCI");
+    bytes[24..28].copy_from_slice(&7_u32.to_le_bytes());
+    bytes[48..52].copy_from_slice(&0x7654_3210_u32.to_le_bytes());
+    bytes[52..56].copy_from_slice(&(0x0800_u32 << 16 | 0x00fe).to_le_bytes());
+    let parsed = parse_request(&bytes).unwrap();
+    assert_eq!(parsed.command_id, 7);
+    assert!(parsed.data.is_empty());
+    assert!(parsed.send_buffers.is_empty() && parsed.receive_buffers.is_empty());
+    assert_eq!(parsed.pointer_send.len(), 1);
+    assert_eq!(parsed.pointer_send[0].address, 0x2a_b89a_bcdef);
+    assert_eq!(parsed.pointer_send[0].size, 0x1234);
+    assert_eq!(parsed.pointer_receive.len(), 1);
+    assert_eq!(parsed.pointer_receive[0].address, 0xfe_7654_3210);
+    assert_eq!(parsed.pointer_receive[0].size, 0x800);
+    // The receive list must be fully present, and inline lists stay explicit.
+    assert_eq!(parse_request(&bytes[..52]), Err(IpcError::Truncated));
+    bytes[4..8].copy_from_slice(&(8_u32 | 1 << 10).to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
+    bytes[4..8].copy_from_slice(&(8_u32 | 7 << 10).to_le_bytes());
+    assert_eq!(parse_request(&bytes), Err(IpcError::BufferLimit));
+}
+
+#[test]
+fn close_requests_carry_no_descriptors_or_payload() {
+    let mut bytes = vec![0; 8];
+    bytes[0] = 2;
+    let parsed = parse_request(&bytes).unwrap();
+    assert_eq!(parsed.kind, CommandType::Close);
+    assert!(parsed.data.is_empty() && parsed.pid.is_none());
+    bytes[4] = 1;
+    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedLayout));
+    assert_eq!(parse_request(&[2, 0, 0, 0]), Err(IpcError::Truncated));
 }

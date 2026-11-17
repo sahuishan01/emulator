@@ -1,0 +1,35 @@
+[Unit]
+Description=Private emulator dump inbox (loopback; published by Caddy with basic auth)
+After=network.target
+
+[Service]
+Type=simple
+User=emudump
+Group=emudump
+ExecStart=/usr/bin/python3 -I /usr/local/lib/emulator-dumps/dump_inbox.py --root /srv/emulator-dumps serve --host 127.0.0.1 --port 8791
+Restart=on-failure
+RestartSec=5
+UMask=0077
+Nice=10
+CPUQuota=100%
+MemoryHigh=384M
+MemoryMax=768M
+TasksMax=64
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/emulator-dumps
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -18,6 +18,7 @@ pub struct FutexArbitrator {
     next_ticket: u64,
     condvar_queues: BTreeMap<u64, VecDeque<Waiter>>,
     mutex_queues: BTreeMap<u64, VecDeque<Waiter>>,
+    address_queues: BTreeMap<u64, VecDeque<Waiter>>,
 }
 
 impl FutexArbitrator {
@@ -120,5 +121,57 @@ impl FutexArbitrator {
         self.condvar_queues
             .get(&key_addr)
             .map_or(0, |q| q.len())
+    }
+
+    /// Queues the current thread on an address arbiter (svcWaitForAddress).
+    pub fn wait_address(&mut self, thread_index: usize, addr: u64) -> Rc<Cell<bool>> {
+        let ticket = self.next_ticket;
+        self.next_ticket = self.next_ticket.wrapping_add(1);
+        let signal = Rc::new(Cell::new(false));
+        self.address_queues.entry(addr).or_default().push_back(Waiter {
+            thread_index,
+            tag: 0,
+            ticket,
+            signal: Rc::clone(&signal),
+            mutex_addr: addr,
+        });
+        signal
+    }
+
+    /// Drops waiters whose wait already ended (timeout or cancellation): the
+    /// scheduler released its clone of the signal, so only ours remains.
+    fn prune_address(&mut self, addr: u64) {
+        if let Some(queue) = self.address_queues.get_mut(&addr) {
+            queue.retain(|w| Rc::strong_count(&w.signal) > 1 && !w.signal.get());
+            if queue.is_empty() {
+                self.address_queues.remove(&addr);
+            }
+        }
+    }
+
+    /// Number of threads still blocked on `addr`.
+    pub fn address_waiter_count(&mut self, addr: u64) -> usize {
+        self.prune_address(addr);
+        self.address_queues.get(&addr).map_or(0, VecDeque::len)
+    }
+
+    /// Wakes up to `count` waiters in FIFO order (`count <= 0` wakes all).
+    pub fn signal_address(&mut self, addr: u64, count: i32) -> usize {
+        self.prune_address(addr);
+        let Some(queue) = self.address_queues.get_mut(&addr) else {
+            return 0;
+        };
+        let n = if count <= 0 {
+            queue.len()
+        } else {
+            (count as usize).min(queue.len())
+        };
+        for waiter in queue.drain(..n) {
+            waiter.signal.set(true);
+        }
+        if queue.is_empty() {
+            self.address_queues.remove(&addr);
+        }
+        n
     }
 }

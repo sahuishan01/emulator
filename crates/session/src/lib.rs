@@ -1,5 +1,6 @@
 //! Composition of original NRO loading, CPU execution and the minimal kernel.
 
+use emulator_loader::storage::ReadOnlyStorage;
 use emulator_a64::{Cpu, ExecutionError, StepEvent};
 use emulator_kernel::{homebrew_config, Kernel, KernelError, KernelEvent, ScheduleOutcome};
 use emulator_loader::{LoadError, LoadedImage, NroImage, NsoProgram};
@@ -52,6 +53,9 @@ pub enum RunOutcome {
     Blocked,
 }
 
+/// Extra host budget above the guest-visible application pool.
+const GUEST_MEMORY_HEADROOM: u64 = 0x1000_0000;
+
 pub struct Session {
     cpu: Cpu,
     memory: AddressSpace,
@@ -87,7 +91,12 @@ impl Session {
         program: &emulator_loader::exefs::ExeFsProgram,
         service_manager: emulator_services::ServiceManager,
     ) -> Result<Self, SessionError> {
-        let mut memory = AddressSpace::default();
+        // Host budget: the application pool reported to the guest plus headroom for
+        // pages HOS does not charge to it (shared memory, TLS, service buffers).
+        // Backing is zero-filled on demand, so untouched guest memory costs no RAM.
+        let mut memory = AddressSpace::with_limit(
+            (emulator_kernel::APPLICATION_POOL_SIZE + GUEST_MEMORY_HEADROOM) as usize,
+        );
         let mut nso_program = NsoProgram::default();
         program
             .load_into(&mut nso_program, &mut memory, LOAD_BASE)
@@ -143,6 +152,7 @@ impl Session {
         kernel.set_aslr_region(LOAD_BASE, 0x7f_ff00_0000);
         if let Some(meta) = &program.npdm {
             kernel.set_program_id(meta.title_id);
+            kernel.set_system_resource_size(u64::from(meta.system_resource_size));
         }
         kernel
             .register_named_port("sm:", Box::new(service_manager))
@@ -189,13 +199,46 @@ impl Session {
     pub fn from_nsp_with_services(
         archive: &[u8],
         keys: &mut emulator_crypto::keys::KeyFile,
+        service_manager: emulator_services::ServiceManager,
+    ) -> Result<Self, SessionError> {
+        Self::from_nsp_shared(std::rc::Rc::new(archive.to_vec()), keys, service_manager)
+    }
+
+    /// [`Self::from_nsp_shared`] with the default services.
+    pub fn from_nsp_owned(
+        archive: emulator_loader::storage::SharedBytes,
+        keys: &mut emulator_crypto::keys::KeyFile,
+    ) -> Result<Self, SessionError> {
+        Self::from_nsp_shared(archive, keys, emulator_services::ServiceManager::default())
+    }
+
+    /// Loads an NSP without copying it: the program's RomFS stays in the shared
+    /// container and is decrypted lazily per IStorage read.
+    pub fn from_nsp_shared(
+        shared: emulator_loader::storage::SharedBytes,
+        keys: &mut emulator_crypto::keys::KeyFile,
         mut service_manager: emulator_services::ServiceManager,
     ) -> Result<Self, SessionError> {
+        let archive: &[u8] = (*shared).as_ref();
         let nsp = emulator_loader::nsp::NspArchive::parse(archive)
             .map_err(SessionError::Load)?;
         let (header, prog_nca) = nsp.open_program(keys).map_err(SessionError::Load)?;
-        if let Ok(romfs) = header.open_romfs(prog_nca, keys) {
-            service_manager.set_romfs(romfs);
+        // `prog_nca` borrows from `archive`: recover its offset in the container.
+        let nca_offset = (prog_nca.as_ptr() as usize - archive.as_ptr() as usize) as u64;
+        match header.open_romfs_storage(std::rc::Rc::clone(&shared), nca_offset, keys) {
+            Ok(storage) => {
+                // Small RomFS images also get the parsed filesystem view.
+                if storage.size() <= 128 * 1024 * 1024 {
+                    if let Ok(romfs) = header.open_romfs(prog_nca, keys) {
+                        service_manager.set_romfs(romfs);
+                    }
+                }
+                service_manager.set_data_storage(std::rc::Rc::new(storage));
+            }
+            Err(emulator_loader::LoadError::Invalid(
+                "NCA3 archive does not contain a RomFS section",
+            )) => {}
+            Err(error) => return Err(SessionError::Load(error)),
         }
         let exefs = header.open_exefs(prog_nca, keys).map_err(SessionError::Load)?;
         Self::from_exefs_with_services(&exefs, service_manager)

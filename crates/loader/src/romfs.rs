@@ -34,7 +34,8 @@ pub struct RomFsArchive {
     /// Maps normalized absolute path (e.g. "romfs:/data/model.bin" or "data/model.bin") to file offset and size
     files: HashMap<String, (u64, u64)>,
     /// Raw payload backing
-    data_bytes: Vec<u8>,
+    /// Shared so cloning an archive (one per service session) is O(1).
+    data_bytes: std::rc::Rc<[u8]>,
     file_data_offset: u64,
 }
 
@@ -153,7 +154,7 @@ impl RomFsArchive {
 
         Ok(Self {
             files,
-            data_bytes: image.to_vec(),
+            data_bytes: std::rc::Rc::from(image),
             file_data_offset,
         })
     }
@@ -177,12 +178,12 @@ impl RomFsArchive {
             }
 
             // Find data level (Level 5 or highest active level)
-            // Levels start at offset 0x0C, 24 bytes each (0x18)
+            // Level table starts at 0x10 (after magic, version, master hash size, layer count), 0x18 each
             let mut data_level_offset = 0u64;
             let mut data_level_size = 0u64;
 
             for level_idx in (0..6).rev() {
-                let off = 0x0C + level_idx * 0x18;
+                let off = 0x10 + level_idx * 0x18;
                 let lvl_offset = u64::from_le_bytes(fs_header.hash_data[off..off + 8].try_into().unwrap());
                 let lvl_size = u64::from_le_bytes(fs_header.hash_data[off + 8..off + 16].try_into().unwrap());
                 if lvl_size > 0 {
@@ -202,6 +203,11 @@ impl RomFsArchive {
             // Standalone RomFS directly at payload offset 0
             Self::parse(payload)
         }
+    }
+
+    /// The raw RomFS image, as exposed through IStorage (data storage).
+    pub fn image(&self) -> &[u8] {
+        &self.data_bytes
     }
 
     /// Normalizes path for lookup (strips leading slashes, "romfs:/", etc.)
