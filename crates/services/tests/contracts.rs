@@ -528,26 +528,42 @@ fn audio_device_reports_stereo_unit_volume_and_rejects_out_of_range_volume() {
 }
 
 #[test]
-fn shared_font_service_never_claims_fonts_are_loaded() {
+fn shared_font_service_serves_the_bundled_system_font() {
     use emulator_kernel::service::Service;
-    use emulator_services::plu::{SharedFontService, FONT_LOAD_STATE_LOADING, SHARED_FONT_REGION_SIZE};
+    use emulator_services::plu::{
+        decode_font, encode_font, SharedFontService, FONT_LOAD_STATE_LOADED, SHARED_FONT_REGION_SIZE, SYSTEM_FONT,
+    };
     let mut pl = SharedFontService::default();
     let word = |r: emulator_kernel::service::ServiceReply| u32::from_le_bytes(r.data[..4].try_into().unwrap());
     assert_eq!(pl.dispatch(&request(0, &[0, 0, 0, 0], None)).unwrap().result, 0, "RequestLoad accepted");
-    assert_eq!(word(pl.dispatch(&request(1, &[0, 0, 0, 0], None)).unwrap()), FONT_LOAD_STATE_LOADING);
-    assert_eq!(word(pl.dispatch(&request(2, &[6, 0, 0, 0], None)).unwrap()), 0, "no size");
-    assert_eq!(word(pl.dispatch(&request(3, &[6, 0, 0, 0], None)).unwrap()), 0, "no offset");
+    assert_eq!(word(pl.dispatch(&request(1, &[0, 0, 0, 0], None)).unwrap()), FONT_LOAD_STATE_LOADED);
+    let size = word(pl.dispatch(&request(2, &[6, 0, 0, 0], None)).unwrap());
+    let offset = word(pl.dispatch(&request(3, &[6, 0, 0, 0], None)).unwrap());
+    assert_eq!(size as usize, SYSTEM_FONT.len());
+    assert_eq!(offset, 8, "data follows the 8-byte header");
     // Font type 7 does not exist; missing payload is a protocol error.
     assert_ne!(pl.dispatch(&request(1, &[7, 0, 0, 0], None)).unwrap().result, 0);
+    assert_ne!(pl.dispatch(&request(2, &[7, 0, 0, 0], None)).unwrap().result, 0);
     assert_ne!(pl.dispatch(&request(0, &[7, 0, 0, 0], None)).unwrap().result, 0);
     assert!(pl.dispatch(&request(1, &[], None)).is_err());
     let shm = pl.dispatch(&request(4, &[], None)).unwrap().moved_objects.remove(0);
     match shm.as_handle() {
         Some(emulator_kernel::Object::SharedMemory(m)) => {
-            assert_eq!(m.borrow().len(), SHARED_FONT_REGION_SIZE);
-            assert!(m.borrow().iter().all(|&b| b == 0), "no fabricated font data");
+            let region = m.borrow();
+            assert_eq!(region.len(), SHARED_FONT_REGION_SIZE);
+            assert_eq!(&region[0..4], &(0x1802_9a7f_u32 ^ emulator_services::plu::FONT_KEY).to_be_bytes());
+            assert_ne!(&region[8..12], &SYSTEM_FONT[..4], "font data is obfuscated in the region");
+            assert_eq!(decode_font(&region, offset as usize).unwrap(), SYSTEM_FONT);
         }
         other => panic!("expected shared memory, got {other:?}"),
     }
     assert!(pl.dispatch(&request(99, &[], None)).is_err());
+    // Encoder rejects fonts that do not fit or misaligned offsets; round trip
+    // works for any key, including an unaligned font length.
+    let mut small = vec![0u8; 32];
+    assert!(encode_font(&mut small, 0, &[0; 25], 1).is_none());
+    assert!(encode_font(&mut small, 2, &[0; 4], 1).is_none());
+    let at = encode_font(&mut small, 4, b"abcdefghij", 0xdead_beef).unwrap();
+    assert_eq!(decode_font(&small, at).unwrap(), b"abcdefghij");
+    assert!(SharedFontService::with_font(&vec![0; SHARED_FONT_REGION_SIZE]).is_none());
 }
