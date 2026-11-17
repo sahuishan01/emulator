@@ -1,14 +1,13 @@
 //! `ITimeZoneService`: own fixed-offset zone data, calendar math and the
 //! A/B/C buffer layouts of the rule and conversion commands.
-use emulator_a64::Cpu;
-use emulator_kernel::{Kernel, SVC_CONNECT_TO_NAMED_PORT, SVC_SEND_SYNC_REQUEST};
-use emulator_memory::{AddressSpace, Permissions};
+mod common;
+use common::Rig;
+use emulator_memory::Permissions;
 use emulator_services::timezone::{
     decode_rule, encode_rule, find_zone, to_calendar, to_posix, zone_names, TimeZoneService,
     RESULT_TIME_ZONE_CONVERSION_FAILED, RESULT_TIME_ZONE_NOT_FOUND, TIME_ZONE_RULE_SIZE,
 };
 
-const TLS: u64 = 0x2000;
 const RULE: u64 = 0x10000;
 const LIST: u64 = 0x20000;
 const POSIX_OUT: u64 = 0x21000;
@@ -58,71 +57,6 @@ fn fixed_zones_and_calendar_math() {
     assert!(decode_rule(&[0u8; TIME_ZONE_RULE_SIZE]).is_none());
 }
 
-struct Rig {
-    k: Kernel,
-    c: Cpu,
-    m: AddressSpace,
-    session: u32,
-}
-
-impl Rig {
-    fn new() -> Self {
-        let mut k = Kernel::default();
-        let mut c = Cpu::new(0, 0);
-        let mut m = AddressSpace::default();
-        m.map(0x1000, b"tz\0".to_vec(), Permissions::READ).unwrap();
-        m.map(TLS, vec![0; 256], Permissions::READ_WRITE).unwrap();
-        m.map(RULE, vec![0xcc; TIME_ZONE_RULE_SIZE], Permissions::READ_WRITE).unwrap();
-        m.map(LIST, vec![0; 0x2000], Permissions::READ_WRITE).unwrap();
-        k.register_named_port("tz", Box::new(TimeZoneService)).unwrap();
-        c.tpidrro_el0 = TLS;
-        c.x[1] = 0x1000;
-        k.dispatch(SVC_CONNECT_TO_NAMED_PORT, &mut c, &mut m).unwrap();
-        let session = c.x[1] as u32;
-        Self { k, c, m, session }
-    }
-
-    /// CMIF request: `a` send / `b` receive alias buffers, optional C buffer.
-    fn call(&mut self, command: u32, a: &[(u64, u64)], b: &[(u64, u64)], c: Option<(u64, u64)>, data: &[u8]) {
-        let mut p = [0u8; 256];
-        let word0 = 4 | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
-        let raw_words = 8 + data.len().div_ceil(4) as u32;
-        let word1 = raw_words | if c.is_some() { 2 << 10 } else { 0 };
-        p[..4].copy_from_slice(&word0.to_le_bytes());
-        p[4..8].copy_from_slice(&word1.to_le_bytes());
-        let mut at = 8;
-        for &(address, size) in a.iter().chain(b) {
-            for (i, v) in [size as u32, address as u32, 0].into_iter().enumerate() {
-                p[at + i * 4..at + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
-            }
-            at += 12;
-        }
-        let raw_start = at;
-        let header = (at + 15) & !15;
-        p[header..header + 4].copy_from_slice(b"SFCI");
-        p[header + 8..header + 12].copy_from_slice(&command.to_le_bytes());
-        p[header + 16..header + 16 + data.len()].copy_from_slice(data);
-        if let Some((address, size)) = c {
-            let list = raw_start + raw_words as usize * 4;
-            p[list..list + 4].copy_from_slice(&(address as u32).to_le_bytes());
-            let fields = ((address >> 32) as u32 & 0xffff) | ((size as u32) << 16);
-            p[list + 4..list + 8].copy_from_slice(&fields.to_le_bytes());
-        }
-        self.m.write(TLS, &p).unwrap();
-        self.c.x[0] = u64::from(self.session);
-        self.k.dispatch(SVC_SEND_SYNC_REQUEST, &mut self.c, &mut self.m).unwrap();
-    }
-
-    fn result(&self) -> u32 {
-        self.m.read_u32(TLS + 0x18).unwrap()
-    }
-    fn out(&self, length: usize) -> Vec<u8> {
-        let mut bytes = vec![0u8; length];
-        self.m.read(TLS + 0x20, &mut bytes).unwrap();
-        bytes
-    }
-}
-
 fn name(text: &str) -> Vec<u8> {
     let mut bytes = vec![0u8; 0x24];
     bytes[..text.len()].copy_from_slice(text.as_bytes());
@@ -131,7 +65,9 @@ fn name(text: &str) -> Vec<u8> {
 
 #[test]
 fn rules_and_conversions_over_ipc() {
-    let mut rig = Rig::new();
+    let mut rig = Rig::new("tz", Box::new(TimeZoneService));
+    rig.m.map(RULE, vec![0xcc; TIME_ZONE_RULE_SIZE], Permissions::READ_WRITE).unwrap();
+    rig.m.map(LIST, vec![0; 0x2000], Permissions::READ_WRITE).unwrap();
     rig.call(0, &[], &[], None, &[]);
     assert_eq!((rig.result(), &rig.out(4)[..]), (0, &b"UTC\0"[..]));
     rig.call(2, &[], &[], None, &[]);

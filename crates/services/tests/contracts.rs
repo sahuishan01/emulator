@@ -196,11 +196,24 @@ fn test_vi_and_applet_services() {
         .remove(0);
     let user_count_reply = acc.dispatch(&request(0, &[], None)).unwrap();
     assert_eq!(i32::from_le_bytes(user_count_reply.data.try_into().unwrap()), 1);
-    let mut open_user_reply = acc.dispatch(&request(3, &[1, 0, 0, 0], None)).unwrap();
+    let user = emulator_services::acc::DEFAULT_USER_ID;
+    assert_eq!(acc.dispatch(&request(1, &user, None)).unwrap().data, [1]);
+    assert_eq!(acc.dispatch(&request(1, &[0; 16], None)).unwrap().data, [0]);
+    assert_eq!(acc.dispatch(&request(4, &[], None)).unwrap().data, user);
+    assert_eq!(acc.dispatch(&request(51, &[0; 8], None)).unwrap().data, user);
+    assert_eq!(acc.dispatch(&request(160, &[0; 8], None)).unwrap().result, 0, "InitializeApplicationInfoV2");
+    assert_eq!(
+        acc.dispatch(&request(5, &[9; 16], None)).unwrap().result,
+        emulator_services::acc::RESULT_ACCOUNT_USER_NOT_FOUND
+    );
+    let mut open_user_reply = acc.dispatch(&request(5, &user, None)).unwrap();
     assert_eq!(open_user_reply.moved_objects.len(), 1);
     let mut profile = open_user_reply.moved_objects.remove(0);
-    let profile_base = profile.dispatch(&request(0, &[], None)).unwrap();
+    let profile_base = profile.dispatch(&request(1, &[], None)).unwrap();
+    assert_eq!(&profile_base.data[..16], &user);
     assert_eq!(&profile_base.data[0x18..0x18 + 6], b"Player");
+    assert!(profile.dispatch(&request(10, &[], None)).is_err(), "no profile image yet");
+    assert!(acc.dispatch(&request(101, &user, None)).is_err(), "no network service account");
 
     // Performance Management Service (apm)
     let mut apm = sm
