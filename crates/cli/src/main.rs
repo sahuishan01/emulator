@@ -523,11 +523,13 @@ fn print_run_report(
         session.state()
     );
     println!(
-        "svc_count={} last_svc={:#x} last_svc_pc={:#x} ipc_count={} live_handles={}",
+        "svc_count={} last_svc={:#x} last_svc_pc={:#x} ipc_count={} last_ipc={} cmd {} live_handles={}",
         kernel.svc_count(),
         kernel.last_svc_id(),
         kernel.last_svc_pc(),
         kernel.ipc_count(),
+        kernel.last_ipc_service(),
+        kernel.last_ipc_cmd(),
         kernel.live_handle_count()
     );
     println!("threads (saved context; current = live registers below):");

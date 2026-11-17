@@ -226,8 +226,9 @@ fn test_vi_and_applet_services() {
         .unwrap()
         .moved_objects
         .remove(0);
-    let list_outs = audout.dispatch(&request(0, &[], None)).unwrap();
-    assert_eq!(&list_outs.data[..9], b"Headphone");
+    // Name commands need IPC buffers (covered in tests/audout.rs); a bare
+    // dispatch has none and must not fabricate a reply.
+    assert!(audout.dispatch(&request(0, &[], None)).is_err());
 
     // Verify port aliases
     assert!(sm.dispatch(&request(1, b"vi:u\0\0\0\0", None)).is_ok());

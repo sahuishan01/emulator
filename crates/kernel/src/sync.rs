@@ -21,6 +21,23 @@ pub struct FutexArbitrator {
     address_queues: BTreeMap<u64, VecDeque<Waiter>>,
 }
 
+/// A waiter is live while the scheduler still holds its clone of the signal
+/// and it has not been signalled. Timed-out or cancelled waits drop that
+/// clone; leaving them queued would hand a mutex to a thread that is no
+/// longer waiting for it.
+fn live(w: &Waiter) -> bool {
+    Rc::strong_count(&w.signal) > 1 && !w.signal.get()
+}
+
+fn prune(queues: &mut BTreeMap<u64, VecDeque<Waiter>>, addr: u64) {
+    if let Some(queue) = queues.get_mut(&addr) {
+        queue.retain(live);
+        if queue.is_empty() {
+            queues.remove(&addr);
+        }
+    }
+}
+
 impl FutexArbitrator {
     pub fn wait_condition(
         &mut self,
@@ -47,6 +64,7 @@ impl FutexArbitrator {
     }
 
     pub fn signal_condition(&mut self, key_addr: u64, count: i32) -> Vec<Waiter> {
+        prune(&mut self.condvar_queues, key_addr);
         let mut woken = Vec::new();
         if let Some(queue) = self.condvar_queues.get_mut(&key_addr) {
             let to_wake = if count <= 0 {
@@ -97,6 +115,7 @@ impl FutexArbitrator {
     }
 
     pub fn unlock_mutex(&mut self, mutex_addr: u64) -> Option<Waiter> {
+        prune(&mut self.mutex_queues, mutex_addr);
         if let Some(queue) = self.mutex_queues.get_mut(&mutex_addr) {
             let waiter = queue.pop_front();
             if let Some(ref w) = waiter {
@@ -111,13 +130,15 @@ impl FutexArbitrator {
         }
     }
 
-    pub fn has_mutex_waiters(&self, mutex_addr: u64) -> bool {
+    pub fn has_mutex_waiters(&mut self, mutex_addr: u64) -> bool {
+        prune(&mut self.mutex_queues, mutex_addr);
         self.mutex_queues
             .get(&mutex_addr)
             .is_some_and(|q| !q.is_empty())
     }
 
-    pub fn condvar_waiter_count(&self, key_addr: u64) -> usize {
+    pub fn condvar_waiter_count(&mut self, key_addr: u64) -> usize {
+        prune(&mut self.condvar_queues, key_addr);
         self.condvar_queues
             .get(&key_addr)
             .map_or(0, |q| q.len())
@@ -141,12 +162,7 @@ impl FutexArbitrator {
     /// Drops waiters whose wait already ended (timeout or cancellation): the
     /// scheduler released its clone of the signal, so only ours remains.
     fn prune_address(&mut self, addr: u64) {
-        if let Some(queue) = self.address_queues.get_mut(&addr) {
-            queue.retain(|w| Rc::strong_count(&w.signal) > 1 && !w.signal.get());
-            if queue.is_empty() {
-                self.address_queues.remove(&addr);
-            }
-        }
+        prune(&mut self.address_queues, addr);
     }
 
     /// Number of threads still blocked on `addr`.

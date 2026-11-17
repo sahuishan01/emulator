@@ -391,6 +391,18 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     assert_eq!(cpu.x[1], 7);
     assert_eq!(memory.read_u64(0x1000).unwrap(), 7);
 
+    // GetInfo (UserExceptionContextAddress): a real, non-null slot that does
+    // not overlap the main thread's TLS at page offset 0x200.
+    cpu.x[0] = 0x1000;
+    cpu.x[1] = 20;
+    cpu.x[2] = 0xffff_8001;
+    cpu.x[3] = 0;
+    kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap();
+    assert_eq!(cpu.x[0], 0);
+    assert_eq!(cpu.x[1], emulator_kernel::USER_EXCEPTION_CONTEXT);
+    assert_ne!(cpu.x[1], 0);
+    assert!(cpu.x[1] + 0x200 <= emulator_kernel::THREAD_TLS_ARENA + 0x200);
+
     // GetInfo (AslrRegionAddress & AslrRegionSize)
     kernel.set_aslr_region(0x10_0000, 0x7f_ff00_0000);
     cpu.x[0] = 0x1000;
@@ -664,4 +676,30 @@ fn map_memory_aliases_hides_the_source_and_unmap_requires_the_exact_pair() {
         call(&mut kernel, &mut memory, SVC_UNMAP_MEMORY, 0x40000, 0x10000, 0x2000),
         RESULT_INVALID_CURRENT_MEMORY
     );
+}
+
+#[test]
+fn timed_out_condvar_and_mutex_waiters_are_not_handed_ownership() {
+    use emulator_kernel::FutexArbitrator;
+    let mut sync = FutexArbitrator::default();
+    // Thread 3 waits on a condvar, then its wait ends by timeout: the
+    // scheduler drops its clone of the signal.
+    let (stale, _) = sync.wait_condition(3, 0x14e, 0x4010, 0x4000);
+    let (live, _) = sync.wait_condition(4, 0x150, 0x4010, 0x4000);
+    drop(stale);
+    assert_eq!(sync.condvar_waiter_count(0x4010), 1);
+    let woken = sync.signal_condition(0x4010, 1);
+    assert_eq!(woken.len(), 1);
+    assert_eq!(woken[0].tag, 0x150, "the live waiter, not the timed-out one");
+    drop(woken);
+    drop(live);
+
+    // Same for a mutex waiter whose wait was cancelled.
+    let (cancelled, _) = sync.lock_mutex(5, 0x160, 0x5000);
+    let (_waiting, _) = sync.lock_mutex(6, 0x170, 0x5000);
+    drop(cancelled);
+    let next = sync.unlock_mutex(0x5000).expect("live waiter");
+    assert_eq!(next.tag, 0x170);
+    assert!(!sync.has_mutex_waiters(0x5000));
+    assert!(sync.unlock_mutex(0x5000).is_none());
 }

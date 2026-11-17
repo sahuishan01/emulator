@@ -31,6 +31,9 @@ pub const SVC_EXIT_PROCESS: u16 = 0x07;
 pub const SVC_CREATE_THREAD: u16 = 0x08;
 pub const SVC_START_THREAD: u16 = 0x09;
 pub const SVC_EXIT_THREAD: u16 = 0x0a;
+/// Process user-exception context slot (svcGetInfo 20): first 0x200 bytes of
+/// the main thread's TLS page.
+pub const USER_EXCEPTION_CONTEXT: u64 = THREAD_TLS_ARENA;
 pub const SVC_SLEEP_THREAD: u16 = 0x0b;
 // Horizon numbering: 0x0C reads the priority, 0x0D writes it.
 pub const SVC_GET_THREAD_PRIORITY: u16 = 0x0c;
@@ -307,6 +310,7 @@ pub struct Kernel {
     last_svc_pc: u64,
     ipc_count: u64,
     last_ipc_cmd: u32,
+    last_ipc_service: &'static str,
 }
 
 impl Default for Kernel {
@@ -340,6 +344,7 @@ impl Default for Kernel {
             last_svc_pc: 0,
             ipc_count: 0,
             last_ipc_cmd: 0,
+            last_ipc_service: "",
         }
     }
 }
@@ -621,6 +626,10 @@ impl Kernel {
     pub fn last_ipc_cmd(&self) -> u32 {
         self.last_ipc_cmd
     }
+    /// Service (or domain object) that received the most recent request.
+    pub fn last_ipc_service(&self) -> &'static str {
+        self.last_ipc_service
+    }
 
     pub fn register_named_port(
         &mut self,
@@ -722,6 +731,7 @@ impl Kernel {
                 .map_err(|_| KernelError::IpcTraceLimit)?;
         }
         trace.service = service.borrow().name();
+        self.last_ipc_service = trace.service;
         let mut input = [0; IPC_BUFFER_SIZE];
         memory
             .read(cpu.tpidrro_el0, &mut input)
@@ -1822,7 +1832,11 @@ impl Kernel {
                     17 => self.physical_mapped.min(self.system_resource_size), // InfoType_SystemResourceSizeUsed
                     18 => self.program_id, // InfoType_ProgramId
                     19 => 0, // InfoType_InitialProcessIdRange
-                    20 => 0, // InfoType_UserExceptionContextAddress
+                    // InfoType_UserExceptionContextAddress: Horizon reserves a
+                    // 0x200-byte TLS slot per process. Thread TLS starts at page
+                    // offset 0x200, so the main thread page's first slot is free
+                    // and always mapped; returning 0 made guests write to null.
+                    20 => USER_EXCEPTION_CONTEXT,
                     21 => APPLICATION_POOL_SIZE, // InfoType_TotalNonSystemMemorySize
                     22 => memory.mapped_bytes() as u64, // InfoType_UsedNonSystemMemorySize
                     23 => 1, // InfoType_IsApplication (true)
