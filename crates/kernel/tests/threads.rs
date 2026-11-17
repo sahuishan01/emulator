@@ -116,17 +116,27 @@ fn equal_priority_threads_preempt_after_quantum_and_yield_without_host_sleeps() 
         k.prepare_execution(&mut c);
     }
     assert_eq!(k.current_thread_id(), 0);
-    k.instruction_completed().unwrap();
-    k.prepare_execution(&mut c);
-    assert_eq!(k.current_thread_id(), 1);
+    // Quanta rotate over the three simulated cores; main (any-core mask) may
+    // keep running on an idle core, but the child must run within one round.
+    let mut child_ran = false;
+    for _ in 0..THREAD_QUANTUM * 3 {
+        k.instruction_completed().unwrap();
+        k.prepare_execution(&mut c);
+        if k.current_thread_id() == 1 {
+            child_ran = true;
+            break;
+        }
+    }
+    assert!(child_ran);
     call(&mut k, &mut c, &mut m, SVC_SLEEP_THREAD, 0);
     k.prepare_execution(&mut c);
     assert_eq!(k.current_thread_id(), 0);
     let before = k.scheduler_stats();
-    c.x[0] = u64::MAX;
+    // -1 / -2 are the migrating yield variants; anything below is rejected.
+    c.x[0] = (-3i64) as u64;
     assert!(matches!(
         k.dispatch(SVC_SLEEP_THREAD, &mut c, &mut m),
-        Err(KernelError::Scheduler(SchedulerError::UnsupportedSleep(-1)))
+        Err(KernelError::Scheduler(SchedulerError::UnsupportedSleep(-3)))
     ));
     assert_eq!(k.scheduler_stats(), before);
 }
@@ -393,4 +403,57 @@ fn address_arbiter_blocks_until_signalled_and_forgets_timed_out_waiters() {
     k.prepare_execution(&mut c);
     assert_eq!(k.current_thread_id(), 0);
     assert_eq!(c.x[0], RESULT_TIMEOUT);
+}
+
+#[test]
+fn busy_thread_on_one_core_does_not_starve_thread_pinned_to_another_core() {
+    let (mut k, mut c, mut m) = setup();
+    // Higher-priority thread pinned to core 1 while main (ideal core 0) spins.
+    c.x[1] = 0x1000;
+    c.x[2] = 7;
+    c.x[3] = 0x5000;
+    c.x[4] = 28;
+    c.x[5] = 1;
+    k.dispatch(SVC_CREATE_THREAD, &mut c, &mut m).unwrap();
+    assert_eq!(c.x[0], 0);
+    let pinned = c.x[1];
+    call(&mut k, &mut c, &mut m, SVC_START_THREAD, pinned);
+    let mut ran = false;
+    for _ in 0..THREAD_QUANTUM * 4 {
+        k.instruction_completed().unwrap();
+        k.prepare_execution(&mut c);
+        if k.current_thread_id() == 1 {
+            ran = true;
+            break;
+        }
+    }
+    assert!(ran, "thread pinned to core 1 never ran while core 0 was busy");
+}
+
+#[test]
+fn lower_priority_any_core_thread_runs_on_a_free_simulated_core() {
+    let (mut k, mut c, mut m) = setup();
+    // Two any-core threads; main (core 0) then blocks forever, leaving cores
+    // for both. The lower-priority one must still be scheduled.
+    let mut spawn = |k: &mut Kernel, c: &mut Cpu, m: &mut AddressSpace, prio: u64| {
+        c.x[1] = 0x1000;
+        c.x[2] = prio;
+        c.x[3] = 0x5000;
+        c.x[4] = prio;
+        c.x[5] = (-2i64) as u64;
+        k.dispatch(SVC_CREATE_THREAD, c, m).unwrap();
+        assert_eq!(c.x[0], 0);
+        let h = c.x[1];
+        call(k, c, m, SVC_START_THREAD, h);
+    };
+    spawn(&mut k, &mut c, &mut m, 44);
+    spawn(&mut k, &mut c, &mut m, 46);
+    call(&mut k, &mut c, &mut m, SVC_SLEEP_THREAD, i64::MAX as u64);
+    let mut seen = [false; 3];
+    for _ in 0..THREAD_QUANTUM * 6 {
+        k.prepare_execution(&mut c);
+        seen[k.current_thread_id()] = true;
+        k.instruction_completed().unwrap();
+    }
+    assert!(seen[1] && seen[2], "seen={seen:?}");
 }

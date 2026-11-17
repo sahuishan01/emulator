@@ -60,6 +60,8 @@ pub struct ThreadSummary {
     pub id: usize,
     pub state: String,
     pub priority: u8,
+    pub ideal_core: i32,
+    pub core_mask: u64,
     pub pc: u64,
     pub lr: u64,
     pub fp: u64,
@@ -215,6 +217,11 @@ impl Scheduler {
     pub fn sleep(&mut self, ns: i64) -> Result<(), SchedulerError> {
         if ns == 0 {
             self.yield_requested = true;
+        } else if ns == -1 || ns == -2 {
+            // Yield with core migration / to any thread: also give up this
+            // core's slice so other simulated cores get to run.
+            self.yield_requested = true;
+            self.quantum_used = THREAD_QUANTUM;
         } else if ns > 0 {
             self.threads[self.current].state = State::Sleeping {
                 deadline: self.deadline(ns as u64)?,
@@ -266,6 +273,8 @@ impl Scheduler {
                     State::Exited => "exited".into(),
                 },
                 priority: t.priority,
+                ideal_core: t.ideal_core,
+                core_mask: t.core_mask,
                 pc: t.cpu.pc,
                 lr: t.cpu.x[30],
                 fp: t.cpu.x[29],
@@ -335,51 +344,69 @@ impl Scheduler {
         }
     }
     fn best(&mut self) -> Option<usize> {
-        // Multi-core simulation: select thread for active core, rotating across Cores 0, 1, 2
-        for offset in 0..3 {
-            let core = (self.active_core + offset) % 3;
-            let ideal_candidate = self
+        // Multi-core simulation: assign each of cores 0..2 a distinct runnable
+        // thread (its own ideal-core queue first, then a migrated thread that
+        // no other core holds), and run the active core's assignment. Quantum
+        // expiry rotates the active core, so concurrently runnable threads all
+        // progress as they would on hardware.
+        let runnable = |t: &Thread| matches!(t.state, State::Runnable);
+        let mut assigned: [Option<usize>; 3] = [None; 3];
+        for (core, slot) in assigned.iter_mut().enumerate() {
+            *slot = self
                 .threads
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| matches!(t.state, State::Runnable))
+                .filter(|(_, t)| runnable(t))
                 .filter(|(_, t)| t.ideal_core == core as i32 && (t.core_mask & (1 << core)) != 0)
                 .min_by_key(|(_, t)| (t.priority, t.ready_order))
                 .map(|(id, _)| id);
-            if let Some(id) = ideal_candidate {
-                self.active_core = core;
-                return Some(id);
+        }
+        for core in 0..3 {
+            if assigned[core].is_some() {
+                continue;
             }
-            let eligible_candidate = self
+            assigned[core] = self
                 .threads
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| matches!(t.state, State::Runnable))
+                .filter(|(id, t)| runnable(t) && !assigned.contains(&Some(*id)))
                 .filter(|(_, t)| (t.core_mask & (1 << core)) != 0)
                 .min_by_key(|(_, t)| (t.priority, t.ready_order))
                 .map(|(id, _)| id);
-            if let Some(id) = eligible_candidate {
+        }
+        for offset in 0..3 {
+            let core = (self.active_core + offset) % 3;
+            if let Some(id) = assigned[core as usize] {
                 self.active_core = core;
                 return Some(id);
             }
         }
+        // Threads whose mask names no simulated core.
         self.threads
             .iter()
             .enumerate()
-            .filter(|(_, t)| matches!(t.state, State::Runnable))
+            .filter(|(_, t)| runnable(t))
             .min_by_key(|(_, t)| (t.priority, t.ready_order))
             .map(|(id, _)| id)
     }
     pub fn prepare(&mut self, cpu: &mut Cpu) -> ScheduleOutcome {
         self.threads[self.current].cpu = cpu.clone();
         self.wake();
-        if self.yield_requested || self.quantum_used >= THREAD_QUANTUM {
+        let quantum_expired = self.quantum_used >= THREAD_QUANTUM;
+        if self.yield_requested || quantum_expired {
             if matches!(self.threads[self.current].state, State::Runnable) {
                 let order = self.next_order();
                 self.threads[self.current].ready_order = order;
             }
             self.quantum_used = 0;
             self.yield_requested = false;
+            // Time-slice the simulated cores: each of the three cores gets a
+            // quantum in turn (a yield stays on its core). Without this, a busy thread whose ideal core is
+            // the active core starves every thread pinned to the other cores,
+            // which on hardware would run concurrently.
+            if quantum_expired {
+                self.active_core = (self.active_core + 1) % 3;
+            }
         }
         let mut best = self.best();
         if best.is_none() {

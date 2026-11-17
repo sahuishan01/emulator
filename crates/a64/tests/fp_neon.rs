@@ -300,3 +300,46 @@ fn test_simd_fp_single_pre_post_index_and_register_offset() {
     assert_eq!(cpu.read_v_u32(5), 0x1234_5678);
     assert_eq!(cpu.read_v_u128(6), (u128::from(0x5555_6666_7777_8888u64) << 64) | u128::from(0x1111_2222_3333_4444u64));
 }
+
+fn lanes32(v: &[u32; 4]) -> u128 {
+    v.iter().enumerate().fold(0u128, |acc, (i, &x)| acc | (u128::from(x) << (32 * i)))
+}
+
+#[test]
+fn reciprocal_and_rsqrt_estimates_match_arm_tables() {
+    let code = [
+        0x4ea1_d804, // FRECPE v4.4s, v0.4s
+        0x6ea1_d825, // FRSQRTE v5.4s, v1.4s
+        0x4ee1_d862, // FRECPE v2.2d, v3.2d
+        0x4ea1_d8c7, // FRECPE v7.4s, v6.4s
+        0x4e27_fcc8, // FRECPS v8.4s, v6.4s, v7.4s (Newton step)
+        0xd400_00e1, // SVC #7
+    ];
+    let (mut cpu, mut memory) = setup_cpu_with_code(&code);
+    let one = 1.0f32.to_bits();
+    cpu.write_v_u128(0, lanes32(&[one, 2.0f32.to_bits(), 0, f32::NEG_INFINITY.to_bits()]));
+    cpu.write_v_u128(1, lanes32(&[one, 4.0f32.to_bits(), (-1.0f32).to_bits(), f32::INFINITY.to_bits()]));
+    cpu.write_v_u128(3, u128::from(1.0f64.to_bits()) | u128::from(0.5f64.to_bits()) << 64);
+    cpu.write_v_u128(6, lanes32(&[3.0f32.to_bits(), 7.0f32.to_bits(), 1.0e-3f32.to_bits(), (-5.0f32).to_bits()]));
+    loop {
+        if let StepEvent::SupervisorCall { immediate } = cpu.step(&mut memory).unwrap() {
+            assert_eq!(immediate, 7);
+            break;
+        }
+    }
+    assert_eq!(
+        cpu.read_v_u128(4),
+        lanes32(&[0x3f7f_8000, 0x3eff_8000, 0x7f80_0000, 0x8000_0000])
+    );
+    assert_eq!(cpu.read_v_u128(5), lanes32(&[0x3f7f_8000, 0x3eff_8000, 0x7fc0_0000, 0]));
+    assert_eq!(
+        cpu.read_v_u128(2),
+        u128::from(0x3fef_f000_0000_0000u64) | u128::from(0x3fff_f000_0000_0000u64) << 64
+    );
+    // Estimates are accurate to 8 bits.
+    let v7 = cpu.read_v_u128(7);
+    for (i, x) in [3.0f32, 7.0, 1.0e-3, -5.0].iter().enumerate() {
+        let e = f32::from_bits((v7 >> (32 * i)) as u32);
+        assert!(((e * x) - 1.0).abs() < 1.0 / 256.0, "lane {i}: {e}");
+    }
+}

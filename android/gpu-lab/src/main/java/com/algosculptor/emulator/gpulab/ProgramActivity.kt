@@ -535,6 +535,10 @@ class ProgramActivity : Activity() {
 
         AppLog.i("ProgramActivity", "Starting program session: title='$title', mode=$mode, file=${file.absolutePath}")
 
+        if (worker.isShutdown || isFinishing || isDestroyed) {
+            AppLog.w("ProgramActivity", "Session start ignored: activity is finishing")
+            return
+        }
         worker.execute {
             if (isStopped.get()) return@execute
             var result = JSONObject()

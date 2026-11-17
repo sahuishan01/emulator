@@ -456,9 +456,9 @@ fn print_run_report(session: &Session, samples: &std::collections::BTreeMap<u64,
     for t in kernel.thread_summaries() {
         let [a0, a1, a2, a3] = t.args;
         println!(
-            "  {}{:<3} prio={:<2} pc={:#x} lr={:#x} fp={:#x} x0..3=({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x}) {}",
+            "  {}{:<3} prio={:<2} core={}/{:#x} pc={:#x} lr={:#x} fp={:#x} x0..3=({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x}) {}",
             if t.id == current { '*' } else { ' ' },
-            t.id, t.priority, t.pc, t.lr, t.fp, t.state
+            t.id, t.priority, t.ideal_core, t.core_mask, t.pc, t.lr, t.fp, t.state
         );
     }
     // Resolve WaitSynchronization handle lists of blocked threads.
