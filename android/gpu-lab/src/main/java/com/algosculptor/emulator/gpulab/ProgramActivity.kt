@@ -671,6 +671,9 @@ class ProgramActivity : Activity() {
                 if (isStopped.get()) result.put("state", "stopped")
                 val finalState = result.optString("state")
                 AppLog.i("ProgramActivity", "Session finished: state=$finalState, instructions=${result.optLong("instructions")}, error='${result.optString("error")}'")
+                if (finalState == "faulted" || finalState == "error") {
+                    runOnUiThread { AppLog.copyErrorExcerpt(this@ProgramActivity) }
+                }
                 store.recordResult(id, when (finalState) {
                     "exited" -> "Exited normally"
                     "stopped" -> "Session stopped"
@@ -680,6 +683,7 @@ class ProgramActivity : Activity() {
             } catch (e: Exception) {
                 AppLog.e("ProgramActivity", "Error executing program: ${e.message}", e)
                 result = JSONObject().put("state", "error").put("error", e.message ?: "Could not run this program.")
+                runOnUiThread { AppLog.copyErrorExcerpt(this@ProgramActivity) }
             } finally {
                 if (attachedSurface != null) {
                     try { NativePrograms.setSurface(null) } catch (_: Throwable) {}

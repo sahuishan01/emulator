@@ -31,7 +31,8 @@
 ## Active Status & Latest Releases
 
 - **Current Git HEAD**: `HEAD` on `main` (tracked at origin `sahuishan01/emulator`).
-- **Latest Release**: `v0.28.40-dev` (versionCode 80): multi-core scheduler fix (threads pinned to cores 1/2 and lower-priority any-core threads were starved by one busy thread; the Z-A job system never started), svcSleepThread -1/-2 yields, FRECPE/FRSQRTE, ProgramActivity session-start guard after shutdown. Awaiting device verification.
+- **Latest Release**: `v0.28.42-dev` (versionCode 82): auto-copies a compact error excerpt (last 120 log lines, <=48 KiB) to the clipboard when a session faults; log dialog gains "Copy error tail".
+- **v0.28.40-dev** (versionCode 80): multi-core scheduler fix (threads pinned to cores 1/2 and lower-priority any-core threads were starved by one busy thread; the Z-A job system never started), svcSleepThread -1/-2 yields, FRECPE/FRSQRTE, ProgramActivity session-start guard after shutdown. Awaiting device verification.
 - **v0.28.39-dev** (versionCode 79): device run 2026-11-17 confirmed boot on RMX5061 (~9 MIPS, 63 IPCs in 4.5 s, no fault). Ships the 2026-11-16/17 Z-A host-smoke work listed under Next Planned Steps item 0 (PRFM decode fix, real exclusive monitor, WaitForAddress/SignalToAddress, NPDM/physical-memory SVCs, A64 crypto ext, lazy RomFS storage, VI/binder parcel codec, nvdrv Ioctl2/3 + AS/nvmap fixes). Awaiting device verification.
 - **Previous Release**: `v0.28.38-dev` (versionCode 78).
   - **Horizon OS `svcQueryMemory` (SVC 0x06) Address Space End & Traversal Bug Fix**:

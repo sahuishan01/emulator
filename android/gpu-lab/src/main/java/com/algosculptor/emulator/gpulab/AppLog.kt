@@ -220,6 +220,46 @@ object AppLog {
         append("\n=== END OF REPORT ===\n")
     }
 
+    /** Compact error excerpt that fits Android's clipboard (Binder ~1 MB limit, many IMEs truncate far lower). */
+    fun buildErrorExcerpt(context: Context, maxLines: Int = 120, maxChars: Int = 48 * 1024): String {
+        val header = buildString {
+            append("=== EMULATOR ERROR EXCERPT ===\n")
+            append("Captured at: ${timeFormat.format(Date())}\n")
+            try {
+                val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pInfo.longVersionCode else @Suppress("DEPRECATION") pInfo.versionCode.toLong()
+                append("App Version: ${pInfo.versionName} (code $vCode)\n")
+            } catch (_: Exception) { }
+            append("Device: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n")
+        }
+        val lines = synchronized(ringBuffer) { ringBuffer.toList() }.takeLast(maxLines)
+        // Keep the newest lines (the fault) when trimming to the char budget.
+        val kept = ArrayDeque<String>()
+        var budget = maxChars - header.length - 64
+        for (line in lines.asReversed()) {
+            if (line.length + 1 > budget) break
+            budget -= line.length + 1
+            kept.addFirst(line)
+        }
+        return buildString {
+            append(header)
+            append("--- LAST ${kept.size} EVENT LOG LINES ---\n")
+            kept.forEach { append(it).append('\n') }
+            append("=== END OF EXCERPT ===\n")
+        }
+    }
+
+    fun copyErrorExcerpt(activity: Activity, toast: Boolean = true) {
+        try {
+            val text = buildErrorExcerpt(activity)
+            activity.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("Emulator error excerpt", text))
+            if (toast) Toast.makeText(activity, "Error excerpt copied (${text.length / 1024} KiB)", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            w("AppLog", "Could not copy error excerpt: ${e.message}")
+        }
+    }
+
     fun shareLogs(activity: Activity) {
         val report = buildDiagnosticLog(activity)
         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -287,7 +327,9 @@ object AppLog {
                 cm.setPrimaryClip(ClipData.newPlainText("Emulator logs", report))
                 Toast.makeText(activity, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("Close", null)
+            .setNegativeButton("Copy error tail") { _, _ ->
+                copyErrorExcerpt(activity)
+            }
             .show()
     }
 }
