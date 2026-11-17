@@ -442,6 +442,10 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 "  inst={} thread={} pc={:#x} lr={:#x} sp={:#x} {}",
                 r.instruction, r.thread, r.pc, r.lr, r.sp, regs.join(" ")
             );
+            if !r.frames.is_empty() {
+                let frames: Vec<String> = r.frames.iter().map(|ret| format!("{ret:#x}")).collect();
+                println!("    frames: {}", frames.join(" <- "));
+            }
         }
     }
     if watch.is_some() {
@@ -582,6 +586,19 @@ fn print_run_report(
                 record.sequence, record.id, record.pc
             ),
         }
+    }
+    println!("recent memory supervisor calls (oldest first):");
+    for entry in kernel.memory_svc_records() {
+        let record = entry.call;
+        let [a0, a1, a2, a3] = record.arguments;
+        let out = record.results.map_or_else(
+            || "REJECTED".to_string(),
+            |[r0, r1, r2]| format!("out=({r0:#x}, {r1:#x}, {r2:#x})"),
+        );
+        println!(
+            "  #{:<10} svc {:#04x} pc={:#x} in=({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x}) {out} mapped={:#x}",
+            record.sequence, record.id, record.pc, entry.mapped_after
+        );
     }
     println!("recent IPC messages (oldest first):");
     for record in kernel.ipc_trace() {

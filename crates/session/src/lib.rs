@@ -77,6 +77,8 @@ pub struct TraceRecord {
     pub lr: u64,
     pub sp: u64,
     pub x: [u64; 29],
+    /// Return addresses from the x29 frame-pointer chain (up to 12).
+    pub frames: Vec<u64>,
 }
 
 /// A watched write attributed to the instruction (or SVC) that caused it.
@@ -128,6 +130,8 @@ impl Session {
         program
             .load_into(&mut nso_program, &mut memory, LOAD_BASE)
             .map_err(SessionError::Load)?;
+        // Everything mapped so far is the loaded image (code, data, bss).
+        let image_bytes = memory.mapped_bytes() as u64;
 
         let main_module = nso_program
             .modules()
@@ -179,6 +183,7 @@ impl Session {
         cpu.x[1] = u64::from(emulator_kernel::MAIN_THREAD_HANDLE);
         let mut kernel = Kernel::default();
         kernel.set_aslr_region(LOAD_BASE, 0x7f_ff00_0000);
+        kernel.set_fixed_memory_charge(image_bytes + stack_size as u64);
         if let Some(meta) = &program.npdm {
             kernel.set_program_id(meta.title_id);
             kernel.set_system_resource_size(u64::from(meta.system_resource_size));
@@ -436,7 +441,20 @@ impl Session {
         }
         let mut x = [0u64; 29];
         x.copy_from_slice(&self.cpu.x[..29]);
+        let mut frames = Vec::new();
+        let mut fp = self.cpu.x[29];
+        while frames.len() < 12 && fp != 0 && fp % 16 == 0 {
+            let (Ok(next), Ok(ret)) = (self.memory.read_u64(fp), self.memory.read_u64(fp + 8)) else {
+                break;
+            };
+            frames.push(ret);
+            if next <= fp {
+                break;
+            }
+            fp = next;
+        }
         self.trace_log.push(TraceRecord {
+            frames,
             instruction: self.instructions,
             thread: self.kernel.current_thread_id(),
             pc,

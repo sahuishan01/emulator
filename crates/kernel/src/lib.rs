@@ -75,9 +75,15 @@ pub const MAX_TRANSFER_MEMORY_OBJECTS: usize = 32;
 pub const RESULT_INVALID_SIZE: u64 = 0xca01;
 /// The addressed range is not in the state the call requires.
 pub const RESULT_INVALID_CURRENT_MEMORY: u64 = 0xd401;
-pub const RESULT_OUT_OF_MEMORY: u64 = 0xcc01;
+/// Host backing for the guest could not be allocated (kernel OutOfMemory).
+pub const RESULT_OUT_OF_MEMORY: u64 = 0xd001;
 pub const RESULT_INVALID_HANDLE: u64 = 0xe401;
-pub const RESULT_INVALID_ADDRESS: u64 = 0xe601;
+/// Misaligned or out-of-region guest address argument.
+pub const RESULT_INVALID_ADDRESS: u64 = 0xcc01;
+/// A user buffer the kernel must read or write is not accessible.
+pub const RESULT_INVALID_POINTER: u64 = 0xe601;
+/// The process resource limit (physical memory) would be exceeded.
+pub const RESULT_LIMIT_REACHED: u64 = 0x10801;
 pub const RESULT_TIMEOUT: u64 = 0xea01;
 pub const RESULT_INTERRUPTED: u64 = 0xec01;
 pub const RESULT_TOO_MANY_HANDLES: u64 = 0xee01;
@@ -252,6 +258,22 @@ pub struct SvcRecord {
     pub results: Option<[u64; 3]>,
 }
 
+/// Memory-management supervisor calls kept for post-mortem accounting
+/// diagnostics (heap, physical, shared/transfer maps and memory GetInfo).
+pub const MEMORY_SVC_TRACE_CAPACITY: usize = 512;
+
+/// A memory-management supervisor call plus guest-mapped bytes afterwards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemorySvcRecord {
+    pub call: SvcRecord,
+    pub mapped_after: u64,
+}
+
+fn is_memory_svc(id: u16, info_type: u64) -> bool {
+    matches!(id, 0x01 | 0x04 | 0x05 | 0x13 | 0x14 | 0x15 | 0x2c | 0x2d | 0x51 | 0x52)
+        || (id == 0x29 && matches!(info_type, 6 | 7 | 16 | 17 | 21 | 22))
+}
+
 type SessionObject = Rc<std::cell::RefCell<Box<dyn Service>>>;
 
 /// Object table of one session converted with ConvertCurrentObjectToDomain.
@@ -303,9 +325,13 @@ pub struct Kernel {
     system_resource_size: u64,
     /// Bytes currently backed through svcMapPhysicalMemory.
     physical_mapped: u64,
+    /// Process image (code, data, bss) plus main thread stack, charged to
+    /// the resource limit at process creation.
+    fixed_charge: u64,
     sync: FutexArbitrator,
     svc_count: u64,
     svc_records: std::collections::VecDeque<SvcRecord>,
+    memory_svc_records: std::collections::VecDeque<MemorySvcRecord>,
     last_svc_id: u16,
     last_svc_pc: u64,
     ipc_count: u64,
@@ -338,9 +364,11 @@ impl Default for Kernel {
             program_id: 0x0100_0000_0000_1000,
             system_resource_size: 0,
             physical_mapped: 0,
+            fixed_charge: 0,
             sync: FutexArbitrator::default(),
             svc_count: 0,
             svc_records: std::collections::VecDeque::with_capacity(SVC_TRACE_CAPACITY),
+            memory_svc_records: std::collections::VecDeque::new(),
             last_svc_id: 0,
             last_svc_pc: 0,
             ipc_count: 0,
@@ -379,6 +407,42 @@ impl Kernel {
 
     pub fn physical_mapped(&self) -> u64 {
         self.physical_mapped
+    }
+
+    /// Sets the creation-time charge: loaded image bytes plus main stack.
+    pub fn set_fixed_memory_charge(&mut self, bytes: u64) {
+        self.fixed_charge = bytes;
+    }
+
+    /// Physical memory charged to the process outside its system resource:
+    /// image, main stack, heap and svcMapPhysicalMemory pages. Pages owned by
+    /// services (shared memory), aliases and TLS are not charged, as in HOS.
+    pub fn used_non_system_memory(&self) -> u64 {
+        self.fixed_charge + self.heap_size as u64 + self.physical_mapped
+    }
+
+    /// The process memory limit minus its system resource reservation.
+    pub fn total_non_system_memory(&self) -> u64 {
+        APPLICATION_POOL_SIZE.saturating_sub(self.system_resource_size)
+    }
+
+    /// Modelled use of the system resource: one 4 KiB last-level page table
+    /// per 2 MiB of physically mapped memory, bounded by the reservation.
+    pub fn system_resource_used(&self) -> u64 {
+        if self.system_resource_size == 0 {
+            return 0;
+        }
+        (self.physical_mapped.div_ceil(0x20_0000) * 0x1000).min(self.system_resource_size)
+    }
+
+    /// Fails with LimitReached when charging `bytes` more would exceed the
+    /// non-system memory limit.
+    fn charge_check(&self, bytes: u64) -> Result<(), u64> {
+        if self.used_non_system_memory().saturating_add(bytes) > self.total_non_system_memory() {
+            Err(RESULT_LIMIT_REACHED)
+        } else {
+            Ok(())
+        }
     }
 
     /// Validates an svc(Un)MapPhysicalMemory range: page aligned, nonempty,
@@ -425,6 +489,9 @@ impl Kernel {
                 cursor = block_end;
             }
             let needed: u64 = gaps.iter().map(|(_, length)| length).sum();
+            if let Err(result) = self.charge_check(needed) {
+                return result;
+            }
             if needed > memory.remaining_budget() as u64 {
                 return RESULT_OUT_OF_MEMORY;
             }
@@ -612,6 +679,10 @@ impl Kernel {
     /// Most recent supervisor calls, oldest first (bounded diagnostic ring).
     pub fn svc_records(&self) -> impl Iterator<Item = &SvcRecord> {
         self.svc_records.iter()
+    }
+    /// Most recent memory-management supervisor calls, oldest first.
+    pub fn memory_svc_records(&self) -> impl Iterator<Item = &MemorySvcRecord> {
+        self.memory_svc_records.iter()
     }
     pub fn svc_count(&self) -> u64 {
         self.svc_count
@@ -1108,7 +1179,7 @@ impl Kernel {
             .read(cpu.x[1], &mut input[..count as usize * 4])
             .is_err()
         {
-            cpu.x[0] = RESULT_INVALID_ADDRESS;
+            cpu.x[0] = RESULT_INVALID_POINTER;
             return Ok(());
         }
         let mut first_signaled = None;
@@ -1152,7 +1223,7 @@ impl Kernel {
         let in_pageinfo_addr = cpu.x[1];
         let query_addr = cpu.x[2];
         if out_meminfo_addr == 0 || out_meminfo_addr % 4 != 0 {
-            cpu.x[0] = RESULT_INVALID_ADDRESS;
+            cpu.x[0] = RESULT_INVALID_POINTER;
             return Ok(());
         }
         let desc = memory.query_memory(query_addr);
@@ -1167,7 +1238,7 @@ impl Kernel {
         bytes[36..40].copy_from_slice(&0_u32.to_le_bytes());
 
         if memory.write(out_meminfo_addr, &bytes).is_err() {
-            cpu.x[0] = RESULT_INVALID_ADDRESS;
+            cpu.x[0] = RESULT_INVALID_POINTER;
             return Ok(());
         }
         if in_pageinfo_addr != 0 && in_pageinfo_addr % 4 == 0 {
@@ -1267,6 +1338,10 @@ impl Kernel {
         }
         if size > current_size {
             let additional = size - current_size;
+            if let Err(result) = self.charge_check(additional as u64) {
+                cpu.x[0] = result;
+                return Ok(());
+            }
             if additional > memory.remaining_budget() {
                 cpu.x[0] = RESULT_OUT_OF_MEMORY;
                 return Ok(());
@@ -1331,6 +1406,15 @@ impl Kernel {
             self.svc_records.pop_front();
         }
         self.svc_records.push_back(record);
+        if is_memory_svc(id, record.arguments[1]) {
+            if self.memory_svc_records.len() == MEMORY_SVC_TRACE_CAPACITY {
+                self.memory_svc_records.pop_front();
+            }
+            self.memory_svc_records.push_back(MemorySvcRecord {
+                call: record,
+                mapped_after: memory.mapped_bytes() as u64,
+            });
+        }
         outcome
     }
 
@@ -1361,7 +1445,7 @@ impl Kernel {
                 if memory.protect(addr, size, p).is_ok() {
                     cpu.x[0] = 0;
                 } else {
-                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
                 }
                 Ok(KernelEvent::Continue)
             }
@@ -1566,7 +1650,7 @@ impl Kernel {
                 let current_val = match memory.read_u32(mutex_addr) {
                     Ok(val) => val,
                     Err(_) => {
-                        cpu.x[0] = RESULT_INVALID_ADDRESS;
+                        cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
                         return Ok(KernelEvent::Continue);
                     }
                 };
@@ -1622,7 +1706,7 @@ impl Kernel {
                     return Ok(KernelEvent::Continue);
                 }
                 if memory.read_u32(mutex_addr).is_err() || memory.read_u32(key_addr).is_err() {
-                    cpu.x[0] = RESULT_INVALID_ADDRESS;
+                    cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
                     return Ok(KernelEvent::Continue);
                 }
                 if let Some(waiter) = self.sync.unlock_mutex(mutex_addr) {
@@ -1829,7 +1913,8 @@ impl Kernel {
                     4 => self.heap_base, // InfoType_HeapRegionAddress
                     5 => HEAP_REGION_SIZE, // InfoType_HeapRegionSize (6 GiB, 39-bit layout)
                     6 => APPLICATION_POOL_SIZE, // InfoType_TotalMemorySize
-                    7 => memory.mapped_bytes() as u64, // InfoType_UsedMemorySize
+                    // InfoType_UsedMemorySize: charged pages plus the system resource.
+                    7 => self.used_non_system_memory() + self.system_resource_size,
                     8 => 0, // InfoType_DebuggerAttached
                     9 => 0, // InfoType_ResourceLimit
                     10 => 0, // InfoType_IdleTickCount
@@ -1839,7 +1924,7 @@ impl Kernel {
                     14 => 0x70_0000_0000, // InfoType_StackRegionAddress
                     15 => 0x1000_0000, // InfoType_StackRegionSize
                     16 => self.system_resource_size, // InfoType_SystemResourceSizeTotal
-                    17 => self.physical_mapped.min(self.system_resource_size), // InfoType_SystemResourceSizeUsed
+                    17 => self.system_resource_used(), // InfoType_SystemResourceSizeUsed
                     18 => self.program_id, // InfoType_ProgramId
                     19 => 0, // InfoType_InitialProcessIdRange
                     // InfoType_UserExceptionContextAddress: Horizon reserves a
@@ -1847,8 +1932,8 @@ impl Kernel {
                     // offset 0x200, so the main thread page's first slot is free
                     // and always mapped; returning 0 made guests write to null.
                     20 => USER_EXCEPTION_CONTEXT,
-                    21 => APPLICATION_POOL_SIZE, // InfoType_TotalNonSystemMemorySize
-                    22 => memory.mapped_bytes() as u64, // InfoType_UsedNonSystemMemorySize
+                    21 => self.total_non_system_memory(), // InfoType_TotalNonSystemMemorySize
+                    22 => self.used_non_system_memory(), // InfoType_UsedNonSystemMemorySize
                     23 => 1, // InfoType_IsApplication (true)
                     24 => 128, // InfoType_FreeThreadCount
                     25 => 0, // InfoType_ThreadTickCount

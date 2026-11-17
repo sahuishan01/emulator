@@ -82,7 +82,7 @@ fn pending_cancellation_coalesces_and_survives_invalid_immediate_and_poll_result
     c.x[3] = 20;
     k.dispatch(SVC_WAIT_SYNCHRONIZATION, &mut c, &mut m)
         .unwrap();
-    assert_eq!(c.x[0], RESULT_INVALID_ADDRESS);
+    assert_eq!(c.x[0], RESULT_INVALID_POINTER);
     m.write_u32(0x4000, 0xffff).unwrap();
     wait(&mut k, &mut c, &mut m, 20);
     assert_eq!(c.x[0], RESULT_INVALID_HANDLE);

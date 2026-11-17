@@ -96,7 +96,7 @@ fn polling_validates_bounds_and_blocking_timeout_preserves_index() {
     cpu.x[2] = 1;
     k.dispatch(SVC_WAIT_SYNCHRONIZATION, &mut cpu, &mut m)
         .unwrap();
-    assert_eq!(cpu.x[0], RESULT_INVALID_ADDRESS);
+    assert_eq!(cpu.x[0], RESULT_INVALID_POINTER);
     cpu.x[2] = 65;
     k.dispatch(SVC_WAIT_SYNCHRONIZATION, &mut cpu, &mut m)
         .unwrap();

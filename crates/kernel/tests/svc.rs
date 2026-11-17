@@ -1,6 +1,6 @@
 use emulator_a64::Cpu;
 use emulator_kernel::{
-    Kernel, KernelError, KernelEvent, RESULT_INVALID_ADDRESS, RESULT_TIMEOUT, SVC_EXIT_PROCESS,
+    Kernel, KernelError, KernelEvent, RESULT_INVALID_ADDRESS, RESULT_INVALID_POINTER, RESULT_TIMEOUT, SVC_EXIT_PROCESS,
     SVC_OUTPUT_DEBUG_STRING, SVC_QUERY_MEMORY,
 };
 use emulator_memory::{AddressSpace, Permissions};
@@ -180,7 +180,7 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
             .unwrap(),
         KernelEvent::Continue
     );
-    assert_eq!(cpu.x[0], RESULT_INVALID_ADDRESS);
+    assert_eq!(cpu.x[0], RESULT_INVALID_POINTER);
 
     // Query 7: query_address beyond address space (>= 1 << 39) returns fake Inaccessible block with success
     cpu.x[0] = 0x1000;
