@@ -678,7 +678,8 @@ SANDBOX_PROPERTIES = (
 def sandbox_command(binary: Path, game: Path, prod_keys: Path, title_keys: Path | None, max_steps: int,
                     root: Path, memory_max: str, timeout: int, disasm: list[str] | None = None,
                     peek: list[str] | None = None, watch: str | None = None,
-                    trace: list[str] | None = None) -> list[str]:
+                    trace: list[str] | None = None, symbol: list[str] | None = None,
+                    imports: list[str] | None = None) -> list[str]:
     """Wrap `emulator-cli run-nsp` in a transient, locked-down systemd service.
 
     The process runs as the owner of the dump (not root) and sees only the binary,
@@ -701,10 +702,15 @@ def sandbox_command(binary: Path, game: Path, prod_keys: Path, title_keys: Path 
         if not re.fullmatch(r"(0x)?[0-9a-fA-F]{1,16}:[0-9]{1,4}", watch):
             raise ValueError(f"--watch expects HEXADDR:LEN, got {watch!r}")
         inner += ["--watch", watch]
-    for spec in trace or []:
-        if not re.fullmatch(r"(0x)?[0-9a-fA-F]{1,16}", spec):
-            raise ValueError(f"--trace expects HEXPC, got {spec!r}")
-        inner += ["--trace", spec]
+    for flag, specs in (("--trace", trace), ("--symbol", symbol)):
+        for spec in specs or []:
+            if not re.fullmatch(r"(0x)?[0-9a-fA-F]{1,16}", spec):
+                raise ValueError(f"{flag} expects a hex address, got {spec!r}")
+            inner += [flag, spec]
+    for spec in imports or []:
+        if not re.fullmatch(r"(0x)?[0-9a-fA-F]{1,16}:[A-Za-z0-9_]{1,128}", spec):
+            raise ValueError(f"--imports expects HEXADDR:IDENTIFIER, got {spec!r}")
+        inner += ["--imports", spec]
     command = ["systemd-run", "--wait", "--pipe", "--collect", "--quiet",
                "--description=emulator dump smoke test (sandboxed)",
                "-p", f"User={owner.st_uid}", "-p", f"Group={owner.st_gid}",
@@ -751,7 +757,7 @@ def command_smoke(arguments: argparse.Namespace) -> int:
     command = sandbox_command(binary, game, prod_keys, title_keys if title_keys.is_file() else None,
                               arguments.max_steps, root, arguments.memory_max, arguments.timeout,
                               arguments.disasm, arguments.peek, arguments.watch,
-                              arguments.trace)
+                              arguments.trace, arguments.symbol, arguments.imports)
     print(f"smoke (sandboxed): {game.name} ({game.stat().st_size} bytes), max {arguments.max_steps} steps", flush=True)
     return subprocess.run(command, cwd="/", check=False).returncode
 
@@ -780,6 +786,10 @@ def main() -> int:
                        help="log every guest/SVC write overlapping this range with its PC")
     smoke.add_argument("--trace", action="append", default=[], metavar="HEXPC",
                        help="record registers each time this PC executes (repeatable)")
+    smoke.add_argument("--symbol", action="append", default=[], metavar="HEXADDR",
+                       help="name the import slot or nearest export at this address (repeatable)")
+    smoke.add_argument("--imports", action="append", default=[], metavar="HEXADDR:IDENTIFIER",
+                       help="list imports (slot, PLT stub) of the module at HEXADDR whose name contains IDENTIFIER")
     smoke.set_defaults(run=command_smoke)
     arguments = parser.parse_args()
     return arguments.run(arguments)

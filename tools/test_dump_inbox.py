@@ -217,6 +217,10 @@ class SmokeSandboxTest(unittest.TestCase):
                                      "--keys", f"{dump_inbox.SANDBOX_DIR}/prod.keys", "--max-steps", "1234"])
             titled = dump_inbox.sandbox_command(binary, game, keys, keys, 1, root, "2G", 90)
             self.assertEqual(titled[-2:], ["--titlekeys", f"{dump_inbox.SANDBOX_DIR}/title.keys"])
+            named = dump_inbox.sandbox_command(binary, game, keys, None, 1, root, "2G", 90, symbol=["0x3defc00"])
+            self.assertEqual(named[-2:], ["--symbol", "0x3defc00"])
+            with self.assertRaises(ValueError):
+                dump_inbox.sandbox_command(binary, game, keys, None, 1, root, "2G", 90, symbol=["3def;c00"])
             odd = root / "games" / "a:b.nsp"
             odd.write_bytes(b"x")
             with self.assertRaises(ValueError):

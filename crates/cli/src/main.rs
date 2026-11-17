@@ -265,6 +265,8 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut peek: Vec<(u64, u64)> = Vec::new();
     let mut watch: Option<(u64, u64)> = None;
     let mut trace: Vec<u64> = Vec::new();
+    let mut symbols: Vec<u64> = Vec::new();
+    let mut imports: Vec<(u64, String)> = Vec::new();
 
     let mut i = 1;
     while i < arguments.len() {
@@ -323,6 +325,22 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 watch = Some((address, len));
             }
+            "--imports" => {
+                i += 1;
+                let spec = arguments.get(i).ok_or("--imports requires HEXADDR:SUBSTRING")?;
+                let (address, pattern) =
+                    spec.split_once(':').ok_or("--imports expects HEXADDR:SUBSTRING")?;
+                let address = u64::from_str_radix(address.trim_start_matches("0x"), 16)?;
+                imports.push((address, pattern.to_string()));
+            }
+            "--symbol" => {
+                i += 1;
+                let spec = arguments.get(i).ok_or("--symbol requires HEXADDR")?;
+                symbols.push(u64::from_str_radix(spec.trim_start_matches("0x"), 16)?);
+                if symbols.len() > 64 {
+                    return Err("at most 64 --symbol addresses".into());
+                }
+            }
             "--trace" => {
                 i += 1;
                 let spec = arguments.get(i).ok_or("--trace requires HEXPC")?;
@@ -339,7 +357,7 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]... [--watch HEXADDR:LEN] [--trace HEXPC]...")?;
+    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]... [--watch HEXADDR:LEN] [--trace HEXPC]... [--symbol HEXADDR]... [--imports HEXADDR:SUBSTRING]...")?;
     // Commercial titles need far more than the microprogram cap; the caller bounds
     // wall-clock time (the smoke sandbox sets a runtime limit).
     if budget == 0 || budget > NSP_MAX_STEPS {
@@ -424,6 +442,12 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     print_run_report(&session, &samples, elapsed);
+    for &address in &symbols {
+        println!("symbol {address:#x}: {}", describe_symbol(session.memory(), address));
+    }
+    for (address, pattern) in &imports {
+        print_imports(session.memory(), *address, pattern);
+    }
     for (start, count) in &peek {
         println!("peek {start:#x} (+{count} u64):");
         for index in 0..*count {
@@ -508,6 +532,171 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Host-side diagnostics after a commercial-title run: where the guest is, what it
 /// last asked the kernel for, and where the sampled time went.
+/// Dynamic-linking view of one loaded module, read back from guest memory.
+struct GuestModule {
+    base: u64,
+    strtab: u64,
+    symtab: u64,
+    symbols: u64,
+    relocations: Vec<(u64, u64)>,
+}
+
+/// Finds the module containing `address`: the closest page at or below it
+/// whose word at +4 points at a `MOD0` header.
+fn guest_module(memory: &AddressSpace, address: u64) -> Option<GuestModule> {
+    let mut page = address & !0xfff;
+    let floor = address.saturating_sub(0x1000_0000);
+    let base = loop {
+        if let Ok(offset) = memory.read_u32(page + 4) {
+            let mut magic = [0u8; 4];
+            if offset % 4 == 0
+                && offset < 0x1000_0000
+                && memory.read(page + u64::from(offset), &mut magic).is_ok()
+                && &magic == b"MOD0"
+            {
+                break page;
+            }
+        }
+        if page <= floor || page < 0x1000 {
+            return None;
+        }
+        page -= 0x1000;
+    };
+    let header = base + u64::from(memory.read_u32(base + 4).ok()?);
+    let dynamic = header.wrapping_add(memory.read_u32(header + 4).ok()? as i32 as i64 as u64);
+    let (mut strtab, mut symtab) = (0, 0);
+    let (mut rela, mut rela_size, mut jmprel, mut jmprel_size) = (0, 0, 0, 0);
+    for index in 0..512 {
+        let tag = memory.read_u64(dynamic + index * 16).ok()?;
+        let value = memory.read_u64(dynamic + index * 16 + 8).ok()?;
+        match tag {
+            0 => break,
+            2 => jmprel_size = value,
+            5 => strtab = base + value,
+            6 => symtab = base + value,
+            7 => rela = base + value,
+            8 => rela_size = value,
+            23 => jmprel = base + value,
+            _ => {}
+        }
+    }
+    if strtab == 0 || symtab == 0 {
+        return None;
+    }
+    let mut relocations = Vec::new();
+    for (table, size) in [(rela, rela_size), (jmprel, jmprel_size)] {
+        for entry in 0..(size / 24).min(1 << 20) {
+            let (Ok(offset), Ok(info)) = (
+                memory.read_u64(table + entry * 24),
+                memory.read_u64(table + entry * 24 + 8),
+            ) else {
+                break;
+            };
+            if info >> 32 != 0 {
+                relocations.push((base + offset, info >> 32));
+            }
+        }
+    }
+    // The symbol table directly precedes the string table in NSO images.
+    let symbols = if strtab > symtab { ((strtab - symtab) / 24).min(1 << 20) } else { 0 };
+    Some(GuestModule { base, strtab, symtab, symbols, relocations })
+}
+
+fn guest_string(memory: &AddressSpace, address: u64) -> String {
+    let mut bytes = Vec::new();
+    for offset in 0..256 {
+        match memory.read_u8(address + offset) {
+            Ok(0) | Err(_) => break,
+            Ok(byte) => bytes.push(byte),
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn guest_symbol_name(memory: &AddressSpace, module: &GuestModule, index: u64) -> String {
+    let name = memory.read_u32(module.symtab + index * 24).unwrap_or(0);
+    guest_string(memory, module.strtab + u64::from(name))
+}
+
+/// Names a guest address: an import slot by its relocation symbol (and the
+/// export it resolved to), otherwise the closest defined export below it.
+fn describe_symbol(memory: &AddressSpace, address: u64) -> String {
+    let Some(module) = guest_module(memory, address) else {
+        return "no module".into();
+    };
+    if let Some(&(_, index)) = module.relocations.iter().find(|(slot, _)| *slot == address) {
+        let name = guest_symbol_name(memory, &module, index);
+        let target = memory.read_u64(address).unwrap_or(0);
+        let resolved = guest_module(memory, target)
+            .and_then(|other| nearest_export(memory, &other, target))
+            .unwrap_or_else(|| "unresolved".into());
+        return format!(
+            "import slot of module {:#x} for {name} -> {target:#x} ({resolved})",
+            module.base
+        );
+    }
+    nearest_export(memory, &module, address)
+        .map(|name| format!("module {:#x}: {name}", module.base))
+        .unwrap_or_else(|| format!("module {:#x}: no export below", module.base))
+}
+
+/// Lists the import slots of the module containing `address` whose symbol
+/// contains `pattern`, with the PLT stub (`adrp x16; ldr x17, [x16, #off];
+/// add x16; br x17`) that jumps through each slot.
+fn print_imports(memory: &AddressSpace, address: u64, pattern: &str) {
+    let Some(module) = guest_module(memory, address) else {
+        println!("imports {address:#x}: no module");
+        return;
+    };
+    let mut stubs: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+    let mut pc = module.base;
+    // PLT stubs live in the text segment, which ends before the symbol table.
+    while pc + 12 < module.symtab {
+        let Ok(word) = memory.read_u32(pc) else { break };
+        if word & 0x9f00_001f == 0x9000_0010 {
+            if let (Ok(load), Ok(branch)) = (memory.read_u32(pc + 4), memory.read_u32(pc + 12)) {
+                if load & 0xffc0_03ff == 0xf940_0211 && branch == 0xd61f_0220 {
+                    let immediate = (((word >> 29) & 3) | ((word >> 3) & 0x1f_fffc)) as u64;
+                    let page = (pc & !0xfff).wrapping_add(((immediate << 44) as i64 >> 32) as u64);
+                    let slot = page + u64::from((load >> 10) & 0xfff) * 8;
+                    stubs.insert(slot, pc);
+                }
+            }
+        }
+        pc += 4;
+    }
+    println!("imports of module {:#x} matching {pattern:?}:", module.base);
+    for &(slot, index) in &module.relocations {
+        let name = guest_symbol_name(memory, &module, index);
+        if !name.contains(pattern) {
+            continue;
+        }
+        let stub = stubs.get(&slot).map_or_else(|| "none".to_string(), |pc| format!("{pc:#x}"));
+        let target = memory.read_u64(slot).unwrap_or(0);
+        println!("  slot={slot:#x} stub={stub} target={target:#x} {name}");
+    }
+}
+
+fn nearest_export(memory: &AddressSpace, module: &GuestModule, address: u64) -> Option<String> {
+    let mut best: Option<(u64, u64)> = None;
+    for index in 1..module.symbols {
+        let entry = module.symtab + index * 24;
+        let (Ok(section), Ok(value)) = (memory.read_u16(entry + 6), memory.read_u64(entry + 8)) else {
+            break;
+        };
+        if section == 0 || value == 0 {
+            continue;
+        }
+        let start = module.base + value;
+        if start <= address && best.is_none_or(|(_, at)| start > at) {
+            best = Some((index, start));
+        }
+    }
+    best.map(|(index, start)| {
+        format!("{}+{:#x}", guest_symbol_name(memory, module, index), address - start)
+    })
+}
+
 fn print_run_report(
     session: &Session,
     samples: &std::collections::BTreeMap<u64, u64>,
