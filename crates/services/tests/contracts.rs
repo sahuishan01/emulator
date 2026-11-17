@@ -551,9 +551,12 @@ fn shared_font_service_serves_the_bundled_system_font() {
         Some(emulator_kernel::Object::SharedMemory(m)) => {
             let region = m.borrow();
             assert_eq!(region.len(), SHARED_FONT_REGION_SIZE);
-            assert_eq!(&region[0..4], &(0x1802_9a7f_u32 ^ emulator_services::plu::FONT_KEY).to_be_bytes());
-            assert_ne!(&region[8..12], &SYSTEM_FONT[..4], "font data is obfuscated in the region");
-            assert_eq!(decode_font(&region, offset as usize).unwrap(), SYSTEM_FONT);
+            assert_eq!(&region[0..4], &[0x7f, 0x9a, 0x02, 0x18], "plain header magic");
+            // The reported offset points at a plain sfnt that font engines accept.
+            assert_eq!(&region[8..12], &[0, 1, 0, 0], "TrueType sfnt version");
+            assert_eq!(&region[8..8 + SYSTEM_FONT.len()], SYSTEM_FONT);
+            assert_eq!(decode_font(&region, offset as usize, emulator_services::plu::FONT_KEY).unwrap(), SYSTEM_FONT);
+            assert!(decode_font(&region, offset as usize + 4, emulator_services::plu::FONT_KEY).is_none());
         }
         other => panic!("expected shared memory, got {other:?}"),
     }
@@ -564,6 +567,7 @@ fn shared_font_service_serves_the_bundled_system_font() {
     assert!(encode_font(&mut small, 0, &[0; 25], 1).is_none());
     assert!(encode_font(&mut small, 2, &[0; 4], 1).is_none());
     let at = encode_font(&mut small, 4, b"abcdefghij", 0xdead_beef).unwrap();
-    assert_eq!(decode_font(&small, at).unwrap(), b"abcdefghij");
+    assert_eq!(decode_font(&small, at, 0xdead_beef).unwrap(), b"abcdefghij");
+    assert!(decode_font(&small, at, 0).is_none(), "size word needs the key");
     assert!(SharedFontService::with_font(&vec![0; SHARED_FONT_REGION_SIZE]).is_none());
 }

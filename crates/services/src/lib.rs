@@ -21,6 +21,7 @@ pub mod plu;
 pub mod reference;
 pub mod setsys;
 pub mod timesys;
+pub mod timezone;
 pub mod vi;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceError, ServiceReply};

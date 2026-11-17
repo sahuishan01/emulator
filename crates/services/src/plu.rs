@@ -5,9 +5,12 @@
 //! placed in the shared region and every font type points at it. Glyph
 //! coverage is that font's: CJK and console symbol glyphs are absent.
 //!
-//! Region layout per font: an 8-byte header (`magic ^ key`, `size ^ key`,
-//! both stored big-endian) followed by the TTF data with each 32-bit word
-//! XORed with the key. Offsets reported to the guest point past the header.
+//! Region layout per font, as the console's `pl` leaves it after decoding the
+//! system archive: an 8-byte header (the plain magic word `0x18029a7f`
+//! stored little-endian, i.e. bytes `7f 9a 02 18`, then the size XORed with
+//! the archive key, big-endian) followed by the plain sfnt (TTF) data. The
+//! offset reported to guests points at the TTF, so games and homebrew can
+//! hand it straight to a font engine; the size comes from GetSize.
 
 use emulator_ipc::Request;
 use emulator_kernel::service::{
@@ -25,9 +28,9 @@ pub const SHARED_FONT_TYPES: u32 = 7;
 pub const FONT_LOAD_STATE_LOADING: u32 = 0;
 /// `GetLoadState` value for a loaded font.
 pub const FONT_LOAD_STATE_LOADED: u32 = 1;
-/// Plain-text value of the first header word.
+/// Plain value of the first header word (stored little-endian).
 pub const FONT_HEADER_MAGIC: u32 = 0x1802_9a7f;
-/// Obfuscation key used for the bundled font. Any key decodes the same way.
+/// Key obfuscating the header size word of the bundled font.
 pub const FONT_KEY: u32 = 0x49621806;
 /// The bundled system font.
 pub const SYSTEM_FONT: &[u8] = include_bytes!("../sysdata/fonts/DejaVuSans.ttf");
@@ -40,24 +43,21 @@ pub fn encode_font(region: &mut [u8], offset: usize, font: &[u8], key: u32) -> O
     if offset % 4 != 0 || end > region.len() {
         return None;
     }
-    region[offset..offset + 4].copy_from_slice(&(FONT_HEADER_MAGIC ^ key).to_be_bytes());
+    region[offset..offset + 4].copy_from_slice(&FONT_HEADER_MAGIC.to_le_bytes());
     region[offset + 4..offset + 8].copy_from_slice(&(size ^ key).to_be_bytes());
-    let key_bytes = key.to_be_bytes();
-    for (i, slot) in region[offset + 8..end].iter_mut().enumerate() {
-        *slot = font.get(i).copied().unwrap_or(0) ^ key_bytes[i % 4];
-    }
+    region[offset + 8..offset + 8 + font.len()].copy_from_slice(font);
+    region[offset + 8 + font.len()..end].fill(0);
     Some(offset + 8)
 }
 
 /// Inverse of [`encode_font`]: `data_offset` is the offset reported to guests.
-pub fn decode_font(region: &[u8], data_offset: usize) -> Option<Vec<u8>> {
+pub fn decode_font(region: &[u8], data_offset: usize, key: u32) -> Option<Vec<u8>> {
     let header = region.get(data_offset.checked_sub(8)?..data_offset)?;
-    let word = |at: usize| u32::from_be_bytes(header[at..at + 4].try_into().expect("4"));
-    let key = word(0) ^ FONT_HEADER_MAGIC;
-    let size = (word(4) ^ key) as usize;
-    let key_bytes = key.to_be_bytes();
-    let body = region.get(data_offset..data_offset.checked_add(size)?)?;
-    Some(body.iter().enumerate().map(|(i, b)| b ^ key_bytes[i % 4]).collect())
+    if header[..4] != FONT_HEADER_MAGIC.to_le_bytes() {
+        return None;
+    }
+    let size = (u32::from_be_bytes(header[4..8].try_into().expect("4")) ^ key) as usize;
+    region.get(data_offset..data_offset.checked_add(size)?).map(<[u8]>::to_vec)
 }
 
 #[derive(Clone, Debug)]
