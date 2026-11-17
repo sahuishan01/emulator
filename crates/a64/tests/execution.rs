@@ -1295,3 +1295,9 @@ fn store_exclusive_requires_a_live_matching_reservation() {
     }
     assert_eq!(cpu.x[2], 1);
 }
+
+#[test]
+fn disassembles_cache_maintenance_ops() {
+    assert_eq!(emulator_a64::disassemble(0x1000, 0xd50b_7e2a), "dc civac, x10");
+    assert_eq!(emulator_a64::disassemble(0x1000, 0xd50b_7420), "dc zva, x0");
+}

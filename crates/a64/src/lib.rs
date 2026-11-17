@@ -2561,11 +2561,28 @@ fn reg_prefix(width: Width) -> char {
     }
 }
 
+/// Names instructions executed by the extended (`ext`) path that the core decoder rejects.
+fn disassemble_extended(word: u32) -> String {
+    let rt = word & 0x1f;
+    let name = match word & 0xffff_ffe0 {
+        0xd50b_7420 => Some("dc zva"),
+        0xd50b_7a20 => Some("dc cvac"),
+        0xd50b_7b20 => Some("dc cvau"),
+        0xd50b_7e20 => Some("dc civac"),
+        0xd50b_7520 => Some("ic ivau"),
+        _ => None,
+    };
+    match name {
+        Some(name) => format!("{name}, x{rt}"),
+        None => format!("raw {word:#010x}"),
+    }
+}
+
 /// Disassembles an encoded 32-bit ARM64 instruction word at `pc` into standard mnemonic text.
 pub fn disassemble(pc: u64, word: u32) -> String {
     let inst = match decode(pc, word) {
         Ok(i) => i,
-        Err(_) => return format!("raw {word:#010x}"),
+        Err(_) => return disassemble_extended(word),
     };
     match inst {
         Instruction::Nop => "nop".to_string(),
