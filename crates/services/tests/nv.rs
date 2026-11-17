@@ -455,18 +455,19 @@ fn nvmap_fd_and_object_quotas_release_without_reusing_stale_ids() {
     assert_eq!(r.close_fd(1), 0);
     assert_eq!(r.open_device(b"/dev/nvmap", 0), (17, 0));
     assert_eq!(r.ioctl(1, 0xc0080101, &[4096, 0], 1), 4);
-    for handle in 1..=64 {
+    // Per-fd object cap: 1024 (NVN allocates one object per memory pool).
+    for handle in 1..=1024 {
         assert_eq!(r.ioctl(17, 0xc0080101, &[4096, 0], 1), 0);
         assert_eq!(r.m.read_u32(0x6004).unwrap(), handle);
     }
     assert_eq!(r.ioctl(17, 0xc0080101, &[4096, 0], 1), 6);
     assert_eq!(r.ioctl(17, 0xc0180105, &[1, 0, 0, 0, 0, 0], 1), 0);
     assert_eq!(r.ioctl(17, 0xc0080101, &[4096, 0], 1), 0);
-    assert_eq!(r.m.read_u32(0x6004).unwrap(), 65);
+    assert_eq!(r.m.read_u32(0x6004).unwrap(), 1025);
     // A separate device descriptor cannot use another descriptor's object.
-    assert_eq!(r.ioctl(2, 0xc00c0109, &[65, 1, 0], 1), 4);
+    assert_eq!(r.ioctl(2, 0xc00c0109, &[1025, 1, 0], 1), 4);
     assert_eq!(r.close_fd(17), 0);
-    assert_eq!(r.ioctl(17, 0xc00c0109, &[65, 1, 0], 1), 4);
+    assert_eq!(r.ioctl(17, 0xc00c0109, &[1025, 1, 0], 1), 4);
 }
 
 #[test]

@@ -264,6 +264,7 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut disasm: Vec<(u64, u64)> = Vec::new();
     let mut peek: Vec<(u64, u64)> = Vec::new();
     let mut watch: Option<(u64, u64)> = None;
+    let mut trace: Vec<u64> = Vec::new();
 
     let mut i = 1;
     while i < arguments.len() {
@@ -322,6 +323,14 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 watch = Some((address, len));
             }
+            "--trace" => {
+                i += 1;
+                let spec = arguments.get(i).ok_or("--trace requires HEXPC")?;
+                trace.push(u64::from_str_radix(spec.trim_start_matches("0x"), 16)?);
+                if trace.len() > 64 {
+                    return Err("at most 64 --trace PCs".into());
+                }
+            }
             arg if !arg.starts_with("--") && file.is_none() => {
                 file = Some(arg);
             }
@@ -330,7 +339,7 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]... [--watch HEXADDR:LEN]")?;
+    let file = file.ok_or("usage: emulator-cli run-nsp FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]... [--watch HEXADDR:LEN] [--trace HEXPC]...")?;
     // Commercial titles need far more than the microprogram cap; the caller bounds
     // wall-clock time (the smoke sandbox sets a runtime limit).
     if budget == 0 || budget > NSP_MAX_STEPS {
@@ -377,6 +386,9 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         session.cpu().pc,
         session.cpu().sp
     );
+    if !trace.is_empty() {
+        session.set_pc_trace(trace.clone());
+    }
     if let Some((address, len)) = watch {
         session.set_write_watch(address, len);
     }
@@ -420,6 +432,16 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(value) => println!("  {address:#010x}: {value:#018x}"),
                 Err(_) => println!("  {address:#010x}: <unmapped>"),
             }
+        }
+    }
+    if !trace.is_empty() {
+        println!("traced PCs ({} hits recorded, cap 4096):", session.trace_log().len());
+        for r in session.trace_log() {
+            let regs: Vec<String> = r.x.iter().enumerate().filter(|(_, v)| **v != 0).map(|(n, v)| format!("x{n}={v:#x}")).collect();
+            println!(
+                "  inst={} thread={} pc={:#x} lr={:#x} sp={:#x} {}",
+                r.instruction, r.thread, r.pc, r.lr, r.sp, regs.join(" ")
+            );
         }
     }
     if watch.is_some() {

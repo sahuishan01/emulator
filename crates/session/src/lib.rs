@@ -64,6 +64,19 @@ pub struct Session {
     state: SessionState,
     instructions: u64,
     watch_log: Vec<WatchRecord>,
+    trace_pcs: Vec<u64>,
+    trace_log: Vec<TraceRecord>,
+}
+
+/// Register snapshot taken when execution reaches a traced PC (debug aid).
+#[derive(Clone, Debug)]
+pub struct TraceRecord {
+    pub instruction: u64,
+    pub thread: usize,
+    pub pc: u64,
+    pub lr: u64,
+    pub sp: u64,
+    pub x: [u64; 29],
 }
 
 /// A watched write attributed to the instruction (or SVC) that caused it.
@@ -181,6 +194,8 @@ impl Session {
             state: SessionState::Loaded,
             instructions: 0,
             watch_log: Vec::new(),
+            trace_pcs: Vec::new(),
+            trace_log: Vec::new(),
         })
     }
 
@@ -318,6 +333,8 @@ impl Session {
             state: SessionState::Loaded,
             instructions: 0,
             watch_log: Vec::new(),
+            trace_pcs: Vec::new(),
+            trace_log: Vec::new(),
         })
     }
     fn load(
@@ -367,6 +384,8 @@ impl Session {
             state: SessionState::Loaded,
             instructions: 0,
             watch_log: Vec::new(),
+            trace_pcs: Vec::new(),
+            trace_log: Vec::new(),
         })
     }
 
@@ -402,6 +421,30 @@ impl Session {
     pub fn watch_log(&self) -> &[WatchRecord] {
         &self.watch_log
     }
+    /// Records a register snapshot every time one of `pcs` is about to execute
+    /// (capped at 4096 records).
+    pub fn set_pc_trace(&mut self, pcs: Vec<u64>) {
+        self.trace_pcs = pcs;
+    }
+    pub fn trace_log(&self) -> &[TraceRecord] {
+        &self.trace_log
+    }
+    fn collect_trace(&mut self) {
+        let pc = self.cpu.pc;
+        if self.trace_log.len() >= 4096 || !self.trace_pcs.contains(&pc) {
+            return;
+        }
+        let mut x = [0u64; 29];
+        x.copy_from_slice(&self.cpu.x[..29]);
+        self.trace_log.push(TraceRecord {
+            instruction: self.instructions,
+            thread: self.kernel.current_thread_id(),
+            pc,
+            lr: self.cpu.x[30],
+            sp: self.cpu.sp,
+            x,
+        });
+    }
     fn collect_watch(&mut self, pc: u64, lr: u64) {
         let hits = self.memory.take_watch_hits();
         if hits.is_empty() {
@@ -435,6 +478,9 @@ impl Session {
             if self.kernel.prepare_execution(&mut self.cpu) == ScheduleOutcome::Blocked {
                 self.state = SessionState::Blocked;
                 return Ok(RunOutcome::Blocked);
+            }
+            if !self.trace_pcs.is_empty() {
+                self.collect_trace();
             }
             let (pc, lr) = (self.cpu.pc, self.cpu.x[30]);
             let event = self.cpu.step(&mut self.memory);

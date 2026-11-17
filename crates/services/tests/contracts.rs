@@ -509,3 +509,19 @@ fn hid_server_command_table_round_trips_npad_configuration() {
     assert!(hid.dispatch(&request(100, &[], None)).is_err());
     assert!(hid.dispatch(&request(999, &[], None)).is_err());
 }
+
+#[test]
+fn audio_device_reports_stereo_unit_volume_and_rejects_out_of_range_volume() {
+    use emulator_kernel::service::Service;
+    let mut device = emulator_services::aud::AudioDevice::default();
+    let mut request = |id: u32, data: Vec<u8>| device.dispatch(&request(id, &data, None));
+    assert_eq!(request(5, vec![]).unwrap().data, 2u32.to_le_bytes());
+    assert_eq!(request(2, vec![]).unwrap().data, 1.0f32.to_le_bytes());
+    assert_eq!(request(1, 0.25f32.to_le_bytes().to_vec()).unwrap().result, 0);
+    assert_eq!(request(8, vec![]).unwrap().data, 0.25f32.to_le_bytes());
+    assert_ne!(request(7, 1.5f32.to_le_bytes().to_vec()).unwrap().result, 0);
+    assert_eq!(request(2, vec![]).unwrap().data, 0.25f32.to_le_bytes());
+    assert!(request(1, vec![]).is_err());
+    assert_eq!(request(4, vec![]).unwrap().moved_objects.len(), 1);
+    assert!(request(0, vec![]).is_err());
+}

@@ -986,6 +986,8 @@ fn two_reg(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
                 u128::from(int_two_reg(opcode, u, 64, lane(n, 64, 0))?)
             }
             (20, _) if size < 3 => u128::from(saturating_narrow(lane(n, 2 * bits, 0), bits, !u, !u)),
+            // SQXTUN: signed source, unsigned saturated result.
+            (18, true) if size < 3 => u128::from(saturating_narrow(lane(n, 2 * bits, 0), bits, true, false)),
             _ => return None,
         }
     } else {
@@ -1014,6 +1016,12 @@ fn two_reg(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
             (18, false) if size < 3 => {
                 narrow_into(d, q, build(bits, 64 / bits, |i| lane(n, 2 * bits, i)))
             }
+            // SQXTUN{2}: signed source, unsigned saturated result.
+            (18, true) if size < 3 => narrow_into(
+                d,
+                q,
+                build(bits, 64 / bits, |i| saturating_narrow(lane(n, 2 * bits, i), bits, true, false)),
+            ),
             (19, true) if size < 3 => {
                 let source = half(n, q);
                 build(2 * bits, 64 / bits, |i| lane(source, bits, i) << bits)

@@ -1,7 +1,7 @@
 //! Original audio services (`audren:u`, `audout:u`).
 
 use emulator_ipc::Request;
-use emulator_kernel::service::{Service, ServiceError, ServiceReply};
+use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
 
 #[derive(Clone, Debug, Default)]
 pub struct AudioRendererManager;
@@ -89,15 +89,14 @@ impl Service for AudioRendererManager {
                     effect: None,
                 })
             }
-            // GetAudioDeviceService (command 2)
-            2 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: vec![Box::new(AudioOutManager::default())],
-                    effect: None,
-                })
-            }
+            // GetAudioDeviceService (2) / GetAudioDeviceServiceWithRevisionInfo (4,
+            // takes an applet resource user id and revision) -> IAudioDevice.
+            2 | 4 => Ok(ServiceReply {
+                result: 0,
+                data: Vec::new(),
+                moved_objects: vec![Box::new(AudioDevice::default())],
+                effect: None,
+            }),
             command => Err(ServiceError::UnsupportedCommand {
                 service: "audren:u",
                 command,
@@ -204,3 +203,123 @@ impl Service for AudioOutManager {
         }
     }
 }
+
+/// `IAudioDevice`: one fixed stereo output device at unit volume.
+#[derive(Clone, Debug)]
+pub struct AudioDevice {
+    volume: f32,
+}
+
+impl Default for AudioDevice {
+    fn default() -> Self {
+        Self { volume: 1.0 }
+    }
+}
+
+/// Device names are fixed 0x100-byte NUL-padded records.
+const AUDIO_DEVICE_NAME_LEN: usize = 0x100;
+/// The single output we expose (handheld speaker).
+const ACTIVE_AUDIO_DEVICE: &[u8] = b"AudioBuiltInSpeakerOutput";
+
+impl Service for AudioDevice {
+    fn clone_for_request(&self) -> Box<dyn Service> {
+        Box::new(self.clone())
+    }
+
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        context.require_copy_handles(0)?;
+        // Name commands: 0 List / 3 GetActive use B buffers; 6 / 10 / 13 are
+        // the auto-select variants. 1 / 7 (set volume) send a name buffer
+        // that is not inspected.
+        let output = match request.command_id {
+            0 | 3 => {
+                context.require_buffers(0, 1)?;
+                Some(context.receive_buffer(0)?)
+            }
+            6 | 10 | 13 => {
+                context.require_auto_buffers(0, 1)?;
+                context.auto_receive(0)?
+            }
+            1 => {
+                context.require_buffers(1, 0)?;
+                return self.dispatch(request);
+            }
+            7 => {
+                context.require_auto_buffers(1, 0)?;
+                return self.dispatch(request);
+            }
+            _ => {
+                context.require_buffers(0, 0)?;
+                return self.dispatch(request);
+            }
+        };
+        let Some(output) = output.filter(|v| v.len() >= AUDIO_DEVICE_NAME_LEN) else {
+            return Ok(ServiceReply {
+                result: RESULT_AUDIO_INVALID_ARGUMENT,
+                ..ServiceReply::default()
+            });
+        };
+        let mut name = vec![0u8; AUDIO_DEVICE_NAME_LEN];
+        name[..ACTIVE_AUDIO_DEVICE.len()].copy_from_slice(ACTIVE_AUDIO_DEVICE);
+        // List commands return the number of names written.
+        let data = if matches!(request.command_id, 0 | 6) {
+            1u32.to_le_bytes().to_vec()
+        } else {
+            Vec::new()
+        };
+        Ok(ServiceReply {
+            data,
+            effect: Some(Box::new(crate::BufferWrite::new(output, name))),
+            ..ServiceReply::default()
+        })
+    }
+
+    fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
+        let reply = |data: Vec<u8>| ServiceReply {
+            data,
+            ..ServiceReply::default()
+        };
+        match request.command_id {
+            // SetAudioDeviceOutputVolume / SetAudioDeviceOutputVolumeAuto: the
+            // volume is the first data word (f32); the device name buffer is
+            // not inspected because only one device exists.
+            1 | 7 => {
+                let raw = request.data.get(..4).ok_or(ServiceError::InvalidPayload {
+                    expected: 4,
+                    actual: request.data.len(),
+                })?;
+                let volume = f32::from_le_bytes(raw.try_into().expect("4 bytes"));
+                if !(0.0..=1.0).contains(&volume) {
+                    return Ok(ServiceReply {
+                        result: RESULT_AUDIO_INVALID_ARGUMENT,
+                        ..ServiceReply::default()
+                    });
+                }
+                self.volume = volume;
+                Ok(reply(Vec::new()))
+            }
+            // GetAudioDeviceOutputVolume / ...Auto
+            2 | 8 => Ok(reply(self.volume.to_le_bytes().to_vec())),
+            // QueryAudioDeviceSystemEvent / InputEvent / OutputEvent: no device
+            // changes happen, so the events never signal.
+            4 | 11 | 12 => Ok(ServiceReply {
+                moved_objects: vec![Box::new(crate::event::EventHandle::new(false))],
+                ..ServiceReply::default()
+            }),
+            // GetActiveChannelCount
+            5 => Ok(reply(2u32.to_le_bytes().to_vec())),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IAudioDevice",
+                command,
+            }),
+        }
+    }
+}
+
+/// Out-of-range volume result: audio module 153, description 41. The exact
+/// description is not verified against hardware; it only has to be non-zero.
+const RESULT_AUDIO_INVALID_ARGUMENT: u32 = 153 | (41 << 9);

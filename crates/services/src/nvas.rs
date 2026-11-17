@@ -17,6 +17,10 @@ const MAP_FIXED_OFFSET: u32 = 1;
 const MAP_CACHEABLE: u32 = 4;
 const ALLOC_SPARSE: u32 = 2;
 const MAX_RESERVATIONS: usize = 256;
+/// Live mappings per address space. NVN maps every memory pool (often twice),
+/// so a commercial title needs hundreds; 64 starved Z-A's shader pools.
+/// Matches the GPU address-space core limit.
+pub(crate) const MAX_MAPPINGS: usize = 1024;
 /// `_IOWR('A', 8, nvgpu_as_get_va_regions_args)`: {buf_addr u64, buf_size
 /// u32, reserved u32} then two inline `{offset u64, page_size u32, pad, pages u64}`.
 pub(crate) const GET_VA_REGIONS: u32 = 0xc0404108;
@@ -256,12 +260,22 @@ impl NvAddressSpace {
                 if offset % 4096 != 0 || offset >= view.len() {
                     return Err(BAD_PARAMETER);
                 }
-                let length = if requested == 0 {
-                    view.len() - offset
-                } else {
-                    requested
-                };
-                if length == 0 || length % 4096 != 0 || length > view.len() - offset {
+                let available = view.len() - offset;
+                let length = if requested == 0 { available } else { requested };
+                // Big-page maps of a buffer whose size is not a big-page
+                // multiple (NVN maps a 0xd000-byte shader pool as 0x10000)
+                // cover the VA up to the next big page; only the buffer's own
+                // pages are backed, the tail stays unbacked GPU VA.
+                let big_page = u64::from(page_size) > 4096;
+                let rounded = (available as u64).div_ceil(u64::from(page_size.max(4096))) * u64::from(page_size.max(4096));
+                if length == 0
+                    || length % 4096 != 0
+                    || (length > available && !(big_page && length as u64 <= rounded))
+                {
+                    return Err(BAD_PARAMETER);
+                }
+                let backed = length.min(available);
+                if backed % 4096 != 0 {
                     return Err(BAD_PARAMETER);
                 }
                 // The last field is the alignment, or the GPU VA when fixed.
@@ -279,10 +293,10 @@ impl NvAddressSpace {
                     Some(split) => (va_base, split),
                     None => (va_base, va_end),
                 };
-                if self.regions.len() >= 64 || length > budget.bytes {
+                if self.regions.len() >= MAX_MAPPINGS || length > budget.bytes {
                     return Err(NO_MEMORY);
                 }
-                let view = view.slice(offset, length).map_err(|_| BAD_PARAMETER)?;
+                let view = view.slice(offset, backed).map_err(|_| BAD_PARAMETER)?;
                 if view.backing_ranges().count() > budget.spans {
                     return Err(NO_MEMORY);
                 }
@@ -486,6 +500,39 @@ mod tests {
             .unwrap();
     }
     #[test]
+    fn big_page_fixed_map_rounds_a_short_buffer_up_to_the_big_page() {
+        // NVN maps a 0xd000-byte shader pool as one 64 KiB big page at a
+        // fixed VA inside the small/big window (seen in Z-A at 0x4010000).
+        let mut a = NvAddressSpace::default();
+        let mut args = bytes(&[1, 0, 65536, 0]);
+        for v in [1u64 << 26, 1 << 37, 1 << 34] {
+            args.extend_from_slice(&v.to_le_bytes());
+        }
+        a.ioctl(INITIALIZE, &args, budget(), |_| Err(4)).unwrap();
+        let mut m = AddressSpace::default();
+        m.map(0x10000, vec![0; 0xd000], Permissions::READ_WRITE).unwrap();
+        m.write_u64(0x1c000, 0x5157).unwrap();
+        let view = m.pin(0x10000, 0xd000, Permissions::READ_WRITE).unwrap();
+        let at = 0x0401_0000u64;
+        let fixed = |size: u32, at: u64| [5, 0, 1, 65536, 0, 0, size, 0, at as u32, (at >> 32) as u32];
+        // Beyond the rounded big page, or a small-page map past the buffer: rejected.
+        assert_eq!(map(&mut a, &view, &fixed(0x20000, at)), Err(4));
+        assert_eq!(map(&mut a, &view, &[1, 0, 1, 4096, 0, 0, 0x10000, 0, at as u32, 0]), Err(4));
+        assert_eq!(a.usage(), (0, 0));
+        let out = map(&mut a, &view, &fixed(0x10000, at)).unwrap();
+        assert_eq!(wide(&out, 32), at);
+        // Only the buffer is backed; the rounded tail is reserved VA.
+        assert_eq!(a.usage().0, 0xd000);
+        let mut word8 = [0; 8];
+        a.space.as_ref().unwrap().read(GpuVa(at + 0xc000), &mut word8).unwrap();
+        assert_eq!(u64::from_le_bytes(word8), 0x5157);
+        assert!(a.space.as_ref().unwrap().read(GpuVa(at + 0xd000), &mut word8).is_err());
+        // The whole 64 KiB stays occupied for later fixed maps.
+        assert_eq!(map(&mut a, &view, &[5, 0, 1, 4096, 0, 0, 0x1000, 0, (at + 0xe000) as u32, 0]), Err(4));
+        a.ioctl(UNMAP_BUFFER, &at.to_le_bytes(), budget(), |_| Err(4)).unwrap();
+        assert_eq!(a.usage(), (0, 0));
+    }
+    #[test]
     fn explicit_va_range_bounds_mappings_and_reports_regions() {
         let mut a = NvAddressSpace::default();
         let mut args = bytes(&[1, 0, 65536, 0]);
@@ -532,7 +579,7 @@ mod tests {
         let mut canceled = a.clone();
         map(&mut canceled, &view, &[0, 0, 1, 0, 0, 0, 0, 0, 0, 0]).unwrap();
         drop(canceled);
-        for n in 0..64 {
+        for n in 0..MAX_MAPPINGS as u64 {
             let out = map(&mut a, &view, &[0, 0, 1, 0, 0, 0, 0, 0, 0, 0]).unwrap();
             assert_eq!(wide(&out, 32), VA_BASE + n * 4096);
         }

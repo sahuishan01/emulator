@@ -343,3 +343,25 @@ fn reciprocal_and_rsqrt_estimates_match_arm_tables() {
         assert!(((e * x) - 1.0).abs() < 1.0 / 256.0, "lane {i}: {e}");
     }
 }
+
+#[test]
+fn sqxtun_saturates_signed_lanes_to_unsigned_and_keeps_upper_half_for_v2() {
+    // sqxtun v1.8b, v1.8h ; sqxtun2 v2.16b, v3.8h ; sqxtun b4, h5
+    let (mut cpu, mut memory) = setup_cpu_with_code(&[0x2e212821, 0x6e212862, 0x7e2128a4]);
+    let halves: [i16; 8] = [-1, 0, 1, 127, 128, 255, 256, i16::MIN];
+    let packed = halves
+        .iter()
+        .enumerate()
+        .fold(0u128, |acc, (i, &h)| acc | (u128::from(h as u16) << (16 * i)));
+    cpu.v[1] = packed;
+    cpu.v[3] = packed;
+    cpu.v[2] = 0xaaaa_aaaa_aaaa_aaaa_1122_3344_5566_7788;
+    cpu.v[5] = 0x0123; // 291 -> 255
+    for _ in 0..3 {
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Continue);
+    }
+    let expected: u64 = u64::from_le_bytes([0, 0, 1, 127, 128, 255, 255, 0]);
+    assert_eq!(cpu.v[1], u128::from(expected));
+    assert_eq!(cpu.v[2], (u128::from(expected) << 64) | 0x1122_3344_5566_7788);
+    assert_eq!(cpu.v[4], 0xff);
+}

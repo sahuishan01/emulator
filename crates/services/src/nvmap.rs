@@ -13,6 +13,8 @@ const INVALID_STATE: u32 = 8;
 /// guest memory (views are pinned, not copied), so this bounds bookkeeping.
 pub(crate) const IMPORT_BYTES: usize = 4 * 1024 * 1024 * 1024;
 pub(crate) const IMPORT_SPANS: usize = 4096;
+/// Live nvmap objects per fd (NVN allocates one per memory pool).
+pub(crate) const MAX_OBJECTS_PER_FD: usize = 1024;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ImportBudget {
@@ -108,7 +110,7 @@ impl NvMap {
                     return Err(BAD_PARAMETER);
                 }
                 let size = size.next_multiple_of(4096);
-                if self.objects.values().filter(|o| o.owner == fd).count() >= 64 {
+                if self.objects.values().filter(|o| o.owner == fd).count() >= MAX_OBJECTS_PER_FD {
                     return Err(NO_MEMORY);
                 }
                 let next = self.next.checked_add(1).ok_or(NO_MEMORY)?;
