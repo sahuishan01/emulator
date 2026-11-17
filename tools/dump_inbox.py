@@ -35,6 +35,11 @@ MAX_KEY_FILE = 1 << 20
 DISK_RESERVE = 6 << 30
 GAME_EXTENSIONS = (".nsp", ".xci")
 KEY_NAMES = ("prod.keys", "title.keys")
+# Firmware content: one NCA per file, named by content ID as dumped from the
+# console's system storage (the shared fonts live in system archives).
+FIRMWARE_RE = re.compile(r"^[0-9a-f]{32}(\.cnmt)?\.nca$")
+NCA_HEADER_SIZE = 0xC00
+MAX_FIRMWARE_FILE = 1 << 30
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ ()\[\]+,'-]{0,199}$")
 ID_RE = re.compile(r"^[0-9a-f]{32}$")
 KEY_LINE_RE = re.compile(r"^\s*[A-Za-z0-9_]+\s*=\s*[0-9A-Fa-f]+\s*$")
@@ -59,7 +64,9 @@ def classify(name: str) -> tuple[str, str]:
         return "keys", lowered
     if lowered.endswith(GAME_EXTENSIONS):
         return "games", name
-    raise InboxError(400, "only .nsp, .xci, prod.keys and title.keys are accepted")
+    if FIRMWARE_RE.fullmatch(lowered):
+        return "firmware", lowered
+    raise InboxError(400, "only .nsp, .xci, prod.keys, title.keys and firmware <contentid>.nca are accepted")
 
 
 def validate_content(kind: str, name: str, path: Path) -> None:
@@ -78,6 +85,12 @@ def validate_content(kind: str, name: str, path: Path) -> None:
             entries += 1
         if entries == 0:
             raise InboxError(422, "key file has no entries")
+        return
+    if kind == "firmware":
+        # NCA headers are encrypted with the header key, so only the shape is
+        # checkable here; the emulator validates contents with the user's keys.
+        if path.stat().st_size < NCA_HEADER_SIZE:
+            raise InboxError(422, "not an NCA: smaller than its 0xC00-byte header")
         return
     with path.open("rb") as handle:
         if name.lower().endswith(".nsp"):
@@ -126,7 +139,7 @@ class Inbox:
         self.root = root
         self.gate_cpu = gate_cpu
         self.incoming = root / "incoming"
-        self.dirs = {"games": root / "games", "keys": root / "keys"}
+        self.dirs = {"games": root / "games", "keys": root / "keys", "firmware": root / "firmware"}
         for directory in (root, self.incoming, *self.dirs.values()):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.hash_path = root / "hashes.json"
@@ -157,7 +170,7 @@ class Inbox:
         if not isinstance(name, str) or not isinstance(size, int) or isinstance(size, bool):
             raise InboxError(400, "begin needs a string name and an integer size")
         kind, stored = classify(name)
-        limit = MAX_KEY_FILE if kind == "keys" else MAX_FILE
+        limit = {"keys": MAX_KEY_FILE, "firmware": MAX_FIRMWARE_FILE}.get(kind, MAX_FILE)
         if size <= 0 or size > limit:
             raise InboxError(413, f"size must be between 1 and {limit} bytes for this file type")
         upload_id = hashlib.sha256(f"{stored}\0{size}".encode()).hexdigest()[:32]
@@ -470,7 +483,7 @@ button.ghost{background:transparent;color:var(--dim);border:1px solid var(--line
 input[type=file]{display:none}
 </style></head><body><main>
 <h1>EMULATOR DUMP INBOX</h1>
-<p>Private drop for your own dumps. Accepted: <b>.nsp</b>, <b>.xci</b>, <b>prod.keys</b>, <b>title.keys</b>. Uploads retry on their own and resume from where they stopped; after a reload, pick the same file again.</p>
+<p>Private drop for your own dumps. Accepted: <b>.nsp</b>, <b>.xci</b>, <b>prod.keys</b>, <b>title.keys</b>, and firmware NCAs named <b>&lt;contentid&gt;.nca</b> (select many at once). Uploads retry on their own and resume from where they stopped; after a reload, pick the same file again.</p>
 <p>Browsers pause pages that are minimised or in the background, so keep this tab visible for big files, or use the terminal uploader, which is not affected: download <a href="dump_upload.py" download>dump_upload.py</a> and run <code>python3 dump_upload.py YourGame.nsp</code>.</p>
 <label class="pick">Choose files<input id="pick" type="file" multiple></label>
 <h2>Transfers</h2><div class="panel" id="jobs"><div class="meta">Nothing in progress.</div></div>
@@ -586,7 +599,7 @@ def read_listing(root: Path) -> dict:
     except (OSError, ValueError):
         pass
     files = []
-    for kind in ("games", "keys"):
+    for kind in ("games", "keys", "firmware"):
         directory = root / kind
         if not directory.is_dir():
             continue

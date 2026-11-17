@@ -125,7 +125,7 @@ def upload(client: Client, path: Path, quiet: bool = False) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Resumable terminal uploader for the private dump inbox.")
-    parser.add_argument("files", nargs="+", type=Path, help=".nsp/.xci dumps, prod.keys or title.keys")
+    parser.add_argument("files", nargs="+", type=Path, help=".nsp/.xci dumps, prod.keys, title.keys or firmware <contentid>.nca files")
     parser.add_argument("--url", default=os.environ.get("DUMP_INBOX_URL", DEFAULT_URL))
     parser.add_argument("--user", default=os.environ.get("DUMP_INBOX_USER", "dump"))
     parser.add_argument("--no-auth", action="store_true", help="skip basic auth (loopback testing only)")

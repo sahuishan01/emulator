@@ -112,6 +112,14 @@ class DumpInboxTest(unittest.TestCase):
         self.assertEqual(list((self.root / "games").iterdir()), [self.root / "games" / "real.xci"])
         for name in ("../prod.keys", "a/b.nsp", ".hidden.nsp", "evil.sh", "x..nsp", "", "a\\b.nsp", "n" * 300 + ".nsp"):
             self.assertEqual(self.begin(name, 10)[0], 400, name)
+        # Firmware NCAs: content-ID names only, at least a header long.
+        nca = "0123456789abcdef0123456789abcdef.nca"
+        self.assertEqual(self.store(nca, b"\0" * 0x10)[0], 422)
+        self.assertEqual(self.store(nca.upper().replace(".NCA", ".nca"), b"\1" * 0xC00)[0], 200)
+        self.assertEqual(list((self.root / "firmware").iterdir()), [self.root / "firmware" / nca])
+        for name in ("font.nca", "0123.nca", nca + ".zip"):
+            self.assertEqual(self.begin(name, 0xC00)[0], 400, name)
+        self.assertEqual(self.begin(nca, dump_inbox.MAX_FIRMWARE_FILE + 1)[0], 413)
         self.assertEqual(self.begin("a.nsp", 0)[0], 413)
         self.assertEqual(self.begin("a.nsp", dump_inbox.MAX_FILE + 1)[0], 413)
         self.assertEqual(self.begin("a.nsp", "10")[0], 400)

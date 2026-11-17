@@ -311,6 +311,7 @@ pub struct Kernel {
     ipc_count: u64,
     last_ipc_cmd: u32,
     last_ipc_service: &'static str,
+    ipc_histogram: BTreeMap<(&'static str, u32), u64>,
 }
 
 impl Default for Kernel {
@@ -345,6 +346,7 @@ impl Default for Kernel {
             ipc_count: 0,
             last_ipc_cmd: 0,
             last_ipc_service: "",
+            ipc_histogram: BTreeMap::new(),
         }
     }
 }
@@ -626,6 +628,10 @@ impl Kernel {
     pub fn last_ipc_cmd(&self) -> u32 {
         self.last_ipc_cmd
     }
+    /// Requests per (service, command), for diagnosing guest polling loops.
+    pub fn ipc_histogram(&self) -> &BTreeMap<(&'static str, u32), u64> {
+        &self.ipc_histogram
+    }
     /// Service (or domain object) that received the most recent request.
     pub fn last_ipc_service(&self) -> &'static str {
         self.last_ipc_service
@@ -731,7 +737,6 @@ impl Kernel {
                 .map_err(|_| KernelError::IpcTraceLimit)?;
         }
         trace.service = service.borrow().name();
-        self.last_ipc_service = trace.service;
         let mut input = [0; IPC_BUFFER_SIZE];
         memory
             .read(cpu.tpidrro_el0, &mut input)
@@ -873,6 +878,11 @@ impl Kernel {
             _ => service,
         };
         trace.service = service.borrow().name();
+        self.last_ipc_service = trace.service;
+        *self
+            .ipc_histogram
+            .entry((trace.service, request.command_id))
+            .or_default() += 1;
         let reply_view = memory
             .pin(
                 cpu.tpidrro_el0,

@@ -532,6 +532,13 @@ fn print_run_report(
         kernel.last_ipc_cmd(),
         kernel.live_handle_count()
     );
+    let mut ipcs: Vec<_> = kernel.ipc_histogram().iter().collect();
+    ipcs.sort_by(|a, b| b.1.cmp(a.1));
+    println!("ipc by service/command (top 15):");
+    for ((service, command), count) in ipcs.into_iter().take(15) {
+        let short = service.rsplit("::").next().unwrap_or(service);
+        println!("  {count:>10}  {short} cmd {command}");
+    }
     println!("threads (saved context; current = live registers below):");
     let current = kernel.current_thread_id();
     for t in kernel.thread_summaries() {
