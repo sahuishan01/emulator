@@ -14,6 +14,7 @@ pub mod binder;
 pub mod event;
 pub mod fspsrv;
 pub mod hid;
+pub mod hwopus;
 pub mod lm;
 pub mod pctl;
 pub mod reference;
@@ -164,6 +165,7 @@ impl Service for ServiceManager {
                         Box::new(pctl::ParentalControlFactory)
                     }
                     b"audout:u" => Box::new(AudioOutManager::default()),
+                    b"hwopus\0\0" => Box::new(hwopus::OpusDecoderManager),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
                 Ok(ServiceReply {

@@ -156,6 +156,15 @@ impl<'a> ServiceContext<'a> {
             _ => Err(ServiceError::InvalidTransferMemory),
         }
     }
+    /// Exactly one copied handle: transfer memory owned by the caller.
+    pub fn sole_transfer_memory(&self) -> Result<Rc<TransferMemory>, ServiceError> {
+        match self.copied.as_slice() {
+            [Object::TransferMemory(memory)] if memory.owned_by(&self.process) => {
+                Ok(Rc::clone(memory))
+            }
+            _ => Err(ServiceError::InvalidTransferMemory),
+        }
+    }
     pub fn require_buffers(&self, send: usize, receive: usize) -> Result<(), ServiceError> {
         if self.send.len() != send
             || self.receive.len() != receive
