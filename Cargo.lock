@@ -74,6 +74,10 @@ name = "emulator-memory"
 version = "0.1.0"
 
 [[package]]
+name = "emulator-opus"
+version = "0.1.0"
+
+[[package]]
 name = "emulator-services"
 version = "0.1.0"
 dependencies = [
@@ -83,6 +87,7 @@ dependencies = [
  "emulator-kernel",
  "emulator-loader",
  "emulator-memory",
+ "emulator-opus",
 ]
 
 [[package]]

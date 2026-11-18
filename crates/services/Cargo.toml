@@ -14,6 +14,7 @@ emulator-gpu = { path = "../gpu" }
 emulator-memory = { path = "../memory" }
 
 emulator-a64 = { path = "../a64" }
+emulator-opus = { path = "../opus" }
 
 [lints]
 workspace = true

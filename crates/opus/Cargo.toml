@@ -1,0 +1,12 @@
+[package]
+name = "emulator-opus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Original Opus (RFC 6716) decoder: SILK, CELT and hybrid"
+
+[dependencies]
+
+[lints]
+workspace = true
