@@ -23,6 +23,34 @@ pub(crate) const SET_TIMEOUT: u32 = 0x40044803;
 /// buffer. Z-cull only accelerates depth rejection on hardware; the GPU model
 /// does not need it, so the binding is recorded.
 pub(crate) const ZCULL_BIND: u32 = 0xc010480b;
+/// SUBMIT_GPFIFO flags: wait on the input fence before running.
+pub(crate) const SUBMIT_FENCE_WAIT: u32 = 1 << 0;
+/// Return a fence (syncpoint id, value) that completes after this submit.
+pub(crate) const SUBMIT_FENCE_GET: u32 = 1 << 1;
+/// Entries are in the hardware GP entry format. The legacy user format has
+/// the same two words, so both decode identically.
+pub(crate) const SUBMIT_HW_FORMAT: u32 = 1 << 2;
+/// Skip the wait-for-idle before the driver's syncpoint increment. Work
+/// completes synchronously here, so it has no effect.
+pub(crate) const SUBMIT_SUPPRESS_WFI: u32 = 1 << 4;
+/// Switch "increment by value": believed to raise the channel syncpoint by
+/// the input fence value for increments the pushbuffer itself performs.
+/// Only a zero value (no increment, the form NVN uses) is accepted until
+/// that is verified and pushbuffer syncpoint methods exist.
+pub(crate) const SUBMIT_INCREMENT_BY_VALUE: u32 = 1 << 8;
+const SUBMIT_FLAGS: u32 = SUBMIT_FENCE_WAIT
+    | SUBMIT_FENCE_GET
+    | SUBMIT_HW_FORMAT
+    | SUBMIT_SUPPRESS_WFI
+    | SUBMIT_INCREMENT_BY_VALUE;
+
+/// Validate SUBMIT_GPFIFO flags against the input fence value.
+pub(crate) fn check_submit_flags(flags: u32, fence_value: u32) -> Result<(), u32> {
+    if flags & !SUBMIT_FLAGS != 0 || (flags & SUBMIT_INCREMENT_BY_VALUE != 0 && fence_value != 0) {
+        return Err(NOT_SUPPORTED);
+    }
+    Ok(())
+}
 /// Largest GPFIFO a channel may allocate (entries).
 pub(crate) const MAX_GPFIFO_ENTRIES: usize = 0x10000;
 
@@ -170,10 +198,8 @@ impl Channel {
             return Err(BAD_PARAMETER);
         }
         let flags = word(input, 12);
-        if flags > 3 {
-            return Err(NOT_SUPPORTED);
-        }
-        let next_value = if flags & 2 != 0 {
+        check_submit_flags(flags, word(input, 20))?;
+        let next_value = if flags & SUBMIT_FENCE_GET != 0 {
             completed.checked_add(1).ok_or(NO_MEMORY)?
         } else {
             completed

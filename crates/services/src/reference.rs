@@ -451,9 +451,27 @@ pub fn run() -> Vec<CaseResult> {
             let mut args = vec![0, 0, 9, 2, 0, 0];
             args.extend([0, 0].repeat(9));
             assert_eq!(r.io(r.channel, 0xc0604808, &args), 4);
-            assert_eq!(r.submit(4, 0, 0, 0, 14), 2);
+            // Sync-fence (bit 3) and unknown flags are not supported.
+            assert_eq!(r.submit(8, 0, 0, 0, 14), 2);
+            assert_eq!(r.submit(0x200, 0, 0, 0, 14), 2);
+            // Increment-by-value with a non-zero value is not modelled.
+            assert_eq!(r.submit(0x102, 0, 1, 0, 14), 2);
             r.verify(0x8108, 99);
             assert_eq!(r.read(r.point), 0);
+        }),
+        ("hw-format-suppress-wfi-and-zero-increment-flags", |r| {
+            r.prepare(true, true);
+            r.full_program();
+            // NVN's form: hardware entries, increment by zero, no fence get.
+            assert_eq!(r.submit_inline(0x104, &[0, (14 << 10) | 1], 1), 0);
+            r.verify(0x8108, 42);
+            assert_eq!(r.read(r.point), 0);
+            assert_eq!(r.m.read_u32(0x6014).unwrap(), 0);
+            // Suppress-WFI with a fence still completes and advances it.
+            r.m.write_u64(0x8108, 99).unwrap();
+            assert_eq!(r.submit(0x16, 0, 0, 0, 14), 0);
+            r.verify(0x8108, 42);
+            assert_eq!(r.read(r.point), 1);
         }),
         ("ioctl2-inline-entries", |r| {
             r.prepare(true, true);
@@ -1223,7 +1241,7 @@ mod tests {
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();
-        assert_eq!(cases.len(), 52);
+        assert_eq!(cases.len(), 53);
         for case in cases {
             assert!(case.passed, "{}: {}", case.name, case.error)
         }

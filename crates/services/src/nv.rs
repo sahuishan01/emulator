@@ -533,10 +533,8 @@ impl NvDriver {
         if input.len() < 24 {
             return Err(BAD_PARAMETER);
         }
-        if nvchannel::word(input, 12) > 3 {
-            return Err(NOT_SUPPORTED);
-        }
-        if nvchannel::word(input, 12) & 1 != 0 {
+        nvchannel::check_submit_flags(nvchannel::word(input, 12), nvchannel::word(input, 20))?;
+        if nvchannel::word(input, 12) & nvchannel::SUBMIT_FENCE_WAIT != 0 {
             let id = nvchannel::word(input, 16);
             let value = *self
                 .syncpoints
