@@ -618,3 +618,19 @@ fn bcat_delivery_cache_is_empty_and_sync_is_unavailable() {
     assert!(storage.dispatch(&request(10, &[], None)).is_err());
     assert!(storage.dispatch(&request(0, &[], None)).is_err(), "nothing to open");
 }
+
+#[test]
+fn hid_touch_screen_resolution_is_stored() {
+    use emulator_services::hid::HidService;
+    let mut hid = HidService::default();
+    assert_eq!(hid.touch_resolution(), (1280, 720));
+    let mut payload = 1920u32.to_le_bytes().to_vec();
+    payload.extend_from_slice(&1080u32.to_le_bytes());
+    payload.extend_from_slice(&0x51u64.to_le_bytes());
+    assert_eq!(hid.dispatch(&request(1004, &payload, Some(0x51))).unwrap().result, 0);
+    assert_eq!(hid.touch_resolution(), (1920, 1080));
+    assert!(hid.dispatch(&request(1004, &payload, None)).is_err(), "process id required");
+    assert!(hid.dispatch(&request(1004, &[0; 16], Some(0x51))).is_err(), "zero size");
+    assert!(hid.dispatch(&request(1004, &payload[..8], Some(0x51))).is_err());
+    assert_eq!(hid.touch_resolution(), (1920, 1080));
+}

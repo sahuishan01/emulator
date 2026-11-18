@@ -118,6 +118,8 @@ struct NpadConfig {
     handheld_activation_mode: u64,
     communication_mode: u64,
     vibration_permitted: bool,
+    /// SetTouchScreenResolution: the guest's touch coordinate space.
+    touch_resolution: (u32, u32),
 }
 
 impl Default for NpadConfig {
@@ -128,6 +130,7 @@ impl Default for NpadConfig {
             handheld_activation_mode: 0,
             communication_mode: 0,
             vibration_permitted: true,
+            touch_resolution: (1280, 720),
         }
     }
 }
@@ -145,6 +148,14 @@ impl Default for HidService {
             shared_memory: create_hid_shared_memory(),
             config: NpadConfig::default(),
         }
+    }
+}
+
+impl HidService {
+    /// Touch coordinate space the guest asked for (default 1280x720); host
+    /// touch input is scaled into it.
+    pub fn touch_resolution(&self) -> (u32, u32) {
+        self.config.touch_resolution
     }
 }
 
@@ -297,6 +308,20 @@ impl Service for HidService {
             1001 => data(config.communication_mode.to_le_bytes().to_vec()),
             // SetTouchScreenConfiguration
             1002 => Ok(ServiceReply::default()),
+            // SetTouchScreenResolution(u32 width, u32 height, u64 ARUID, pid)
+            1004 => {
+                crate::payload(request, 16)?;
+                if request.pid.is_none() {
+                    return Err(ServiceError::MissingSenderIdentity);
+                }
+                let width = u32::from_le_bytes(request.data[0..4].try_into().expect("validated"));
+                let height = u32::from_le_bytes(request.data[4..8].try_into().expect("validated"));
+                if width == 0 || height == 0 {
+                    return Err(ServiceError::DeviceFault(format!("touch screen resolution {width}x{height}")));
+                }
+                config.touch_resolution = (width, height);
+                Ok(ServiceReply::default())
+            }
             command => Err(ServiceError::UnsupportedCommand {
                 service: "hid",
                 command,
