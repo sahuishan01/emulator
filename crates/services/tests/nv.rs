@@ -972,3 +972,41 @@ fn timeslice_groups_bind_each_channel_once() {
     assert_eq!(r.m.read_u32(0x2020).unwrap(), 0, "unbind");
     assert_eq!(bind(&mut r, tsg, channel), 0);
 }
+
+#[test]
+fn vsms_mapping_fills_the_ioctl3_inline_buffer() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let fd = r.open_device(b"/dev/nvhost-ctrl-gpu", 0).0;
+    // Ioctl3 (12): A = argument in, B0 = argument out, B1 = inline output.
+    let ioctl3 = |r: &mut Rig, inline_size: u32| {
+        r.m.write(0x6000, &[0u8; 8]).unwrap();
+        r.m.write(0x6100, &[0xee; 8]).unwrap();
+        r.m.write(0x6200, &[0xee; 8]).unwrap();
+        let mut b = [0u8; 256];
+        b[..4].copy_from_slice(&(4u32 | (1 << 20) | (2 << 24)).to_le_bytes());
+        b[4..8].copy_from_slice(&(8u32 + 2).to_le_bytes());
+        let mut at = 8;
+        for (address, size) in [(0x6000u32, 8u32), (0x6100, 8), (0x6200, inline_size)] {
+            b[at..at + 4].copy_from_slice(&size.to_le_bytes());
+            b[at + 4..at + 8].copy_from_slice(&address.to_le_bytes());
+            at += 12;
+        }
+        let cmif = (at + 15) & !15;
+        b[cmif..cmif + 4].copy_from_slice(b"SFCI");
+        b[cmif + 8..cmif + 12].copy_from_slice(&12u32.to_le_bytes());
+        b[cmif + 16..cmif + 24].copy_from_slice(&words(&[fd, 0xc0084713]));
+        r.call(&b).unwrap();
+        r.m.read_u32(0x2020).unwrap()
+    };
+    assert_eq!(ioctl3(&mut r, 8), 0);
+    let mut inline = [0u8; 8];
+    r.m.read(0x6200, &mut inline).unwrap();
+    assert_eq!(inline, [0, 0, 0, 1, 0xee, 0xee, 0xee, 0xee], "one (gpc, tpc) pair per SM");
+    assert_eq!(r.m.read_u64(0x6100).unwrap(), 0, "argument echoed");
+    // A short inline buffer gets a prefix.
+    assert_eq!(ioctl3(&mut r, 2), 0);
+    r.m.read(0x6200, &mut inline).unwrap();
+    assert_eq!(inline[..3], [0, 0, 0xee]);
+    // Plain Ioctl would need a write through the guest pointer: refused.
+    assert_eq!(r.ioctl(fd, 0xc0084713, &[0, 0], 1), 2);
+}

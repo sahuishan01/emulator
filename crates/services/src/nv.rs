@@ -15,6 +15,11 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+/// `_IOWR('G', 0x13, {u64 buffer})` VSMS_MAPPING: one {u8 gpc, u8 tpc} per
+/// SM, returned in the Ioctl3 inline buffer. GM20B: one SM in each of TPC 0/1.
+const VSMS_MAPPING: u32 = 0xc0084713;
+const VSM_MAPPING: [u8; 4] = [0, 0, 0, 1];
+
 /// TSG ioctls (`'T'`): bind/unbind a channel fd, enable/disable/preempt the
 /// group, runlist interleave level {u32 level, u32 reserved} and timeslice
 /// {u32 microseconds, u32 reserved}.
@@ -371,6 +376,9 @@ impl NvDriver {
             // GET_GPU_TIME -> u64 nanoseconds on the guest's virtual clock
             // (the clock behind svcGetSystemTick).
             GET_GPU_TIME => output[0..8].copy_from_slice(&time_ns.to_le_bytes()),
+            // The mapping itself goes to the inline buffer (see `ioctl`); the
+            // argument comes back unchanged.
+            VSMS_MAPPING => {}
             SYNC_READ => {
                 let id = nvchannel::word(input, 0);
                 let value = *self
@@ -571,7 +579,7 @@ impl NvDriver {
         // Ioctl3 forms implemented here copy the payload after a 16-byte
         // header into the inline output buffer.
         let inline_capable = match self.devices[at].object {
-            DeviceObject::Control => matches!(code, GET_CHARACTERISTICS | GET_TPC_MASKS_INLINE),
+            DeviceObject::Control => matches!(code, GET_CHARACTERISTICS | GET_TPC_MASKS_INLINE | VSMS_MAPPING),
             DeviceObject::AddressSpace => code == GET_VA_REGIONS,
             _ => false,
         };
@@ -597,7 +605,7 @@ impl NvDriver {
                 SYNC_WAIT => Some(16),
                 SYNC_INCR | 0x80040015 => Some(4),
                 ZCULL_GET_CTX_SIZE => Some(4),
-                GET_GPU_TIME => Some(8),
+                GET_GPU_TIME | VSMS_MAPPING => Some(8),
                 ZCULL_GET_INFO => Some(40),
                 ZBC_SET_TABLE => Some(0x2c),
                 ZBC_QUERY_TABLE => Some(0x34),
@@ -697,9 +705,17 @@ impl NvDriver {
                 let mut response = reply(&[0]);
                 let mut writes = Vec::new();
                 if let Some(view) = inline_output {
-                    // The inline copy is the payload after the 16-byte header.
-                    let len = view.len().min(bytes.len() - 16);
-                    writes.push(BufferWrite::new(view, bytes[16..16 + len].to_vec()));
+                    // The inline copy is the payload after the 16-byte
+                    // header, or the SM mapping for VSMS_MAPPING.
+                    let payload = if code == VSMS_MAPPING { &VSM_MAPPING[..] } else { &bytes[16..] };
+                    let len = view.len().min(payload.len());
+                    if len > 0 {
+                        let view = view.slice(0, len).map_err(ServiceError::Memory)?;
+                        writes.push(BufferWrite::new(view, payload[..len].to_vec()));
+                    }
+                } else if code == VSMS_MAPPING {
+                    // Writing through the guest pointer is not implemented.
+                    return Ok(reply(&[NOT_SUPPORTED]));
                 }
                 if let Some(view) = output {
                     writes.push(BufferWrite::new(view, bytes));
