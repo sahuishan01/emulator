@@ -2,6 +2,7 @@
 //! borrows or raw pointers escape; the reference executor is single threaded.
 use crate::{Access, MemoryError, Permissions};
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,6 +28,13 @@ struct Backing {
     id: BackingId,
     bytes: RefCell<Box<[u8]>>,
     budget: Rc<AllocationBudget>,
+    /// Live slices (mapped regions and views) by (offset, length), counted.
+    slices: RefCell<BTreeMap<(usize, usize), usize>>,
+}
+impl Backing {
+    fn register(&self, offset: usize, len: usize) {
+        *self.slices.borrow_mut().entry((offset, len)).or_insert(0) += 1;
+    }
 }
 impl Drop for Backing {
     fn drop(&mut self) {
@@ -35,11 +43,32 @@ impl Drop for Backing {
             .set(self.budget.used.get() - self.bytes.get_mut().len());
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct BackingSlice {
     backing: Rc<Backing>,
     offset: usize,
     pub len: usize,
+}
+impl Clone for BackingSlice {
+    fn clone(&self) -> Self {
+        self.backing.register(self.offset, self.len);
+        Self {
+            backing: Rc::clone(&self.backing),
+            offset: self.offset,
+            len: self.len,
+        }
+    }
+}
+impl Drop for BackingSlice {
+    fn drop(&mut self) {
+        let mut slices = self.backing.slices.borrow_mut();
+        let key = (self.offset, self.len);
+        let count = slices.get_mut(&key).expect("registered backing slice");
+        *count -= 1;
+        if *count == 0 {
+            slices.remove(&key);
+        }
+    }
 }
 impl BackingSlice {
     pub fn new(bytes: Vec<u8>, budget: Rc<AllocationBudget>) -> Result<Self, MemoryError> {
@@ -64,23 +93,28 @@ impl BackingSlice {
         }
         let len = bytes.len();
         budget.used.set(used);
+        let backing = Rc::new(Backing {
+            id: BackingId(id),
+            // Discard spare Vec capacity so resident payload accounting
+            // matches the backing allocation retained by pinned views.
+            bytes: RefCell::new(bytes.into_boxed_slice()),
+            budget,
+            slices: RefCell::default(),
+        });
+        backing.register(0, len);
         Ok(Self {
-            backing: Rc::new(Backing {
-                id: BackingId(id),
-                // Discard spare Vec capacity so resident payload accounting
-                // matches the backing allocation retained by pinned views.
-                bytes: RefCell::new(bytes.into_boxed_slice()),
-                budget,
-            }),
+            backing,
             offset: 0,
             len,
         })
     }
     pub fn slice(&self, offset: usize, len: usize) -> Self {
         debug_assert!(offset <= self.len && len <= self.len - offset);
+        let offset = self.offset + offset;
+        self.backing.register(offset, len);
         Self {
             backing: Rc::clone(&self.backing),
-            offset: self.offset + offset,
+            offset,
             len,
         }
     }
@@ -92,8 +126,17 @@ impl BackingSlice {
         let start = self.offset + offset;
         self.backing.bytes.borrow_mut()[start..start + input.len()].copy_from_slice(input);
     }
-    pub(crate) fn owners(&self) -> usize {
-        Rc::strong_count(&self.backing)
+    /// Live slices of the same backing (regions and views) that overlap
+    /// `range`, which must belong to this backing.
+    pub(crate) fn overlapping_slices(&self, range: BackingRange) -> usize {
+        debug_assert_eq!(range.id, self.backing.id);
+        self.backing
+            .slices
+            .borrow()
+            .iter()
+            .filter(|&(&(offset, len), _)| offset < range.offset + range.length && range.offset < offset + len)
+            .map(|(_, count)| count)
+            .sum()
     }
     pub(crate) fn range(&self) -> BackingRange {
         BackingRange {

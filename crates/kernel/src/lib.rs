@@ -586,9 +586,22 @@ impl Kernel {
         self.handles
             .check_capacity(1)
             .map_err(KernelError::Handle)?;
-        let lease = memory
-            .lend(address, size_usize, owner)
-            .map_err(KernelError::Memory)?;
+        // Pages that are unmapped, uncommitted, not read-write or already
+        // lent/aliased/pinned are not in a lendable state: Horizon reports
+        // InvalidCurrentMemory to the guest.
+        let lease = match memory.lend(address, size_usize, owner) {
+            Ok(lease) => lease,
+            Err(
+                emulator_memory::MemoryError::LoanConflict
+                | emulator_memory::MemoryError::InvalidLoan
+                | emulator_memory::MemoryError::NotCommitted { .. }
+                | emulator_memory::MemoryError::Unmapped { .. },
+            ) => {
+                cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
+                return Ok(());
+            }
+            Err(error) => return Err(KernelError::Memory(error)),
+        };
         let object = Rc::new(TransferMemory::new(
             self.process.clone(),
             lease,

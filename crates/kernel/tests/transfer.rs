@@ -1,6 +1,7 @@
 use emulator_a64::Cpu;
 use emulator_kernel::{
-    HandleError, Kernel, KernelError, MAX_TRANSFER_MEMORY_OBJECTS, SVC_CLOSE_HANDLE,
+    HandleError, Kernel, KernelError, MAX_TRANSFER_MEMORY_OBJECTS, RESULT_INVALID_CURRENT_MEMORY,
+    SVC_CLOSE_HANDLE,
     SVC_CREATE_TRANSFER_MEMORY, SVC_EXIT_PROCESS,
 };
 use emulator_memory::{AddressSpace, Permissions};
@@ -51,7 +52,7 @@ fn invalid_transfer_arguments_and_read_only_memory_preserve_cpu_and_memory() {
         (0x4000, 4096, 2),
         (0x4000, 4096, 4),
         (u64::MAX - 4095, 8192, 0),
-        (0x4000, 17 * 1024 * 1024, 0),
+        (0x4000, emulator_kernel::MAX_TRANSFER_MEMORY_BYTES as u64 + 4096, 0),
         (emulator_kernel::THREAD_TLS_ARENA, 4096, 0),
     ] {
         let mut k = Kernel::default();
@@ -74,8 +75,38 @@ fn invalid_transfer_arguments_and_read_only_memory_preserve_cpu_and_memory() {
     let mut c = Cpu::new(0, 0);
     let mut m = AddressSpace::default();
     m.map(0x4000, vec![0; 4096], Permissions::READ).unwrap();
-    assert!(create(&mut k, &mut c, &mut m, 0x4000, 4096, 0).is_err());
+    // Pages that are not lendable are a guest-visible InvalidCurrentMemory.
+    create(&mut k, &mut c, &mut m, 0x4000, 4096, 0).unwrap();
+    assert_eq!(c.x[0], RESULT_INVALID_CURRENT_MEMORY);
     assert_eq!(m.lent_bytes(), 0);
+    assert_eq!(k.live_handle_count(), 1);
+    create(&mut k, &mut c, &mut m, 0x8000, 4096, 0).unwrap();
+    assert_eq!(c.x[0], RESULT_INVALID_CURRENT_MEMORY, "unmapped");
+}
+#[test]
+fn consecutive_transfer_memories_share_a_mapping_but_not_pages() {
+    let mut k = Kernel::default();
+    let mut c = Cpu::new(0, 0);
+    let mut m = AddressSpace::default();
+    m.map(0x10000, vec![0; 0x8000], Permissions::READ_WRITE)
+        .unwrap();
+    let first = create(&mut k, &mut c, &mut m, 0x10000, 0x3000, 0).unwrap();
+    assert_eq!(c.x[0], 0);
+    // Adjacent pages of the same mapping (Z-A carves Opus work buffers
+    // back to back from one heap block).
+    let second = create(&mut k, &mut c, &mut m, 0x13000, 0x3000, 0).unwrap();
+    assert_eq!(c.x[0], 0);
+    assert_ne!(first, second);
+    // Overlapping an existing transfer memory is refused, not a fault.
+    c.x[1] = 0;
+    create(&mut k, &mut c, &mut m, 0x15000, 0x2000, 0).unwrap();
+    assert_eq!(c.x[0], RESULT_INVALID_CURRENT_MEMORY);
+    assert_eq!(k.live_transfer_memory_count(), 2);
+    assert_eq!(m.lent_bytes(), 0x6000);
+    c.x[0] = u64::from(second);
+    k.dispatch(SVC_CLOSE_HANDLE, &mut c, &mut m).unwrap();
+    create(&mut k, &mut c, &mut m, 0x15000, 0x2000, 0).unwrap();
+    assert_eq!(c.x[0], 0);
 }
 #[test]
 fn object_quota_counts_real_objects_and_recovers_after_close() {

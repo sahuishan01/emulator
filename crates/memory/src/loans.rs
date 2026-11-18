@@ -3,7 +3,7 @@
 use crate::{
     fragment, AddressSpace, BackingRange, MemoryError, MemoryView, Permissions, MAX_MAPPINGS,
 };
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 #[derive(Debug)]
 pub(crate) struct LoanState {
     pub permissions: Permissions,
@@ -64,12 +64,6 @@ impl AddressSpace {
         }
         let end = crate::checked_end(address, size)?;
         let selected = self.covered(address, size, None)?;
-        let mut references = BTreeMap::new();
-        for r in &self.regions {
-            if let Some(b) = &r.bytes {
-                *references.entry(b.range().id).or_insert(0_usize) += 1;
-            }
-        }
         let mut ranges = Vec::new();
         for &(index, offset, length) in &selected {
             let region = &self.regions[index];
@@ -84,14 +78,23 @@ impl AddressSpace {
                 return Err(MemoryError::InvalidLoan);
             }
             let backing = bytes.range();
-            if bytes.owners() != references[&backing.id] {
-                return Err(MemoryError::LoanConflict);
-            }
             let selected_range = BackingRange {
                 id: backing.id,
                 offset: backing.offset + offset,
                 length,
             };
+            // Every live slice over the selected bytes must be a mapped
+            // region of this space: an outstanding view (pinned buffer,
+            // earlier loan) or a foreign alias conflicts. Views of other
+            // bytes in the same backing do not.
+            let regions = self
+                .regions
+                .iter()
+                .filter(|r| r.bytes.as_ref().is_some_and(|b| overlaps(b.range(), selected_range)))
+                .count();
+            if bytes.overlapping_slices(selected_range) != regions {
+                return Err(MemoryError::LoanConflict);
+            }
             if ranges.iter().any(|&prior| overlaps(prior, selected_range)) {
                 return Err(MemoryError::LoanConflict);
             }

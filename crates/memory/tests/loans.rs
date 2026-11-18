@@ -147,3 +147,37 @@ fn failed_region_splitting_keeps_all_rights_and_drops_temporary_pins() {
     drop(lease);
     assert_eq!(m.read_u64(0x2000).unwrap(), 42);
 }
+#[test]
+fn loans_and_views_only_conflict_over_the_bytes_they_share() {
+    // One mapping lent piecewise, as a guest does for consecutive transfer
+    // memories carved from one heap block.
+    let mut m = AddressSpace::with_limit(8 * 4096);
+    m.map(0x10000, vec![0; 8 * 4096], Permissions::READ_WRITE)
+        .unwrap();
+    let first = m.lend(0x10000, 2 * 4096, Permissions::NONE).unwrap();
+    let second = m.lend(0x12000, 2 * 4096, Permissions::NONE).unwrap();
+    assert_eq!(m.lent_bytes(), 4 * 4096);
+    // Overlapping an existing loan still conflicts.
+    assert!(matches!(
+        m.lend(0x13000, 2 * 4096, Permissions::NONE),
+        Err(MemoryError::LoanConflict)
+    ));
+    // A pinned view elsewhere in the same backing does not block a loan...
+    let view = m.pin(0x17000, 4096, Permissions::READ).unwrap();
+    let third = m.lend(0x14000, 2 * 4096, Permissions::NONE).unwrap();
+    // ...but one over a single selected page does.
+    assert!(matches!(
+        m.lend(0x16000, 2 * 4096, Permissions::NONE),
+        Err(MemoryError::LoanConflict)
+    ));
+    drop(view);
+    let fourth = m.lend(0x16000, 2 * 4096, Permissions::NONE).unwrap();
+    assert_eq!(m.lent_bytes(), 8 * 4096);
+    drop((first, second, third, fourth));
+    assert_eq!(m.lent_bytes(), 0);
+    // The whole mapping can be lent again once every lease is gone.
+    let whole = m.lend(0x10000, 8 * 4096, Permissions::READ).unwrap();
+    drop(whole);
+    m.unmap(0x10000, 8 * 4096).unwrap();
+    assert_eq!(m.resident_bytes(), 0);
+}
