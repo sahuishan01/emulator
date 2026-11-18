@@ -8,6 +8,8 @@ pub(crate) const ALLOC_FIFO: u32 = 0xc020481a;
 pub(crate) const SYNC_READ: u32 = 0xc0080014;
 pub(crate) const SYNC_WAIT: u32 = 0xc0100019;
 pub(crate) const SUBMIT_GPFIFO_3: u32 = 0xc000481b;
+/// `{u64 gpfifo va, u32 entry count, u32 flags, u32 fence id, u32 fence value}`.
+pub(crate) const SUBMIT_HEADER_SIZE: usize = 24;
 /// `_IOWR('H', 12, {u64 offset, u64 size, u32 nvmap handle, u32 pad})`.
 pub(crate) const SET_ERROR_NOTIFIER: u32 = 0xc018480c;
 /// `_IOW('H', 0x14, u64)` / `_IOR('H', 0x15, u64)`: an opaque value the

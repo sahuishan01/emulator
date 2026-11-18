@@ -18,6 +18,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 const INIT: u32 = 0x40284109;
 const MAP: u32 = 0xc0284106;
 const SUBMIT: u32 = 0xc0204808;
+/// Ioctl2 SUBMIT_GPFIFO: 24-byte argument, entries in the inline buffer.
+const SUBMIT_INLINE: u32 = 0xc018481b;
 fn words(values: &[u32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
@@ -217,6 +219,28 @@ impl Rig {
             SUBMIT,
             &[0, 0, 1, flags, id, value, entry, (length << 10) | 1],
         )
+    }
+    /// Ioctl2 (11) GPFIFO submit: 24-byte argument in A0/B, `entries` in
+    /// the inline A1 buffer at 0x6100.
+    fn submit_inline(&mut self, flags: u32, entries: &[u32], announced: u32) -> u32 {
+        let args = [0, 0, announced, flags, 0, 0];
+        self.m.write(0x6000, &words(&args)).unwrap();
+        self.m.write(0x6100, &words(entries)).unwrap();
+        let mut bytes = [0u8; 256];
+        bytes[..4].copy_from_slice(&(4_u32 | (2 << 20) | (1 << 24)).to_le_bytes());
+        bytes[4..8].copy_from_slice(&10_u32.to_le_bytes());
+        let mut at = 8;
+        for (address, size) in [(0x6000, 24), (0x6100, entries.len() as u32 * 4), (0x6000, 24)] {
+            bytes[at..at + 4].copy_from_slice(&size.to_le_bytes());
+            bytes[at + 4..at + 8].copy_from_slice(&(address as u32).to_le_bytes());
+            at += 12
+        }
+        let cmif = (at + 15) & !15;
+        bytes[cmif..cmif + 4].copy_from_slice(b"SFCI");
+        bytes[cmif + 8..cmif + 12].copy_from_slice(&11_u32.to_le_bytes());
+        bytes[cmif + 16..cmif + 24].copy_from_slice(&words(&[self.channel, SUBMIT_INLINE]));
+        self.call(&bytes).unwrap();
+        self.m.read_u32(0x2020).unwrap()
     }
     fn verify(&mut self, address: u64, value: u64) {
         let actual = self.m.read_u64(address).unwrap();
@@ -430,6 +454,23 @@ pub fn run() -> Vec<CaseResult> {
             assert_eq!(r.submit(4, 0, 0, 0, 14), 2);
             r.verify(0x8108, 99);
             assert_eq!(r.read(r.point), 0);
+        }),
+        ("ioctl2-inline-entries", |r| {
+            r.prepare(true, true);
+            r.full_program();
+            // Entry count must match the inline buffer exactly.
+            assert_eq!(r.submit_inline(2, &[0, (14 << 10) | 1], 2), 4);
+            assert_eq!(r.submit_inline(2, &[0, (14 << 10) | 1, 0, 0], 1), 4);
+            r.verify(0x8108, 99);
+            assert_eq!(r.read(r.point), 0);
+            r.m.write(0x6018, &[0xaa; 8]).unwrap();
+            assert_eq!(r.submit_inline(2, &[0, (14 << 10) | 1], 1), 0);
+            r.verify(0x8108, 42);
+            assert_eq!(r.read(r.point), 1);
+            // Reply: the argument with the fence; nothing past 24 bytes.
+            assert_eq!(r.m.read_u32(0x6010).unwrap(), r.point);
+            assert_eq!(r.m.read_u32(0x6014).unwrap(), 1);
+            assert_eq!(r.m.read_u64(0x6018).unwrap(), 0xaaaa_aaaa_aaaa_aaaa);
         }),
         ("unsupported-context-and-recovery", |r| {
             r.prepare(true, false);
@@ -1182,7 +1223,7 @@ mod tests {
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();
-        assert_eq!(cases.len(), 51);
+        assert_eq!(cases.len(), 52);
         for case in cases {
             assert!(case.passed, "{}: {}", case.name, case.error)
         }

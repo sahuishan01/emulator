@@ -536,8 +536,8 @@ mod tests {
         let text = std::str::from_utf8(&result.bytes[..result.length as usize]).unwrap();
         assert_eq!(result.abi_version, 2);
         assert!(text.ends_with("\"allPassed\":true}"));
-        assert_eq!(text.matches("\"passed\":true").count(), 51);
-        assert_eq!(text.matches("\"handlesAfterExit\":0").count(), 51);
+        assert_eq!(text.matches("\"passed\":true").count(), 52);
+        assert_eq!(text.matches("\"handlesAfterExit\":0").count(), 52);
         assert!(result.bytes[result.length as usize..]
             .iter()
             .all(|b| *b == 0));

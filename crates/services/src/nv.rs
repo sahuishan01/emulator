@@ -527,7 +527,10 @@ impl NvDriver {
             }
         }
         let point = channel.syncpoint as usize - 1;
-        let (next, bytes, work, value) = channel.submit(input, space, self.syncpoints[point])?;
+        let (next, mut bytes, work, value) = channel.submit(input, space, self.syncpoints[point])?;
+        // Entries passed inline (Ioctl2) are not echoed: the reply is the
+        // argument buffer only.
+        bytes.truncate(output.len());
         let gpu_writes: Vec<_> = work.write_ranges().collect();
         let out_ranges: Vec<_> = output.backing_ranges().collect();
         if gpu_writes
@@ -604,7 +607,12 @@ impl NvDriver {
             DeviceObject::AddressSpace => code == GET_VA_REGIONS,
             _ => false,
         };
-        let inline_output = if inline_len == 0 {
+        // Ioctl2 GPFIFO submits carry their entries in the inline input.
+        let inline_entries = inline == Inline::Input
+            && inline_len != 0
+            && matches!(self.devices[at].object, DeviceObject::Channel(_))
+            && nvchannel::submit_size(code) == Some(nvchannel::SUBMIT_HEADER_SIZE);
+        let inline_output = if inline_len == 0 || inline_entries {
             None
         } else if inline == Inline::Output && inline_capable {
             c.auto_receive(1)?
@@ -662,6 +670,18 @@ impl NvDriver {
         if matches!(&self.devices[at].object, DeviceObject::Channel(_))
             && nvchannel::submit_size(code).is_some()
         {
+            if inline_entries {
+                // Exactly the announced entries; Channel::submit takes
+                // entries that follow the header instead of the GPFIFO VA.
+                let count = nvchannel::word(&bytes, 8) as usize;
+                if count.checked_mul(8) != Some(inline_len) {
+                    return Ok(reply(&[BAD_PARAMETER]));
+                }
+                let view = c.auto_send(1)?.expect("non-empty inline input");
+                let mut entries = vec![0; inline_len];
+                view.read(0, &mut entries).map_err(ServiceError::Memory)?;
+                bytes.extend_from_slice(&entries);
+            }
             return Ok(
                 match self.submit(at, &bytes, output.expect("inout submit")) {
                     Ok(reply) => reply,
