@@ -1,8 +1,9 @@
 //! Original `bcat:u` (background content delivery) service for an offline
 //! console: the application's delivery cache exists but nothing has ever been
 //! delivered, so it holds no directories. Synchronisation needs a delivery
-//! server and fails explicitly, as do file and directory opens (there is
-//! nothing to open) and access to other applications' caches.
+//! server: the sync interface exists but its requests fail explicitly, as do
+//! file and directory opens (there is nothing to open) and access to other
+//! applications' caches.
 
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
@@ -30,8 +31,19 @@ impl Service for BcatServiceCreator {
                     ..ServiceReply::default()
                 })
             }
-            // CreateBcatService (0) only drives network synchronisation;
-            // other applications' caches (2) are not reachable.
+            // CreateBcatService(process id): the sync interface. Creating it
+            // is fine offline; its sync requests fail explicitly.
+            0 => {
+                payload(request, 8)?;
+                if request.pid.is_none() {
+                    return Err(ServiceError::MissingSenderIdentity);
+                }
+                Ok(ServiceReply {
+                    moved_objects: vec![Box::new(BcatService)],
+                    ..ServiceReply::default()
+                })
+            }
+            // Other applications' caches (2) are not reachable.
             command => Err(ServiceError::UnsupportedCommand { service: "bcat:u", command }),
         }
     }
@@ -64,5 +76,20 @@ impl Service for DeliveryCacheStorage {
             service: "IDeliveryCacheStorageService",
             command: request.command_id,
         })
+    }
+}
+
+/// `IBcatService`: delivery cache synchronisation, which needs a delivery
+/// server. Every request (sync, cancel, notifier, passphrase, background
+/// tasks) fails explicitly until an offline sync result is modelled.
+#[derive(Clone, Debug, Default)]
+pub struct BcatService;
+
+impl Service for BcatService {
+    fn clone_for_request(&self) -> Box<dyn Service> {
+        Box::new(self.clone())
+    }
+    fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
+        Err(ServiceError::UnsupportedCommand { service: "IBcatService", command: request.command_id })
     }
 }

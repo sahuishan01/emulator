@@ -610,7 +610,9 @@ fn bcat_delivery_cache_is_empty_and_sync_is_unavailable() {
     let mut creator = BcatServiceCreator;
     let mut storage = creator.dispatch(&request(1, &[0; 8], Some(0x51))).unwrap().moved_objects.remove(0);
     assert!(creator.dispatch(&request(1, &[0; 8], None)).is_err(), "process id required");
-    assert!(creator.dispatch(&request(0, &[0; 8], Some(0x51))).is_err(), "no delivery server");
+    let mut sync = creator.dispatch(&request(0, &[0; 8], Some(0x51))).unwrap().moved_objects.remove(0);
+    assert!(sync.dispatch(&request(10100, &[], None)).is_err(), "no delivery server");
+    assert!(creator.dispatch(&request(0, &[0; 8], None)).is_err(), "process id required");
     assert!(creator.dispatch(&request(2, &[0; 8], None)).is_err(), "other applications");
     // Enumeration needs its output buffer (prepare); bare dispatch is rejected.
     assert!(storage.dispatch(&request(10, &[], None)).is_err());
