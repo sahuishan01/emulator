@@ -11,6 +11,7 @@ emulator-a64 = { path = "../a64" }
 emulator-loader = { path = "../loader" }
 emulator-session = { path = "../session" }
 emulator-crypto = { path = "../crypto" }
+emulator-services = { path = "../services" }
 
 [lints]
 workspace = true

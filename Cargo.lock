@@ -31,6 +31,7 @@ dependencies = [
  "emulator-crypto",
  "emulator-loader",
  "emulator-memory",
+ "emulator-services",
  "emulator-session",
 ]
 

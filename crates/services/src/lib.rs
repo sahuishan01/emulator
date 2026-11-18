@@ -1,6 +1,7 @@
 //! Original, deliberately small service implementations for owned homebrew.
 mod gpu;
 mod nv;
+pub use nv::nv_failures;
 mod nvas;
 mod nvchannel;
 mod nvmap;

@@ -865,6 +865,13 @@ fn print_run_report(
             Err(_) => println!("   {address:#010x}: <unmapped>"),
         }
     }
+    let failures = emulator_services::nv_failures();
+    if !failures.is_empty() {
+        println!("nvdrv failures (device, ioctl, nv error: count):");
+        for ((device, code, error), count) in failures {
+            println!("  {device} {code:#010x} error={error:#x}: {count}");
+        }
+    }
     let total: u64 = samples.values().sum();
     if total > 0 {
         let mut hot: Vec<(u64, u64)> = samples.iter().map(|(pc, count)| (*pc, *count)).collect();

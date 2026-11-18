@@ -901,3 +901,15 @@ fn test_nv_query_event_and_extended_commands() {
     let bad_q = r.call(&message(4, &[9999, 1], None, None));
     assert!(bad_q.is_ok());
 }
+
+#[test]
+fn failed_opens_and_ioctls_are_tallied_for_diagnostics() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    assert_eq!(r.open_device(b"/dev/nvhost-tsg-gpu", 0).1, 2);
+    let fd = r.open_device(b"/dev/nvmap", 0).0;
+    assert_eq!(r.ioctl(fd, 0xc0080101, &[0, 77], 1), 4);
+    assert_eq!(r.ioctl(fd, 0xc0080101, &[0, 77], 1), 4);
+    let failures = emulator_services::nv_failures();
+    assert!(failures.contains(&(("open /dev/nvhost-tsg-gpu".to_owned(), 0, 2), 1)));
+    assert!(failures.contains(&(("nvmap".to_owned(), 0xc0080101, 4), 2)));
+}

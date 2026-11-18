@@ -11,7 +11,32 @@ use emulator_kernel::{
     TransferMemory,
 };
 use emulator_memory::{BackingRange, MemoryView, Permissions};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
+
+/// Distinct failure kinds kept by [`nv_failures`].
+const FAILURE_KINDS: usize = 256;
+
+thread_local! {
+    static FAILURES: RefCell<BTreeMap<(String, u32, u32), u64>> = RefCell::default();
+}
+
+fn record_failure(what: String, code: u32, error: u32) {
+    FAILURES.with(|failures| {
+        let mut failures = failures.borrow_mut();
+        let key = (what, code, error);
+        if failures.len() < FAILURE_KINDS || failures.contains_key(&key) {
+            *failures.entry(key).or_default() += 1;
+        }
+    });
+}
+
+/// nvdrv requests on this thread that returned a non-zero nv error:
+/// ((device or "open <path>", ioctl code, error), count). Diagnostics only.
+pub fn nv_failures() -> Vec<((String, u32, u32), u64)> {
+    FAILURES.with(|failures| failures.borrow().iter().map(|(k, v)| (k.clone(), *v)).collect())
+}
 
 pub(crate) const ZCULL_GET_CTX_SIZE: u32 = 0x80044701;
 /// `_IOR('G', 2, nvgpu_gpu_zcull_get_info_args)`: ten u32 out.
@@ -164,7 +189,10 @@ impl NvDriver {
             b"/dev/nvhost-as-gpu" => 1,
             b"/dev/nvhost-gpu" | b"/dev/nvhost-channel" => 2,
             b"/dev/nvhost-ctrl" | b"/dev/nvhost-ctrl-gpu" => 3,
-            _ => return Ok(reply(&[0, NOT_SUPPORTED])),
+            _ => {
+                record_failure(format!("open {}", String::from_utf8_lossy(&bytes)), 0, NOT_SUPPORTED);
+                return Ok(reply(&[0, NOT_SUPPORTED]));
+            }
         };
         if self.devices.len() >= 16 || (kind == 2 && self.syncpoints.len() >= 32) {
             return Ok(reply(&[0, NO_MEMORY]));
@@ -195,6 +223,15 @@ impl NvDriver {
         self.devices.push(Device { fd, object });
         self.next_fd = next;
         Ok(reply(&[fd, 0]))
+    }
+    fn device_name(&self, fd: u32) -> &'static str {
+        match self.devices.iter().find(|d| d.fd == fd).map(|d| &d.object) {
+            Some(DeviceObject::NvMap) => "nvmap",
+            Some(DeviceObject::AddressSpace) => "nvhost-as-gpu",
+            Some(DeviceObject::Channel(_)) => "nvhost-gpu",
+            Some(DeviceObject::Control) => "nvhost-ctrl",
+            None => "unknown fd",
+        }
     }
     fn close(&mut self, r: &Request, c: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
         c.require_buffers(0, 0)?;
@@ -649,9 +686,21 @@ impl Service for NvDriver {
             context.require_copy_handles(0)?;
             return match request.command_id {
                 0 => self.open(request, context),
-                1 => self.ioctl(request, context, Inline::None),
-                11 => self.ioctl(request, context, Inline::Input),
-                12 => self.ioctl(request, context, Inline::Output),
+                1 | 11 | 12 => {
+                    let inline = match request.command_id {
+                        1 => Inline::None,
+                        11 => Inline::Input,
+                        _ => Inline::Output,
+                    };
+                    let target = (request.data.len() >= 8).then(|| (input_word(request, 0), input_word(request, 4)));
+                    let device = target.map_or("?", |(fd, _)| self.device_name(fd));
+                    let response = self.ioctl(request, context, inline)?;
+                    let error = response.data.get(..4).map_or(0, |w| u32::from_le_bytes(w.try_into().expect("4 bytes")));
+                    if error != 0 {
+                        record_failure(device.to_owned(), target.map_or(0, |(_, code)| code), error);
+                    }
+                    Ok(response)
+                }
                 2 => self.close(request, context),
                 4 => self.query_event(request, context),
                 // SetAruid (8), SetGraphicsFirmwareMemoryMarginEnabled (13).
