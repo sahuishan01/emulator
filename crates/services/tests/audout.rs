@@ -165,27 +165,76 @@ impl Rig {
     }
 }
 
+const HANDLES: u64 = 0x3800;
+
+impl Rig {
+    /// RegisterBufferEvent: the out's release event handle.
+    fn buffer_event(&mut self, out: u32) -> u32 {
+        self.call_on(out, 4, &[], &[], &[]).unwrap();
+        self.m.read_u32(TLS + 12).unwrap()
+    }
+    /// Block on `event` with no timeout until the scheduler wakes the thread
+    /// (guest time advances to the next release); returns the guest time.
+    fn wait(&mut self, event: u32) -> u64 {
+        self.m.write_u32(HANDLES, event).unwrap();
+        self.c.x[1] = HANDLES;
+        self.c.x[2] = 1;
+        self.c.x[3] = u64::MAX;
+        self.k.dispatch(emulator_kernel::SVC_WAIT_SYNCHRONIZATION, &mut self.c, &mut self.m).unwrap();
+        assert_eq!(self.k.prepare_execution(&mut self.c), emulator_kernel::ScheduleOutcome::Ready);
+        assert_eq!(self.c.x[0], 0);
+        self.k.scheduler_stats().virtual_time_ns
+    }
+}
+
 #[test]
-fn audio_out_null_sink_releases_buffers_once_started() {
+fn audio_out_paces_buffer_release_at_48khz_of_guest_time() {
     let mut r = Rig::new();
     let out = r.open();
+    let event = r.buffer_event(out);
     r.call_on(out, 0, &[], &[], &[]).unwrap();
     assert_eq!(r.word(2), 1, "a fresh out is stopped");
 
     // Queued while stopped: held, not released.
-    assert_eq!(r.append(out, 0xa1, 0x1000), 0);
+    assert_eq!(r.append(out, 0xa1, 4800 * 4), 0); // 100 ms of stereo PCM16
     assert!(r.released(out).is_empty());
     r.call_on(out, 6, &[], &[], &[0xa1, 0]).unwrap();
     assert_eq!(r.word(2) & 0xff, 1, "ContainsAudioOutBuffer");
 
+    let start = r.k.scheduler_stats().virtual_time_ns;
     r.call_on(out, 1, &[], &[], &[]).unwrap(); // Start
-    assert_eq!(r.append(out, 0xa2, 0x800), 0);
-    assert_eq!(r.released(out), vec![0xa1, 0xa2]);
+    assert_eq!(r.append(out, 0xa2, 2400 * 4), 0); // 50 ms, plays after 0xa1
+    assert!(r.released(out).is_empty(), "nothing has finished playing yet");
+    assert_eq!(r.k.timers().len(), 2);
+
+    assert_eq!(r.wait(event), start + 100_000_000);
+    assert_eq!(r.released(out), vec![0xa1]);
+    r.call_on(out, 10, &[], &[], &[]).unwrap();
+    assert_eq!(r.word(2), 4800, "played sample count");
+    assert_eq!(r.wait(event), start + 150_000_000);
+    assert_eq!(r.released(out), vec![0xa2]);
     assert!(r.released(out).is_empty(), "each tag is returned once");
     r.call_on(out, 10, &[], &[], &[]).unwrap();
-    assert_eq!(r.word(2), (0x1800 / 4) as u32, "played sample count");
+    assert_eq!(r.word(2), 7200);
     r.call_on(out, 6, &[], &[], &[0xa1, 0]).unwrap();
     assert_eq!(r.word(2) & 0xff, 0);
+
+    // An append after the queue ran dry starts playing at once.
+    let now = r.k.scheduler_stats().virtual_time_ns;
+    assert_eq!(r.append(out, 0xa3, 480 * 4), 0); // 10 ms
+    assert_eq!(r.wait(event), now + 10_000_000);
+    assert_eq!(r.released(out), vec![0xa3]);
+
+    // Stop pauses: the queued buffer keeps its tag and its timer is gone.
+    assert_eq!(r.append(out, 0xa4, 480 * 4), 0);
+    r.call_on(out, 2, &[], &[], &[]).unwrap();
+    assert!(r.k.timers().is_empty());
+    assert!(r.released(out).is_empty());
+    // Restarting plays it in full from the restart.
+    let restart = r.k.scheduler_stats().virtual_time_ns;
+    r.call_on(out, 1, &[], &[], &[]).unwrap();
+    assert_eq!(r.wait(event), restart + 10_000_000);
+    assert_eq!(r.released(out), vec![0xa4]);
 }
 
 #[test]

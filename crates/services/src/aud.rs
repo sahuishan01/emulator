@@ -1,8 +1,8 @@
 //! Original audio services (`audren:u`, `audout:u`).
 
 use emulator_ipc::Request;
-use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
-use emulator_memory::MemoryView;
+use emulator_kernel::service::{PreparedServiceEffect, Service, ServiceContext, ServiceError, ServiceReply};
+use emulator_memory::{BackingRange, MemoryView};
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -121,17 +121,30 @@ const AUDIO_OUT_MAX_BUFFERS: usize = 32;
 const AUDIO_OUT_FRAME_BYTES: u64 = 4;
 const RESULT_AUDIO_BUFFER_COUNT_EXCEEDED: u32 = 151 | (153 << 9);
 
-/// `IAudioOut` as a null sink. There is no host audio backend yet: samples
-/// are discarded, and a buffer counts as played as soon as the out is
-/// started (append while started, or Start with queued buffers). Release is
-/// reported through the buffer event exactly as a real drain would, so
-/// guests that pace on it progress; played-sample counts are not
-/// wall-clock accurate.
+/// Guest time one PCM frame takes at the 48 kHz output rate, as a ratio
+/// (ns = frames * 62_500 / 3).
+fn frames_to_ns(frames: u64) -> u64 {
+    frames.saturating_mul(62_500) / 3
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Queued {
+    tag: u64,
+    frames: u64,
+    /// Guest time the buffer finishes playing; `None` while stopped.
+    end_ns: Option<u64>,
+}
+
+/// `IAudioOut` as a paced null sink. There is no host audio backend yet:
+/// samples are discarded, but buffers play back to back at 48 kHz of guest
+/// time once the out is started, so a buffer is released (and the buffer
+/// event signaled, by a kernel timer) when its playback would end, as on
+/// hardware. Released buffers are collected lazily at each request.
 #[derive(Clone, Debug)]
 pub struct AudioOut {
     started: bool,
-    /// Appended, not yet played (only while stopped).
-    pending: VecDeque<(u64, u64)>,
+    /// Appended and not yet finished, in play order.
+    queued: VecDeque<Queued>,
     /// Played, not yet collected by GetReleasedAudioOutBuffers.
     released: VecDeque<u64>,
     played_samples: u64,
@@ -143,7 +156,7 @@ impl Default for AudioOut {
     fn default() -> Self {
         Self {
             started: false,
-            pending: VecDeque::new(),
+            queued: VecDeque::new(),
             released: VecDeque::new(),
             played_samples: 0,
             volume: 1.0,
@@ -152,16 +165,78 @@ impl Default for AudioOut {
     }
 }
 
+/// Timer changes for the buffer event, applied in the effect's fallible
+/// completion step so failed requests leave no timers behind.
+#[derive(Debug)]
+struct ReleaseTimers {
+    timers: Rc<emulator_kernel::TimerQueue>,
+    event: Rc<Cell<bool>>,
+    cancel: bool,
+    arm: Vec<u64>,
+}
+
+impl PreparedServiceEffect for ReleaseTimers {
+    fn write_ranges(&self) -> &[BackingRange] {
+        &[]
+    }
+    fn complete(&mut self) -> Result<(), ServiceError> {
+        if self.cancel {
+            self.timers.cancel(&self.event);
+        }
+        for &due in &self.arm {
+            self.timers
+                .arm_once(&self.event, due)
+                .map_err(|error| ServiceError::DeviceFault(format!("audio out timer: {error:?}")))?;
+        }
+        Ok(())
+    }
+    fn commit(self: Box<Self>) {}
+}
+
 impl AudioOut {
-    fn drain_pending(&mut self) {
-        if !self.started || self.pending.is_empty() {
-            return;
+    /// Release every buffer whose playback ended by `now`.
+    fn advance(&mut self, now: u64) {
+        while let Some(front) = self.queued.front() {
+            if front.end_ns.is_none_or(|end| end > now) {
+                break;
+            }
+            let done = self.queued.pop_front().expect("front exists");
+            self.played_samples += done.frames;
+            self.released.push_back(done.tag);
         }
-        for (tag, size) in self.pending.drain(..) {
-            self.played_samples += size / AUDIO_OUT_FRAME_BYTES;
-            self.released.push_back(tag);
+        if !self.released.is_empty() {
+            self.event.set(true);
         }
-        self.event.set(true);
+    }
+
+    /// Schedule unscheduled buffers to play back to back from `now` (or the
+    /// end of the buffer playing now); returns their end times.
+    fn schedule(&mut self, now: u64) -> Vec<u64> {
+        let mut cursor = self
+            .queued
+            .iter()
+            .filter_map(|q| q.end_ns)
+            .max()
+            .unwrap_or(now)
+            .max(now);
+        let mut ends = Vec::new();
+        for queued in self.queued.iter_mut().filter(|q| q.end_ns.is_none()) {
+            cursor = cursor.saturating_add(frames_to_ns(queued.frames));
+            queued.end_ns = Some(cursor);
+            ends.push(cursor);
+        }
+        ends
+    }
+
+    fn timers(&self, context: &ServiceContext<'_>, cancel: bool, arm: Vec<u64>) -> Option<Box<dyn PreparedServiceEffect>> {
+        (cancel || !arm.is_empty()).then(|| {
+            Box::new(ReleaseTimers {
+                timers: context.timers().clone(),
+                event: Rc::clone(&self.event),
+                cancel,
+                arm,
+            }) as _
+        })
     }
 
     fn word<const N: usize>(request: &Request) -> Result<[u8; N], ServiceError> {
@@ -187,6 +262,8 @@ impl Service for AudioOut {
         context: &ServiceContext<'_>,
     ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
+        let now = context.virtual_time_ns();
+        self.advance(now);
         match request.command_id {
             // AppendAudioOutBuffer (3, A buffer) / Auto (7): u64 tag in, the
             // buffer holds the guest AudioOutBuffer record.
@@ -205,7 +282,7 @@ impl Service for AudioOut {
                         ..ServiceReply::default()
                     });
                 };
-                if self.pending.len() + self.released.len() >= AUDIO_OUT_MAX_BUFFERS {
+                if self.queued.len() + self.released.len() >= AUDIO_OUT_MAX_BUFFERS {
                     return Ok(ServiceReply {
                         result: RESULT_AUDIO_BUFFER_COUNT_EXCEEDED,
                         ..ServiceReply::default()
@@ -213,9 +290,16 @@ impl Service for AudioOut {
                 }
                 let mut size = [0u8; 8];
                 record.read(0x18, &mut size).map_err(ServiceError::Memory)?;
-                self.pending.push_back((tag, u64::from_le_bytes(size)));
-                self.drain_pending();
-                Ok(ServiceReply::default())
+                self.queued.push_back(Queued {
+                    tag,
+                    frames: u64::from_le_bytes(size) / AUDIO_OUT_FRAME_BYTES,
+                    end_ns: None,
+                });
+                let arm = if self.started { self.schedule(now) } else { Vec::new() };
+                Ok(ServiceReply {
+                    effect: self.timers(context, false, arm),
+                    ..ServiceReply::default()
+                })
             }
             // GetReleasedAudioOutBuffers (5, B buffer) / Auto (8): u64 tags
             // out, count returned.
@@ -245,6 +329,49 @@ impl Service for AudioOut {
                     ..ServiceReply::default()
                 })
             }
+            // Start: queued buffers play from now.
+            1 => {
+                context.require_buffers(0, 0)?;
+                let arm = if self.started {
+                    Vec::new()
+                } else {
+                    self.started = true;
+                    self.schedule(now)
+                };
+                Ok(ServiceReply {
+                    effect: self.timers(context, false, arm),
+                    ..ServiceReply::default()
+                })
+            }
+            // Stop: playback pauses; unfinished buffers stay queued and are
+            // rescheduled in full on the next Start.
+            2 => {
+                context.require_buffers(0, 0)?;
+                self.started = false;
+                for queued in &mut self.queued {
+                    queued.end_ns = None;
+                }
+                Ok(ServiceReply {
+                    effect: self.timers(context, true, Vec::new()),
+                    ..ServiceReply::default()
+                })
+            }
+            // FlushAudioOutBuffers: unfinished buffers are returned unplayed.
+            11 => {
+                context.require_buffers(0, 0)?;
+                let any = !self.queued.is_empty();
+                for queued in self.queued.drain(..) {
+                    self.released.push_back(queued.tag);
+                }
+                if any {
+                    self.event.set(true);
+                }
+                Ok(ServiceReply {
+                    data: vec![u8::from(any)],
+                    effect: self.timers(context, any, Vec::new()),
+                    ..ServiceReply::default()
+                })
+            }
             _ => {
                 context.require_buffers(0, 0)?;
                 self.dispatch(request)
@@ -260,15 +387,6 @@ impl Service for AudioOut {
         match request.command_id {
             // GetAudioOutState: 0 started, 1 stopped.
             0 => Ok(reply(u32::from(!self.started).to_le_bytes().to_vec())),
-            1 => {
-                self.started = true;
-                self.drain_pending();
-                Ok(reply(Vec::new()))
-            }
-            2 => {
-                self.started = false;
-                Ok(reply(Vec::new()))
-            }
             // RegisterBufferEvent: the shared release event.
             4 => Ok(ServiceReply {
                 moved_objects: vec![Box::new(crate::event::EventHandle(Rc::clone(&self.event)))],
@@ -277,24 +395,13 @@ impl Service for AudioOut {
             // ContainsAudioOutBuffer: still owned by the audio out.
             6 => {
                 let tag = u64::from_le_bytes(Self::word::<8>(request)?);
-                let held = self.pending.iter().any(|&(t, _)| t == tag) || self.released.contains(&tag);
+                let held = self.queued.iter().any(|q| q.tag == tag) || self.released.contains(&tag);
                 Ok(reply(vec![u8::from(held)]))
             }
             // GetAudioOutBufferCount
-            9 => Ok(reply(((self.pending.len() + self.released.len()) as u32).to_le_bytes().to_vec())),
-            // GetAudioOutPlayedSampleCount
+            9 => Ok(reply(((self.queued.len() + self.released.len()) as u32).to_le_bytes().to_vec())),
+            // GetAudioOutPlayedSampleCount: frames of fully played buffers.
             10 => Ok(reply(self.played_samples.to_le_bytes().to_vec())),
-            // FlushAudioOutBuffers: queued buffers are returned unplayed.
-            11 => {
-                let any = !self.pending.is_empty();
-                for (tag, _) in self.pending.drain(..) {
-                    self.released.push_back(tag);
-                }
-                if any {
-                    self.event.set(true);
-                }
-                Ok(reply(vec![u8::from(any)]))
-            }
             12 => {
                 let volume = f32::from_le_bytes(Self::word::<4>(request)?);
                 if !(0.0..=1.0).contains(&volume) {
@@ -307,6 +414,7 @@ impl Service for AudioOut {
                 Ok(reply(Vec::new()))
             }
             13 => Ok(reply(self.volume.to_le_bytes().to_vec())),
+            // Start / Stop / Flush need the request time (see prepare).
             command => Err(ServiceError::UnsupportedCommand {
                 service: "IAudioOut",
                 command,
