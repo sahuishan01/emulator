@@ -75,23 +75,51 @@ fn record_failure(what: String, code: u32, error: u32, arguments: &[u8]) {
 }
 
 thread_local! {
-    static SUBMIT_ERRORS: RefCell<BTreeMap<String, u64>> = RefCell::default();
+    static SUBMIT_ERRORS: RefCell<BTreeMap<String, (u64, String)>> = RefCell::default();
 }
 
-/// Keep the GPU-side reason a GPFIFO submit was rejected (diagnostics).
-pub(crate) fn record_submit_error(error: String) {
+/// Keep the GPU-side reason a GPFIFO submit was rejected, with the entry
+/// count, a census of GP entry control bits and the first entries of its
+/// first occurrence (diagnostics).
+pub(crate) fn record_submit_error(error: String, entries: &[u8]) {
     SUBMIT_ERRORS.with(|errors| {
         let mut errors = errors.borrow_mut();
         if errors.len() < FAILURE_KINDS || errors.contains_key(&error) {
-            *errors.entry(error).or_default() += 1;
+            let entry = errors.entry(error).or_insert_with(|| (0, describe_entries(entries)));
+            entry.0 += 1;
         }
     });
 }
 
-/// Distinct GPU errors behind rejected GPFIFO submits on this thread, with
-/// counts. Diagnostics only.
-pub fn nv_submit_errors() -> Vec<(String, u64)> {
-    SUBMIT_ERRORS.with(|errors| errors.borrow().iter().map(|(k, v)| (k.clone(), *v)).collect())
+fn describe_entries(entries: &[u8]) -> String {
+    let words: Vec<u32> = entries
+        .chunks_exact(4)
+        .map(|w| u32::from_le_bytes(w.try_into().expect("4 bytes")))
+        .collect();
+    let pairs: Vec<(u32, u32)> = words.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+    let count = |f: &dyn Fn(&(u32, u32)) -> bool| pairs.iter().filter(|p| f(p)).count();
+    let first: Vec<String> = pairs
+        .iter()
+        .take(4)
+        .map(|(low, high)| format!("{low:08x}:{high:08x}"))
+        .collect();
+    format!(
+        "entries={} words={} zero_len={} sync={} subroutine={} priv={} conditional={} first=[{}]",
+        pairs.len(),
+        pairs.iter().map(|(_, high)| u64::from((high >> 10) & 0x1f_ffff)).sum::<u64>(),
+        count(&|(_, high)| (high >> 10) & 0x1f_ffff == 0),
+        count(&|(_, high)| high & 0x8000_0000 != 0),
+        count(&|(_, high)| high & 0x200 != 0),
+        count(&|(_, high)| high & 0x100 != 0),
+        count(&|(low, _)| low & 3 != 0),
+        first.join(" ")
+    )
+}
+
+/// Distinct GPU errors behind rejected GPFIFO submits on this thread:
+/// (error, (count, first occurrence's entries)). Diagnostics only.
+pub fn nv_submit_errors() -> Vec<(String, (u64, String))> {
+    SUBMIT_ERRORS.with(|errors| errors.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect())
 }
 
 /// nvdrv requests on this thread that returned a non-zero nv error:

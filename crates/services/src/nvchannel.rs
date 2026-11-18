@@ -224,7 +224,7 @@ impl Channel {
             .processor
             .prepare_for_class(space, &entries_bytes, self.context)
             .map_err(|error| {
-                crate::nv::record_submit_error(error);
+                crate::nv::record_submit_error(error, &entries_bytes);
                 BAD_PARAMETER
             })?;
         let mut next = self.clone();

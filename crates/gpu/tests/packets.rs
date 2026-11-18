@@ -69,17 +69,41 @@ fn gpfifo_entry_uses_all_40_address_bits_and_exact_declared_capture_length() {
     }
 }
 #[test]
+fn sync_wait_entries_fetch_and_nop_control_entries_are_skippable() {
+    // SYNC=wait (bit 31) changes ordering only; the fetch is unchanged.
+    let synced = GpEntry::parse(&bytes(&[0x1000, 0x8000_0412])).unwrap();
+    assert_eq!(
+        synced,
+        GpEntry::Fetch(GpFifoEntry {
+            address: GpuVa(0x12_0000_1000),
+            word_count: 1
+        })
+    );
+    assert_eq!(GpEntry::parse(&bytes(&[0, 0])).unwrap(), GpEntry::ControlNop);
+    assert_eq!(
+        GpEntry::parse(&bytes(&[0, 0x8000_0000])).unwrap(),
+        GpEntry::ControlNop
+    );
+}
+#[test]
 fn unsupported_entry_control_flags_and_address_overflow_fail_explicitly() {
     for (low, high) in [
         (1, 0x400),
         (2, 0x400),
         (0, 0x500),
         (0, 0x600),
-        (0, 0x80000400),
         (0, 0),
     ] {
         assert_eq!(
             GpFifoEntry::parse(&bytes(&[low, high])),
+            Err(DecodeError::UnsupportedEntry)
+        );
+    }
+    // Control entries other than NOP (ILLEGAL, GP/PB CRC), or with
+    // privilege/subroutine bits, are not modelled.
+    for (low, high) in [(1, 0), (2, 0), (3, 0), (0, 0x100), (0, 0x200), (0, 0x12)] {
+        assert_eq!(
+            GpEntry::parse(&bytes(&[low, high])),
             Err(DecodeError::UnsupportedEntry)
         );
     }

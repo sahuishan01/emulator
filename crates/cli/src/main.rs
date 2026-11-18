@@ -876,8 +876,8 @@ fn print_run_report(
     let submit_errors = emulator_services::nv_submit_errors();
     if !submit_errors.is_empty() {
         println!("GPFIFO submits rejected by the GPU model (reason: count):");
-        for (error, count) in submit_errors {
-            println!("  {error}: {count}");
+        for (error, (count, first)) in submit_errors {
+            println!("  {error}: {count} (first: {first})");
         }
     }
     let total: u64 = samples.values().sum();

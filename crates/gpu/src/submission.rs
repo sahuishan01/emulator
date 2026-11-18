@@ -1,6 +1,6 @@
 use crate::address_space::MAX_BACKING_SPANS;
 use crate::{
-    decode_pushbuffer, AddressSpaceId, DecodeError, GpFifoEntry, GpuAddressSpace, GpuMemoryError,
+    decode_pushbuffer, AddressSpaceId, DecodeError, GpEntry, GpuAddressSpace, GpuMemoryError,
     GpuMemoryRange, MethodWrite, MAX_METHOD_WRITES, MAX_PUSHBUFFER_WORDS,
 };
 use emulator_memory::{Access, BackingRange};
@@ -233,7 +233,10 @@ impl SubmissionQueue {
         let mut sources = Vec::new();
         let mut spans = stats.pinned_spans;
         for raw in entries.chunks_exact(8) {
-            let entry = GpFifoEntry::parse(raw).map_err(QueueError::Decode)?;
+            let entry = match GpEntry::parse(raw).map_err(QueueError::Decode)? {
+                GpEntry::Fetch(entry) => entry,
+                GpEntry::ControlNop => continue,
+            };
             let size = entry.word_count as usize * 4;
             let total = bytes.len() + size;
             if total > MAX_PUSHBUFFER_WORDS * 4

@@ -467,6 +467,14 @@ pub fn run() -> Vec<CaseResult> {
             r.verify(0x8108, 42);
             assert_eq!(r.read(r.point), 0);
             assert_eq!(r.m.read_u32(0x6014).unwrap(), 0);
+            // A NOP control entry and a SYNC=wait fetch in one submit.
+            r.m.write_u64(0x8108, 99).unwrap();
+            assert_eq!(r.submit_inline(0x104, &[0, 0, 0, 0x8000_0000 | (14 << 10) | 1], 2), 0);
+            r.verify(0x8108, 42);
+            // Other control opcodes are still rejected without effects.
+            r.m.write_u64(0x8108, 99).unwrap();
+            assert_eq!(r.submit_inline(0x104, &[1, 0, 0, (14 << 10) | 1], 2), 4);
+            r.verify(0x8108, 99);
             // Suppress-WFI with a fence still completes and advances it.
             r.m.write_u64(0x8108, 99).unwrap();
             assert_eq!(r.submit(0x16, 0, 0, 0, 14), 0);

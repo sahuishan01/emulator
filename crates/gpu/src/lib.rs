@@ -84,7 +84,20 @@ impl fmt::Display for DecodeError {
 }
 impl std::error::Error for DecodeError {}
 
-impl GpFifoEntry {
+/// One GPFIFO entry: a pushbuffer fetch, or a zero-length control entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpEntry {
+    Fetch(GpFifoEntry),
+    /// Zero-length entry with control opcode NOP: nothing to fetch.
+    ControlNop,
+}
+impl GpEntry {
+    /// Entry word 0: fetch mode (bits 0-1), address bits 2-31 (or the control
+    /// opcode in bits 0-7 when the length is zero). Word 1: address bits
+    /// 32-39 (0-7), privilege (8), subroutine level (9), length in words
+    /// (10-30), sync (31). SYNC=wait only orders the fetch after earlier
+    /// pushbuffer data is consumed; submissions execute in order to
+    /// completion here, so it needs no further action.
     pub fn parse(bytes: &[u8]) -> Result<Self, DecodeError> {
         if bytes.len() != 8 {
             return Err(DecodeError::InvalidEntrySize);
@@ -92,9 +105,21 @@ impl GpFifoEntry {
         let low = u32::from_le_bytes(bytes[..4].try_into().expect("four bytes"));
         let high = u32::from_le_bytes(bytes[4..].try_into().expect("four bytes"));
         let word_count = (high >> 10) & 0x1f_ffff;
-        // Conditional fetch, reserved bit 1, kernel privilege, subroutine level,
-        // sync-wait and zero-length control entries need semantics not yet owned.
-        if low & 3 != 0 || high & 0x8000_0300 != 0 || word_count == 0 {
+        // Kernel privilege and subroutine level need semantics not yet owned.
+        if high & 0x300 != 0 {
+            return Err(DecodeError::UnsupportedEntry);
+        }
+        if word_count == 0 {
+            // Control entries: only NOP (opcode 0, no address) is modelled;
+            // ILLEGAL and the CRC checks fail explicitly.
+            return if low == 0 && high & 0xff == 0 {
+                Ok(Self::ControlNop)
+            } else {
+                Err(DecodeError::UnsupportedEntry)
+            };
+        }
+        // Conditional fetch and reserved fetch mode bit 1.
+        if low & 3 != 0 {
             return Err(DecodeError::UnsupportedEntry);
         }
         if word_count as usize > MAX_PUSHBUFFER_WORDS {
@@ -105,10 +130,19 @@ impl GpFifoEntry {
         if end > GPU_ADDRESS_LIMIT {
             return Err(DecodeError::AddressOverflow);
         }
-        Ok(Self {
+        Ok(Self::Fetch(GpFifoEntry {
             address,
             word_count,
-        })
+        }))
+    }
+}
+impl GpFifoEntry {
+    /// A pushbuffer fetch entry; control entries are `UnsupportedEntry`.
+    pub fn parse(bytes: &[u8]) -> Result<Self, DecodeError> {
+        match GpEntry::parse(bytes)? {
+            GpEntry::Fetch(entry) => Ok(entry),
+            GpEntry::ControlNop => Err(DecodeError::UnsupportedEntry),
+        }
     }
     /// The caller must separately resolve/read GPU virtual memory. This only
     /// validates the captured bytes' declared length and command framing.
