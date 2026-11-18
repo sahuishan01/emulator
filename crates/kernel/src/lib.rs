@@ -636,6 +636,10 @@ impl Kernel {
             })
             .collect()
     }
+    /// The timer queue services arm through `ServiceContext::timers`.
+    pub fn timers(&self) -> Rc<TimerQueue> {
+        self.scheduler.timers()
+    }
     pub fn scheduler_stats(&self) -> SchedulerStats {
         self.scheduler.stats()
     }

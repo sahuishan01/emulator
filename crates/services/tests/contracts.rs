@@ -184,8 +184,9 @@ fn test_vi_and_applet_services() {
     assert!(binder.dispatch(&request(0, &[1, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0], None)).is_err());
 
     // DisplayService layer and vsync commands
-    let vsync = display.dispatch(&request(5202, &[0; 8], None)).unwrap();
-    assert!(vsync.moved_objects[0].as_handle().is_some());
+    // The vsync event arms a kernel timer, so it needs the request context
+    // (see tests/vi_vsync.rs); bare dispatch rejects it.
+    assert!(display.dispatch(&request(5202, &[0; 8], None)).is_err());
     assert!(display.dispatch(&request(2201, &[], None)).is_err(), "unimplemented commands fail");
 
     // Account Service (acc:u0)

@@ -4,17 +4,52 @@
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
 use crate::binder::{BinderError, BufferQueue, QueuedFrame};
+use emulator_kernel::service::PreparedServiceEffect;
+use emulator_kernel::TimerQueue;
+use emulator_memory::BackingRange;
+use std::cell::Cell;
 use std::rc::Rc;
+
+/// Display refresh period: 60 Hz.
+pub const VSYNC_PERIOD_NS: u64 = 16_666_667;
 
 #[derive(Clone, Debug, Default)]
 pub struct ViManagerService {
     graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>,
+    /// The default display's vsync signal, shared by its display services.
+    vsync: Rc<Cell<bool>>,
 }
 
 impl ViManagerService {
     pub fn with_graphics(graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>) -> Self {
-        Self { graphics }
+        Self {
+            graphics,
+            vsync: Rc::default(),
+        }
     }
+}
+
+/// Arms the periodic vsync timer the first time the event is handed out.
+#[derive(Debug)]
+struct ArmVsync {
+    timers: Rc<TimerQueue>,
+    signal: Rc<Cell<bool>>,
+    first_ns: u64,
+}
+
+impl PreparedServiceEffect for ArmVsync {
+    fn write_ranges(&self) -> &[BackingRange] {
+        &[]
+    }
+    fn complete(&mut self) -> Result<(), ServiceError> {
+        if !self.timers.is_armed(&self.signal) {
+            self.timers
+                .arm_periodic(&self.signal, self.first_ns, VSYNC_PERIOD_NS)
+                .map_err(|error| ServiceError::DeviceFault(format!("vsync timer: {error:?}")))?;
+        }
+        Ok(())
+    }
+    fn commit(self: Box<Self>) {}
 }
 
 /// `IHOSBinderDriver`: routes parcels to each layer's buffer queue.
@@ -236,11 +271,40 @@ fn default_display_name(name: &[u8]) -> bool {
 #[derive(Clone, Debug, Default)]
 pub struct DisplayService {
     graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>,
+    vsync: Rc<Cell<bool>>,
 }
 
 impl DisplayService {
     pub fn with_graphics(graphics: Option<Rc<dyn emulator_gpu::GraphicsBackend>>) -> Self {
-        Self { graphics }
+        Self {
+            graphics,
+            vsync: Rc::default(),
+        }
+    }
+
+    /// GetDisplayVsyncEvent(u64 display_id): the default display's vsync
+    /// event, signaled every [`VSYNC_PERIOD_NS`] of guest time from the
+    /// first request on.
+    fn vsync_event(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
+        context.require_buffers(0, 0)?;
+        context.require_copy_handles(0)?;
+        crate::payload(request, 8)?;
+        if read_u64(request, 0) != DEFAULT_DISPLAY_ID {
+            return Err(ServiceError::InvalidPayload { expected: 8, actual: request.data.len() });
+        }
+        Ok(ServiceReply {
+            moved_objects: vec![Box::new(crate::event::EventHandle(self.vsync.clone()))],
+            effect: Some(Box::new(ArmVsync {
+                timers: context.timers().clone(),
+                signal: self.vsync.clone(),
+                first_ns: context.virtual_time_ns().saturating_add(VSYNC_PERIOD_NS),
+            })),
+            ..ServiceReply::default()
+        })
     }
 
     /// Commands writing a B (receive) buffer: the parcel or display list.
@@ -313,6 +377,7 @@ impl Service for DisplayService {
     ) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
             1000 | 2020 | 2030 => self.with_output(request, context),
+            5202 => self.vsync_event(request, context),
             _ => {
                 context.require_buffers(0, 0)?;
                 context.require_copy_handles(0)?;
@@ -382,16 +447,6 @@ impl Service for DisplayService {
                 crate::payload(request, 16)?;
                 Ok(ServiceReply::default())
             }
-            // GetDisplayVsyncEvent(u64 display_id) -> copy handle.
-            // No vsync timer exists yet: the event starts signaled so the
-            // first wait returns; a periodic vsync source is still missing.
-            5202 => {
-                crate::payload(request, 8)?;
-                Ok(ServiceReply {
-                    moved_objects: vec![Box::new(crate::event::EventHandle::new(true))],
-                    ..ServiceReply::default()
-                })
-            }
             command => Err(ServiceError::UnsupportedCommand {
                 service: "IApplicationDisplayService",
                 command,
@@ -450,7 +505,10 @@ impl Service for ViManagerService {
                 Ok(ServiceReply {
                     result: 0,
                     data: Vec::new(),
-                    moved_objects: vec![Box::new(DisplayService::with_graphics(self.graphics.clone()))],
+                    moved_objects: vec![Box::new(DisplayService {
+                        graphics: self.graphics.clone(),
+                        vsync: self.vsync.clone(),
+                    })],
                     effect: None,
                 })
             }
