@@ -823,11 +823,14 @@ fn test_nv_ctrl_gpu_and_characteristics() {
     let c = 16;
     assert_eq!(word(c), 0x120); // arch
     assert_eq!(word(c + 4), 0x0b); // impl
-    assert_eq!(word(c + 0x44), 0xb197); // threed_class
-    assert_eq!(word(c + 0x48), 0xb1c0); // compute_class
-    assert_eq!(word(c + 0x4c), 0xb06f); // gpfifo_class
-    assert_eq!(word(c + 0x54), 0xb0b5); // dma_copy_class
-    assert_eq!(&out[c + 0x78..c + 0x7d], b"gm20b");
+    assert_eq!(word(c + 0x5c), 0xb197); // threed_class (Switch layout)
+    assert_eq!(word(c + 0x50), 0x55); // flags
+    assert_eq!(word(c + 0x68), 0xa140); // inline_to_memory_class
+    assert_eq!(word(c + 0x3c), 0x503); // sm_arch_sm_version
+    assert_eq!(word(c + 0x60), 0xb1c0); // compute_class
+    assert_eq!(word(c + 0x64), 0xb06f); // gpfifo_class
+    assert_eq!(word(c + 0x6c), 0xb0b5); // dma_copy_class
+    assert_eq!(&out[c + 0x90..c + 0x95], b"gm20b");
 
     // Test GET_TPC_MASKS
     let tpc_code = 0x800c4706u32;

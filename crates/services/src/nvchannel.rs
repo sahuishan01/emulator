@@ -8,6 +8,21 @@ pub(crate) const ALLOC_FIFO: u32 = 0xc020481a;
 pub(crate) const SYNC_READ: u32 = 0xc0080014;
 pub(crate) const SYNC_WAIT: u32 = 0xc0100019;
 pub(crate) const SUBMIT_GPFIFO_3: u32 = 0xc000481b;
+/// `_IOWR('H', 12, {u64 offset, u64 size, u32 nvmap handle, u32 pad})`.
+pub(crate) const SET_ERROR_NOTIFIER: u32 = 0xc018480c;
+/// `_IOW('H', 0x14, u64)` / `_IOR('H', 0x15, u64)`: an opaque value the
+/// client attaches to the channel and reads back.
+pub(crate) const SET_USER_DATA: u32 = 0x40084714;
+pub(crate) const GET_USER_DATA: u32 = 0x80084715;
+/// `_IOW('H', 3, u32)`: job timeout in milliseconds. Submissions complete
+/// synchronously, so it never expires.
+pub(crate) const SET_TIMEOUT: u32 = 0x40044803;
+/// `_IOWR('H', 11, {u64 gpu_va, u32 mode, u32 reserved})`: the z-cull context
+/// buffer. Z-cull only accelerates depth rejection on hardware; the GPU model
+/// does not need it, so the binding is recorded.
+pub(crate) const ZCULL_BIND: u32 = 0xc010480b;
+/// Largest GPFIFO a channel may allocate (entries).
+pub(crate) const MAX_GPFIFO_ENTRIES: usize = 0x10000;
 
 pub(crate) fn word(input: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(
@@ -29,6 +44,12 @@ pub(crate) struct Channel {
     pub space: Option<u32>,
     pub syncpoint: u32,
     pub capacity: Option<usize>,
+    /// Error notifier (nvmap handle, offset, size). Channel errors are never
+    /// raised by the synchronous model, so it is recorded but not written.
+    pub error_notifier: Option<(u32, u64, u64)>,
+    user_data: u64,
+    timeout_ms: Option<u32>,
+    zcull: Option<(u64, u32)>,
     context: Option<u32>,
     processor: ChannelProcessor,
 }
@@ -39,6 +60,10 @@ impl Channel {
             space: None,
             syncpoint,
             capacity: None,
+            error_notifier: None,
+            user_data: 0,
+            timeout_ms: None,
+            zcull: None,
             context: None,
             processor: ChannelProcessor::default(),
         }
@@ -48,6 +73,10 @@ impl Channel {
             SET_NVMAP => Some(4),
             ALLOC_CONTEXT => Some(16),
             ALLOC_FIFO => Some(32),
+            SET_ERROR_NOTIFIER => Some(24),
+            SET_USER_DATA | GET_USER_DATA => Some(8),
+            SET_TIMEOUT => Some(4),
+            ZCULL_BIND => Some(16),
             _ => submit_size(code),
         }
     }
@@ -81,17 +110,41 @@ impl Channel {
                 if self.capacity.is_some() {
                     return Err(8);
                 }
+                // ALLOC_GPFIFO_EX2: {u32 entries, u32 flags, u32 unknown,
+                // fence out {id, value}, u32 reserved[3]}. Entries only bound
+                // the GPFIFO entries one submit may carry here. Flag bit 0 and
+                // the unknown word (0 or 1) have no observable effect on the
+                // synchronous channel model; NVN sends flags 1.
                 let count = word(input, 0) as usize;
-                if count == 0 || !count.is_power_of_two() || count > 256 {
+                if count == 0 || !count.is_power_of_two() || count > MAX_GPFIFO_ENTRIES {
                     return Err(BAD_PARAMETER);
                 }
-                if word(input, 4) != 0 || word(input, 8) > 1 || input[20..].iter().any(|b| *b != 0)
+                if word(input, 4) > 1 || word(input, 8) > 1 || input[20..].iter().any(|b| *b != 0)
                 {
                     return Err(NOT_SUPPORTED);
                 }
                 self.capacity = Some(count);
                 output[12..16].copy_from_slice(&self.syncpoint.to_le_bytes());
                 output[16..20].copy_from_slice(&completed.to_le_bytes());
+            }
+            SET_USER_DATA => self.user_data = u64::from_le_bytes(input[..8].try_into().expect("8 bytes")),
+            GET_USER_DATA => output.copy_from_slice(&self.user_data.to_le_bytes()),
+            SET_TIMEOUT => {
+                let timeout = word(input, 0);
+                if timeout == 0 {
+                    return Err(BAD_PARAMETER);
+                }
+                self.timeout_ms = Some(timeout);
+            }
+            ZCULL_BIND => {
+                // Modes: 0 global, 1 no context switch, 2 separate buffer,
+                // 3 part of the regular context buffer.
+                let va = u64::from_le_bytes(input[..8].try_into().expect("8 bytes"));
+                let mode = word(input, 8);
+                if mode > 3 || word(input, 12) != 0 || (mode == 2 && va == 0) {
+                    return Err(BAD_PARAMETER);
+                }
+                self.zcull = Some((va, mode));
             }
             _ => return Err(NOT_SUPPORTED),
         }

@@ -2,7 +2,7 @@
 //! These are host API regressions, separate from the A64 guest suite.
 use crate::{
     nvas::BIND_CHANNEL,
-    nvchannel::{ALLOC_CONTEXT, ALLOC_FIFO, SET_NVMAP, SYNC_READ, SYNC_WAIT},
+    nvchannel::{ALLOC_CONTEXT, ALLOC_FIFO, SET_ERROR_NOTIFIER, SET_NVMAP, SYNC_READ, SYNC_WAIT},
     NvDriver,
 };
 use emulator_a64::Cpu;
@@ -587,6 +587,39 @@ pub fn run() -> Vec<CaseResult> {
             assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.nv]), 4);
             assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.channel]), 8);
             assert_eq!(r.io(r.channel, ALLOC_FIFO, &[3, 0, 1, 0, 0, 0, 0, 0]), 4);
+            // Up to 64K entries; flags and the unknown word may be 0 or 1.
+            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x20000, 1, 0, 0, 0, 0, 0, 0]), 4);
+            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 2, 0, 0, 0, 0, 0, 0]), 2);
+            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 2, 0, 0, 0, 0, 0]), 2);
+            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 0, 0, 0, 0, 0, 0]), 0, "NVN's request");
+            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 0, 0, 0, 0, 0, 0]), 8, "only once");
+        }),
+        ("error-notifier-must-lie-in-allocated-memory", |r| {
+            r.nv = r.open(b"/dev/nvmap");
+            assert_eq!(r.io(r.nv, 0xc0080101, &[4096, 0]), 0);
+            let handle = r.m.read_u32(0x6004).unwrap();
+            r.channel = r.open(b"/dev/nvhost-gpu");
+            let notifier = |offset: u32, size: u32, handle: u32| [offset, 0, size, 0, handle, 0];
+            // Created but not yet allocated.
+            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, handle)), 8);
+            assert_eq!(r.io(r.nv, 0xc0200104, &[handle, 0, 1, 4096, 0, 0, 0x8000, 0]), 0);
+            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, handle)), 0);
+            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0x800, 0x1000, handle)), 4);
+            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, 99)), 4);
+            // Size 0 clears it, whatever the handle.
+            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0, 99)), 0);
+            // User data round-trips (SET_USER_DATA / GET_USER_DATA).
+            assert_eq!(r.io(r.channel, 0x40084714, &[0x3be4_5560, 0x23]), 0);
+            assert_eq!(r.io(r.channel, 0x80084715, &[0, 0]), 0);
+            assert_eq!(r.m.read_u64(0x6000).unwrap(), 0x23_3be4_5560);
+            // Job timeout in milliseconds; zero is invalid.
+            assert_eq!(r.io(r.channel, 0x40044803, &[0x266]), 0);
+            assert_eq!(r.io(r.channel, 0x40044803, &[0]), 4);
+            // Z-cull binding: separate-buffer mode needs a buffer address.
+            assert_eq!(r.io(r.channel, 0xc010480b, &[0x7f23_9000, 4, 2, 0]), 0);
+            assert_eq!(r.io(r.channel, 0xc010480b, &[0, 0, 2, 0]), 4);
+            assert_eq!(r.io(r.channel, 0xc010480b, &[0x1000, 0, 4, 0]), 4);
+            assert_eq!(r.io(r.channel, 0xc010480b, &[0, 0, 0, 0]), 0);
         }),
         ("open-and-setup-reply-rollback", |r| {
             assert!(r.open_at(b"/dev/nvhost-gpu", 100).is_err());
@@ -1149,7 +1182,7 @@ mod tests {
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();
-        assert_eq!(cases.len(), 50);
+        assert_eq!(cases.len(), 51);
         for case in cases {
             assert!(case.passed, "{}: {}", case.name, case.error)
         }

@@ -271,6 +271,27 @@ impl NvDriver {
         self.next_fd = next;
         Ok(reply(&[fd, 0]))
     }
+    /// SET_ERROR_NOTIFIER: the notifier must lie inside allocated nvmap
+    /// memory. Size 0 clears it.
+    fn set_error_notifier(&mut self, at: usize, input: &[u8]) -> Result<Vec<u8>, u32> {
+        let wide = |i: usize| u64::from_le_bytes(input[i..i + 8].try_into().expect("validated"));
+        let (offset, size, handle) = (wide(0), wide(8), nvchannel::word(input, 16));
+        let notifier = if size == 0 {
+            None
+        } else {
+            let view = self.nvmap.imported_view(handle)?;
+            let end = offset.checked_add(size).ok_or(BAD_PARAMETER)?;
+            if end > view.len() as u64 {
+                return Err(BAD_PARAMETER);
+            }
+            Some((handle, offset, size))
+        };
+        let DeviceObject::Channel(channel) = &mut self.devices[at].object else {
+            unreachable!("channel device")
+        };
+        channel.error_notifier = notifier;
+        Ok(input.to_vec())
+    }
     fn timeslice_group(&mut self, at: usize, code: u32, input: &[u8]) -> Result<Vec<u8>, u32> {
         let argument = || nvchannel::word(input, 0);
         // A channel may belong to one group at a time.
@@ -687,6 +708,8 @@ impl NvDriver {
             DeviceObject::Channel(channel) => {
                 if code == SET_NVMAP {
                     self.set_nvmap(at, &bytes)
+                } else if code == nvchannel::SET_ERROR_NOTIFIER {
+                    self.set_error_notifier(at, &bytes)
                 } else {
                     let completed = self.syncpoints[channel.syncpoint as usize - 1];
                     let DeviceObject::Channel(channel) = &mut self.devices[at].object else {
@@ -752,6 +775,9 @@ impl emulator_kernel::service::PreparedServiceEffect for BufferWrites {
 }
 
 /// `nvgpu_gpu_characteristics` for the Tegra X1 GM20B.
+/// `nvgpu_gpu_characteristics` in the Switch's layout (which differs from
+/// later Linux nvgpu: gpc_mask, SM arch, VA bits and a reserved word precede
+/// the flags at 0x50), with the values a Switch reports for its GM20B.
 fn gpu_characteristics() -> [u8; CHARACTERISTICS_SIZE] {
     let mut c = [0u8; CHARACTERISTICS_SIZE];
     let mut put32 = |at: usize, v: u32| c[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -762,27 +788,37 @@ fn gpu_characteristics() -> [u8; CHARACTERISTICS_SIZE] {
     put32(0x10, 0x40000); // L2 cache size (u64)
     // 0x18: on-board video memory size (u64) = 0, unified memory.
     put32(0x20, 2); // num_tpc_per_gpc
-    put32(0x24, 0x20); // bus_type: platform
+    put32(0x24, 0x20); // bus_type: AXI
     put32(0x28, 0x20000); // big_page_size
     put32(0x2c, 0x20000); // compression_page_size
     put32(0x30, 27); // pde_coverage_bit_count
-    put32(0x34, 0x30000); // available_big_page_sizes
-    put32(0x38, 0x7); // flags (u64): sparse, sync fence fds, cycle stats
-    put32(0x40, 0x902d); // twod_class: FERMI_TWOD_A
-    put32(0x44, 0xb197); // threed_class: MAXWELL_B
-    put32(0x48, 0xb1c0); // compute_class: MAXWELL_COMPUTE_B
-    put32(0x4c, 0xb06f); // gpfifo_class: MAXWELL_CHANNEL_GPFIFO_A
-    put32(0x50, 0xa140); // inline_to_memory_class: KEPLER_INLINE_TO_MEMORY_B
-    put32(0x54, 0xb0b5); // dma_copy_class: MAXWELL_DMA_COPY_A
-    put32(0x58, 1); // max_fbps_count
-    put32(0x5c, 0); // fbp_en_mask
-    put32(0x60, 2); // max_ltc_per_fbp
-    put32(0x64, 1); // max_lts_per_ltc
-    put32(0x68, 0); // max_tex_per_tpc
-    put32(0x6c, 1); // max_gpc_count
-    put32(0x70, 0x21); // rop_l2_en_mask_0
-    put32(0x74, 0); // rop_l2_en_mask_1
-    c[0x78..0x7e].copy_from_slice(b"gm20b\0"); // chipname (u64)
+    put32(0x34, 0x30000); // available_big_page_sizes: 64K | 128K
+    put32(0x38, 1); // gpc_mask
+    put32(0x3c, 0x503); // sm_arch_sm_version (SM 5.3)
+    put32(0x40, 0x503); // sm_arch_spa_version
+    put32(0x44, 0x80); // sm_arch_warp_count
+    put32(0x48, 0x28); // gpu_va_bit_count
+    // 0x4c reserved.
+    // flags (u64): partial mappings (0), sync fence fds (2), cycle stats
+    // snapshot (4), timeslice groups (6). Bit 8 stays clear: NvRm then
+    // creates channels without a TSG backend.
+    put32(0x50, 0x55);
+    put32(0x58, 0x902d); // twod_class: FERMI_TWOD_A
+    put32(0x5c, 0xb197); // threed_class: MAXWELL_B
+    put32(0x60, 0xb1c0); // compute_class: MAXWELL_COMPUTE_B
+    put32(0x64, 0xb06f); // gpfifo_class: MAXWELL_CHANNEL_GPFIFO_A
+    put32(0x68, 0xa140); // inline_to_memory_class: KEPLER_INLINE_TO_MEMORY_B
+    put32(0x6c, 0xb0b5); // dma_copy_class: MAXWELL_DMA_COPY_A
+    put32(0x70, 1); // max_fbps_count
+    put32(0x74, 0); // fbp_en_mask
+    put32(0x78, 2); // max_ltc_per_fbp
+    put32(0x7c, 1); // max_lts_per_ltc
+    put32(0x80, 0); // max_tex_per_tpc
+    put32(0x84, 1); // max_gpc_count
+    put32(0x88, 0x21d70); // rop_l2_en_mask_0
+    put32(0x8c, 0); // rop_l2_en_mask_1
+    c[0x90..0x96].copy_from_slice(b"gm20b\0"); // chipname (u64)
+    // 0x98: gr_compbit_store_base_hw (u64) = 0.
     c
 }
 
