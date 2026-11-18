@@ -7,7 +7,8 @@ use emulator_memory::{Access, BackingRange};
 use std::{collections::VecDeque, sync::atomic::AtomicU64};
 static NEXT_QUEUE_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_PENDING: usize = 16;
-const MAX_ENTRIES: usize = 256;
+/// A channel's GPFIFO holds at most 64K entries; one submit cannot exceed it.
+const MAX_ENTRIES: usize = 0x10000;
 const MAX_BYTES: usize = MAX_PENDING * MAX_PUSHBUFFER_WORDS * 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,9 +233,15 @@ impl SubmissionQueue {
         let mut bytes = Vec::new();
         let mut sources = Vec::new();
         let mut spans = stats.pinned_spans;
+        // Decode groups: consecutive main-level segments form one stream (a
+        // packet may continue across them); each subroutine segment stands
+        // alone. A packet left open at a group boundary is truncated.
+        let mut groups: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut main_open = false;
         for raw in entries.chunks_exact(8) {
-            let entry = match GpEntry::parse(raw).map_err(QueueError::Decode)? {
-                GpEntry::Fetch(entry) => entry,
+            let (entry, subroutine) = match GpEntry::parse(raw).map_err(QueueError::Decode)? {
+                GpEntry::Fetch(entry) => (entry, false),
+                GpEntry::Subroutine(entry) => (entry, true),
                 GpEntry::ControlNop => continue,
             };
             let size = entry.word_count as usize * 4;
@@ -257,13 +264,21 @@ impl SubmissionQueue {
                 .read(&mut bytes[offset..])
                 .map_err(QueueError::Memory)?;
             sources.push(source);
+            match groups.last_mut() {
+                Some(group) if main_open && !subroutine => group.end = total,
+                _ => groups.push(offset..total),
+            }
+            main_open = !subroutine;
         }
-        // The stream may continue a packet across entries within this batch.
-        let writes = decode_pushbuffer(
-            &bytes,
-            self.limits.writes.saturating_sub(stats.decoded_writes),
-        )
-        .map_err(QueueError::Decode)?;
+        let mut writes = Vec::new();
+        for group in groups {
+            let budget = self
+                .limits
+                .writes
+                .saturating_sub(stats.decoded_writes)
+                .saturating_sub(writes.len());
+            writes.extend(decode_pushbuffer(&bytes[group], budget).map_err(QueueError::Decode)?);
+        }
         let next = self
             .next
             .checked_add(1)

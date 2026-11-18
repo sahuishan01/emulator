@@ -87,7 +87,12 @@ impl std::error::Error for DecodeError {}
 /// One GPFIFO entry: a pushbuffer fetch, or a zero-length control entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpEntry {
+    /// Main-level segment: a packet may continue into the next main segment.
     Fetch(GpFifoEntry),
+    /// Subroutine-level segment: decoded from fresh packet state, after
+    /// which the main segment's state resumes, so it must hold complete
+    /// packets.
+    Subroutine(GpFifoEntry),
     /// Zero-length entry with control opcode NOP: nothing to fetch.
     ControlNop,
 }
@@ -105,14 +110,15 @@ impl GpEntry {
         let low = u32::from_le_bytes(bytes[..4].try_into().expect("four bytes"));
         let high = u32::from_le_bytes(bytes[4..].try_into().expect("four bytes"));
         let word_count = (high >> 10) & 0x1f_ffff;
-        // Kernel privilege and subroutine level need semantics not yet owned.
-        if high & 0x300 != 0 {
+        // Kernel privilege needs semantics not yet owned.
+        if high & 0x100 != 0 {
             return Err(DecodeError::UnsupportedEntry);
         }
+        let subroutine = high & 0x200 != 0;
         if word_count == 0 {
-            // Control entries: only NOP (opcode 0, no address) is modelled;
-            // ILLEGAL and the CRC checks fail explicitly.
-            return if low == 0 && high & 0xff == 0 {
+            // Control entries: only NOP (opcode 0, no address, main level)
+            // is modelled; ILLEGAL and the CRC checks fail explicitly.
+            return if low == 0 && high & 0x2ff == 0 {
                 Ok(Self::ControlNop)
             } else {
                 Err(DecodeError::UnsupportedEntry)
@@ -130,18 +136,24 @@ impl GpEntry {
         if end > GPU_ADDRESS_LIMIT {
             return Err(DecodeError::AddressOverflow);
         }
-        Ok(Self::Fetch(GpFifoEntry {
+        let entry = GpFifoEntry {
             address,
             word_count,
-        }))
+        };
+        Ok(if subroutine {
+            Self::Subroutine(entry)
+        } else {
+            Self::Fetch(entry)
+        })
     }
 }
 impl GpFifoEntry {
-    /// A pushbuffer fetch entry; control entries are `UnsupportedEntry`.
+    /// A main-level pushbuffer fetch entry; subroutine and control entries
+    /// are `UnsupportedEntry` here (see [`GpEntry::parse`]).
     pub fn parse(bytes: &[u8]) -> Result<Self, DecodeError> {
         match GpEntry::parse(bytes)? {
             GpEntry::Fetch(entry) => Ok(entry),
-            GpEntry::ControlNop => Err(DecodeError::UnsupportedEntry),
+            GpEntry::Subroutine(_) | GpEntry::ControlNop => Err(DecodeError::UnsupportedEntry),
         }
     }
     /// The caller must separately resolve/read GPU virtual memory. This only

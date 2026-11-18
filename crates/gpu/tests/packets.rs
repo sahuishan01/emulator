@@ -79,6 +79,18 @@ fn sync_wait_entries_fetch_and_nop_control_entries_are_skippable() {
             word_count: 1
         })
     );
+    assert_eq!(
+        GpEntry::parse(&bytes(&[0x1000, 0x8000_0612])).unwrap(),
+        GpEntry::Subroutine(GpFifoEntry {
+            address: GpuVa(0x12_0000_1000),
+            word_count: 1
+        })
+    );
+    assert_eq!(
+        GpFifoEntry::parse(&bytes(&[0x1000, 0x612])),
+        Err(DecodeError::UnsupportedEntry),
+        "GpFifoEntry::parse is main-level only"
+    );
     assert_eq!(GpEntry::parse(&bytes(&[0, 0])).unwrap(), GpEntry::ControlNop);
     assert_eq!(
         GpEntry::parse(&bytes(&[0, 0x8000_0000])).unwrap(),

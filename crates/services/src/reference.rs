@@ -471,6 +471,23 @@ pub fn run() -> Vec<CaseResult> {
             r.m.write_u64(0x8108, 99).unwrap();
             assert_eq!(r.submit_inline(0x104, &[0, 0, 0, 0x8000_0000 | (14 << 10) | 1], 2), 0);
             r.verify(0x8108, 42);
+            // Subroutine segments split at a packet boundary decode alone.
+            r.m.write_u64(0x8108, 99).unwrap();
+            assert_eq!(
+                r.submit_inline(0x104, &[0, 0x200 | (6 << 10) | 1, 24, 0x200 | (8 << 10) | 1], 2),
+                0
+            );
+            r.verify(0x8108, 42);
+            // A packet split across subroutine segments is truncated: no effect.
+            r.m.write_u64(0x8108, 99).unwrap();
+            assert_eq!(
+                r.submit_inline(0x104, &[0, 0x200 | (5 << 10) | 1, 20, 0x200 | (9 << 10) | 1], 2),
+                4
+            );
+            r.verify(0x8108, 99);
+            // The same split across main segments continues the packet.
+            assert_eq!(r.submit_inline(0x104, &[0, (5 << 10) | 1, 20, (9 << 10) | 1], 2), 0);
+            r.verify(0x8108, 42);
             // Other control opcodes are still rejected without effects.
             r.m.write_u64(0x8108, 99).unwrap();
             assert_eq!(r.submit_inline(0x104, &[1, 0, 0, (14 << 10) | 1], 2), 4);
