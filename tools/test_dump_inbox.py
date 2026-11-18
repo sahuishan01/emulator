@@ -214,7 +214,9 @@ class SmokeSandboxTest(unittest.TestCase):
             self.assertFalse(any(value.startswith(("BindPaths=", "ReadWritePaths=")) for value in properties))
             # The guest-facing command names sandbox paths only, never host paths.
             self.assertEqual(inner, [f"{dump_inbox.SANDBOX_DIR}/emulator-cli", "run-nsp", f"{dump_inbox.SANDBOX_DIR}/game.nsp",
-                                     "--keys", f"{dump_inbox.SANDBOX_DIR}/prod.keys", "--max-steps", "1234"])
+                                     "--keys", f"{dump_inbox.SANDBOX_DIR}/prod.keys", "--max-steps", "1234",
+                                     # The emulator stops itself inside RuntimeMaxSec (min 60 s).
+                                     "--max-seconds", "60"])
             titled = dump_inbox.sandbox_command(binary, game, keys, keys, 1, root, "2G", 90)
             self.assertEqual(titled[-2:], ["--titlekeys", f"{dump_inbox.SANDBOX_DIR}/title.keys"])
             named = dump_inbox.sandbox_command(binary, game, keys, None, 1, root, "2G", 90, symbol=["0x3defc00"])

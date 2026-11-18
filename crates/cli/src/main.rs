@@ -206,7 +206,7 @@ fn run_nca(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    let file = file.ok_or("usage: emulator-cli run-nca FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]...")?;
+    let file = file.ok_or("usage: emulator-cli run-nca FILE [--keys KEYFILE] [--titlekeys TITLEKEYS] [--max-steps N] [--max-seconds S] [--disasm HEXADDR:COUNT]... [--peek HEXADDR:COUNT]...")?;
     if budget == 0 || budget > 10_000_000 {
         return Err("step limit must be between 1 and 10000000".into());
     }
@@ -261,6 +261,7 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut keys_path: Option<&str> = None;
     let mut titlekeys_path: Option<&str> = None;
     let mut budget = DEFAULT_STEPS;
+    let mut max_seconds: Option<f64> = None;
     let mut disasm: Vec<(u64, u64)> = Vec::new();
     let mut peek: Vec<(u64, u64)> = Vec::new();
     let mut watch: Option<(u64, u64)> = None;
@@ -291,6 +292,16 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     return Err("--max-steps requires an integer argument".into());
                 }
                 budget = arguments[i].parse::<u64>()?;
+            }
+            // Wall-clock limit: stop at a slice boundary and still print the
+            // run report (an external kill would lose it).
+            "--max-seconds" => {
+                i += 1;
+                let seconds = arguments.get(i).ok_or("--max-seconds requires a number")?.parse::<f64>()?;
+                if !(seconds > 0.0) {
+                    return Err("--max-seconds must be positive".into());
+                }
+                max_seconds = Some(seconds);
             }
             "--disasm" => {
                 i += 1;
@@ -416,6 +427,9 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let started = std::time::Instant::now();
     let mut samples: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
     let mut remaining = budget;
+    let mut next_progress = 60.0;
+    let mut time_limited = false;
+    let mut slices: u64 = 0;
     let outcome = loop {
         let slice = remaining.min(NSP_SAMPLE_INTERVAL);
         match session.run(slice) {
@@ -425,10 +439,32 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 if remaining == 0 {
                     break Ok(RunOutcome::BudgetExhausted);
                 }
+                // Checking the clock every 64 slices keeps it off the hot path.
+                slices += 1;
+                if slices % 64 == 0 {
+                    let seconds = started.elapsed().as_secs_f64();
+                    if seconds >= next_progress {
+                        next_progress += 60.0;
+                        println!(
+                            "progress: steps={} elapsed={seconds:.0}s rate={:.1} MIPS",
+                            session.instructions(),
+                            session.instructions() as f64 / seconds / 1e6
+                        );
+                        use std::io::Write as _;
+                        std::io::stdout().flush().ok();
+                    }
+                    if max_seconds.is_some_and(|limit| seconds >= limit) {
+                        time_limited = true;
+                        break Ok(RunOutcome::BudgetExhausted);
+                    }
+                }
             }
             other => break other,
         }
     };
+    if time_limited {
+        println!("stopped: --max-seconds wall-clock limit reached");
+    }
     let elapsed = started.elapsed().as_secs_f64();
     for record in session.debug_records() {
         let text = String::from_utf8_lossy(record);

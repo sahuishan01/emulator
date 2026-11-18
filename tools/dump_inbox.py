@@ -689,7 +689,10 @@ def sandbox_command(binary: Path, game: Path, prod_keys: Path, title_keys: Path 
     owner = game.stat()
     binds = [(binary, "emulator-cli"), (game, "game" + game.suffix.lower()), (prod_keys, "prod.keys")]
     inner = [f"{SANDBOX_DIR}/emulator-cli", "run-nsp", f"{SANDBOX_DIR}/game{game.suffix.lower()}",
-             "--keys", f"{SANDBOX_DIR}/prod.keys", "--max-steps", str(max_steps)]
+             "--keys", f"{SANDBOX_DIR}/prod.keys", "--max-steps", str(max_steps),
+             # Stop inside the sandbox's wall-clock limit so the run report
+             # (printed on exit) survives; loading and the report need slack.
+             "--max-seconds", str(max(60, timeout - 180))]
     if title_keys is not None:
         binds.append((title_keys, "title.keys"))
         inner += ["--titlekeys", f"{SANDBOX_DIR}/title.keys"]
