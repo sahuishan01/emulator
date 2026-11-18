@@ -53,6 +53,34 @@ pub struct AppletState {
     message_event: Rc<Cell<bool>>,
     preselected_user: VecDeque<Vec<u8>>,
     user_channel: VecDeque<Vec<u8>>,
+    cpu_boost_mode: CpuBoostMode,
+}
+
+/// `ICommonStateGetter` CPU boost request. The emulator has no clock model,
+/// so the mode is recorded and has no other effect.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CpuBoostMode {
+    #[default]
+    Normal,
+    FastLoad,
+    PowerSaving,
+}
+
+impl CpuBoostMode {
+    fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Normal),
+            1 => Some(Self::FastLoad),
+            2 => Some(Self::PowerSaving),
+            _ => None,
+        }
+    }
+}
+
+impl AppletState {
+    pub fn cpu_boost_mode(&self) -> CpuBoostMode {
+        self.cpu_boost_mode
+    }
 }
 
 impl Default for AppletState {
@@ -62,6 +90,7 @@ impl Default for AppletState {
             message_event: Rc::new(Cell::new(true)),
             preselected_user: VecDeque::from([preselected_user_storage(DEFAULT_USER_ID)]),
             user_channel: VecDeque::new(),
+            cpu_boost_mode: CpuBoostMode::Normal,
         }
     }
 }
@@ -74,6 +103,7 @@ enum AppletCommit {
     PopMessage(SharedAppletState),
     PopLaunchParameter(SharedAppletState, u32),
     StorageWrite(Rc<RefCell<Vec<u8>>>, usize, Vec<u8>),
+    SetCpuBoostMode(SharedAppletState, CpuBoostMode),
 }
 
 impl PreparedServiceEffect for AppletCommit {
@@ -97,6 +127,7 @@ impl PreparedServiceEffect for AppletCommit {
             AppletCommit::StorageWrite(data, offset, bytes) => {
                 data.borrow_mut()[offset..offset + bytes.len()].copy_from_slice(&bytes);
             }
+            AppletCommit::SetCpuBoostMode(state, mode) => state.borrow_mut().cpu_boost_mode = mode,
         }
     }
 }
@@ -187,6 +218,29 @@ impl Service for CommonStateGetter {
                     data: vec![focus],
                     moved_objects: Vec::new(),
                     effect: None,
+                })
+            }
+            // SetCpuBoostMode(u32): Normal 0, FastLoad 1, PowerSaving 2.
+            66 => {
+                let raw = u32_argument(request)?;
+                let mode = CpuBoostMode::from_raw(raw).ok_or(ServiceError::InvalidPayload {
+                    expected: 3,
+                    actual: raw as usize,
+                })?;
+                Ok(ServiceReply {
+                    effect: Some(Box::new(AppletCommit::SetCpuBoostMode(self.state.clone(), mode))),
+                    ..ServiceReply::default()
+                })
+            }
+            // CancelCpuBoostMode: back to Normal.
+            67 => {
+                crate::payload(request, 0)?;
+                Ok(ServiceReply {
+                    effect: Some(Box::new(AppletCommit::SetCpuBoostMode(
+                        self.state.clone(),
+                        CpuBoostMode::Normal,
+                    ))),
+                    ..ServiceReply::default()
                 })
             }
             // SetRequestExitToLibraryAppletAtExecuteNextProgramEnabled: a flag
@@ -595,6 +649,12 @@ pub struct ApplicationProxy {
 }
 
 pub type AppletSession = ApplicationProxy;
+
+impl ApplicationProxy {
+    pub fn with_state(state: SharedAppletState) -> Self {
+        Self { state }
+    }
+}
 
 impl Service for ApplicationProxy {
     fn clone_for_request(&self) -> Box<dyn Service> {

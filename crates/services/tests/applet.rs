@@ -5,7 +5,7 @@ use common::Rig;
 use emulator_memory::Permissions;
 use emulator_services::acc::DEFAULT_USER_ID;
 use emulator_services::applet::{
-    ApplicationProxy, LAUNCH_PARAMETER_PRESELECTED_USER, LAUNCH_PARAMETER_USER_CHANNEL,
+    ApplicationProxy, CpuBoostMode, SharedAppletState, LAUNCH_PARAMETER_PRESELECTED_USER, LAUNCH_PARAMETER_USER_CHANNEL,
     MESSAGE_FOCUS_STATE_CHANGED, PRESELECTED_USER_MAGIC, PRESELECTED_USER_SIZE,
     RESULT_AM_INVALID_OFFSET, RESULT_AM_NO_DATA_IN_CHANNEL, RESULT_AM_NO_MESSAGES,
 };
@@ -150,4 +150,25 @@ fn unimplemented_applet_interfaces_fail_explicitly() {
     for command in [12, 120] {
         assert!(rig.try_call_on(functions, command, &[], &[], &[]).is_err());
     }
+}
+
+#[test]
+fn cpu_boost_mode_is_recorded_validated_and_cancelled() {
+    let state = SharedAppletState::default();
+    let mut rig = Rig::new("appletprx", Box::new(ApplicationProxy::with_state(state.clone())));
+    rig.call(0, &[], &[], None, &[]);
+    let getter = rig.moved();
+    assert_eq!(state.borrow().cpu_boost_mode(), CpuBoostMode::Normal);
+    rig.call_on(getter, 66, &[], &[], &1u32.to_le_bytes());
+    assert_eq!(rig.result(), 0);
+    assert_eq!(state.borrow().cpu_boost_mode(), CpuBoostMode::FastLoad);
+    rig.call_on(getter, 66, &[], &[], &2u32.to_le_bytes());
+    assert_eq!(state.borrow().cpu_boost_mode(), CpuBoostMode::PowerSaving);
+    // Unknown modes and malformed payloads are rejected without a change.
+    assert!(rig.try_call_on(getter, 66, &[], &[], &3u32.to_le_bytes()).is_err());
+    assert!(rig.try_call_on(getter, 66, &[], &[], &[]).is_err());
+    assert_eq!(state.borrow().cpu_boost_mode(), CpuBoostMode::PowerSaving);
+    rig.call_on(getter, 67, &[], &[], &[]);
+    assert_eq!(rig.result(), 0);
+    assert_eq!(state.borrow().cpu_boost_mode(), CpuBoostMode::Normal);
 }
