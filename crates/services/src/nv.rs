@@ -15,6 +15,29 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+/// TSG ioctls (`'T'`): bind/unbind a channel fd, enable/disable/preempt the
+/// group, runlist interleave level {u32 level, u32 reserved} and timeslice
+/// {u32 microseconds, u32 reserved}.
+const TSG_BIND_CHANNEL: u32 = 0x40045401;
+const TSG_UNBIND_CHANNEL: u32 = 0x40045402;
+const TSG_ENABLE: u32 = 0x5403;
+const TSG_DISABLE: u32 = 0x5404;
+const TSG_PREEMPT: u32 = 0x5405;
+const TSG_SET_RUNLIST_INTERLEAVE: u32 = 0x40085408;
+const TSG_SET_TIMESLICE: u32 = 0x40085409;
+/// Most channels one group holds.
+const TSG_CHANNELS: usize = 32;
+
+/// Scheduling state of a timeslice group. Channels run synchronously at
+/// submit time, so the group only records membership and settings.
+#[derive(Clone, Debug, Default)]
+struct TimesliceGroup {
+    channels: Vec<u32>,
+    enabled: bool,
+    interleave: u32,
+    timeslice_us: u32,
+}
+
 /// nvhost-ctrl-gpu `_IOR('G', 0x14, u64)`: GPU timestamp in nanoseconds.
 const GET_GPU_TIME: u32 = 0x80084714;
 
@@ -108,6 +131,8 @@ enum DeviceObject {
     NvMap,
     AddressSpace,
     Channel(Box<Channel>),
+    /// `/dev/nvhost-tsg-gpu`: a timeslice group of channels.
+    Tsg(TimesliceGroup),
     Control,
 }
 use crate::BufferWrite;
@@ -178,7 +203,7 @@ impl NvDriver {
                         spaces.push(id)
                     }
                 }
-                DeviceObject::Control => {}
+                DeviceObject::Control | DeviceObject::Tsg(_) => {}
             }
         }
         self.nvmap.retain_owners(&owners);
@@ -204,6 +229,7 @@ impl NvDriver {
             b"/dev/nvhost-as-gpu" => 1,
             b"/dev/nvhost-gpu" | b"/dev/nvhost-channel" => 2,
             b"/dev/nvhost-ctrl" | b"/dev/nvhost-ctrl-gpu" => 3,
+            b"/dev/nvhost-tsg-gpu" => 4,
             _ => {
                 record_failure(format!("open {}", String::from_utf8_lossy(&bytes)), 0, NOT_SUPPORTED, &[]);
                 return Ok(reply(&[0, NOT_SUPPORTED]));
@@ -233,11 +259,65 @@ impl NvDriver {
                 self.syncpoints.push(0);
                 DeviceObject::Channel(Box::new(Channel::new(self.syncpoints.len() as u32)))
             }
+            4 => DeviceObject::Tsg(TimesliceGroup::default()),
             _ => DeviceObject::Control,
         };
         self.devices.push(Device { fd, object });
         self.next_fd = next;
         Ok(reply(&[fd, 0]))
+    }
+    fn timeslice_group(&mut self, at: usize, code: u32, input: &[u8]) -> Result<Vec<u8>, u32> {
+        let argument = || nvchannel::word(input, 0);
+        // A channel may belong to one group at a time.
+        let bound_elsewhere = |devices: &[Device], fd: u32| {
+            devices.iter().enumerate().any(|(index, d)| {
+                index != at && matches!(&d.object, DeviceObject::Tsg(g) if g.channels.contains(&fd))
+            })
+        };
+        let is_channel = |devices: &[Device], fd: u32| {
+            devices.iter().any(|d| d.fd == fd && matches!(d.object, DeviceObject::Channel(_)))
+        };
+        if code == TSG_BIND_CHANNEL && (!is_channel(&self.devices, argument()) || bound_elsewhere(&self.devices, argument())) {
+            return Err(BAD_PARAMETER);
+        }
+        let DeviceObject::Tsg(group) = &mut self.devices[at].object else {
+            unreachable!("timeslice group device")
+        };
+        match code {
+            TSG_BIND_CHANNEL => {
+                let fd = argument();
+                if group.channels.contains(&fd) {
+                    return Err(BAD_PARAMETER);
+                }
+                if group.channels.len() >= TSG_CHANNELS {
+                    return Err(NO_MEMORY);
+                }
+                group.channels.push(fd);
+            }
+            TSG_UNBIND_CHANNEL => {
+                let fd = argument();
+                let index = group.channels.iter().position(|&c| c == fd).ok_or(BAD_PARAMETER)?;
+                group.channels.remove(index);
+            }
+            TSG_ENABLE => group.enabled = true,
+            TSG_DISABLE => group.enabled = false,
+            // Work never stays queued: submissions complete synchronously.
+            TSG_PREEMPT => {}
+            TSG_SET_RUNLIST_INTERLEAVE => {
+                if argument() > 2 || nvchannel::word(input, 4) != 0 {
+                    return Err(BAD_PARAMETER);
+                }
+                group.interleave = argument();
+            }
+            TSG_SET_TIMESLICE => {
+                if argument() == 0 || nvchannel::word(input, 4) != 0 {
+                    return Err(BAD_PARAMETER);
+                }
+                group.timeslice_us = argument();
+            }
+            _ => return Err(NOT_SUPPORTED),
+        }
+        Ok(input.to_vec())
     }
     fn device_name(&self, fd: u32) -> &'static str {
         match self.devices.iter().find(|d| d.fd == fd).map(|d| &d.object) {
@@ -245,6 +325,7 @@ impl NvDriver {
             Some(DeviceObject::AddressSpace) => "nvhost-as-gpu",
             Some(DeviceObject::Channel(_)) => "nvhost-gpu",
             Some(DeviceObject::Control) => "nvhost-ctrl",
+            Some(DeviceObject::Tsg(_)) => "nvhost-tsg-gpu",
             None => "unknown fd",
         }
     }
@@ -257,7 +338,12 @@ impl NvDriver {
         let Some(at) = self.devices.iter().position(|d| d.fd == input_word(r, 0)) else {
             return Ok(reply(&[BAD_PARAMETER]));
         };
-        self.devices.remove(at);
+        let fd = self.devices.remove(at).fd;
+        for device in &mut self.devices {
+            if let DeviceObject::Tsg(group) = &mut device.object {
+                group.channels.retain(|&channel| channel != fd);
+            }
+        }
         self.collect_closed();
         Ok(reply(&[0]))
     }
@@ -500,6 +586,12 @@ impl NvDriver {
             DeviceObject::NvMap => NvMap::argument_size(code),
             DeviceObject::AddressSpace => NvAddressSpace::argument_size(code),
             DeviceObject::Channel(_) => Channel::argument_size(code),
+            DeviceObject::Tsg(_) => match code {
+                TSG_BIND_CHANNEL | TSG_UNBIND_CHANNEL => Some(4),
+                TSG_ENABLE | TSG_DISABLE | TSG_PREEMPT => Some(0),
+                TSG_SET_RUNLIST_INTERLEAVE | TSG_SET_TIMESLICE => Some(8),
+                _ => None,
+            },
             DeviceObject::Control => match code {
                 SYNC_READ => Some(8),
                 SYNC_WAIT => Some(16),
@@ -583,6 +675,7 @@ impl NvDriver {
                 }
             }
             DeviceObject::Control => self.control(code, &bytes, c.virtual_time_ns()),
+            DeviceObject::Tsg(_) => self.timeslice_group(at, code, &bytes),
             DeviceObject::Channel(channel) => {
                 if code == SET_NVMAP {
                     self.set_nvmap(at, &bytes)

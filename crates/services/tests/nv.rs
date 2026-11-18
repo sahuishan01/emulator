@@ -905,12 +905,12 @@ fn test_nv_query_event_and_extended_commands() {
 #[test]
 fn failed_opens_and_ioctls_are_tallied_for_diagnostics() {
     let mut r = Rig::device_rig(Box::new(NvDriver::default()));
-    assert_eq!(r.open_device(b"/dev/nvhost-tsg-gpu", 0).1, 2);
+    assert_eq!(r.open_device(b"/dev/nvhost-prof-gpu", 0).1, 2);
     let fd = r.open_device(b"/dev/nvmap", 0).0;
     assert_eq!(r.ioctl(fd, 0xc0080101, &[0, 77], 1), 4);
     assert_eq!(r.ioctl(fd, 0xc0080101, &[0, 77], 1), 4);
     let failures = emulator_services::nv_failures();
-    assert!(failures.contains(&(("open /dev/nvhost-tsg-gpu".to_owned(), 0, 2), (1, vec![]))));
+    assert!(failures.contains(&(("open /dev/nvhost-prof-gpu".to_owned(), 0, 2), (1, vec![]))));
     assert!(failures.contains(&(("nvmap".to_owned(), 0xc0080101, 4), (2, vec![0, 77]))));
 }
 
@@ -927,4 +927,48 @@ fn ctrl_gpu_time_reads_the_guest_clock() {
     // A wrong-sized argument is rejected.
     r.call(&message(1, &[fd, 0x80044714], None, Some((0x6000, 4)))).unwrap();
     assert_ne!(r.m.read_u32(0x2020).unwrap(), 0);
+}
+
+#[test]
+fn timeslice_groups_bind_each_channel_once() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let tsg = r.open_device(b"/dev/nvhost-tsg-gpu", 0).0;
+    let other = r.open_device(b"/dev/nvhost-tsg-gpu", 0).0;
+    let channel = r.open_device(b"/dev/nvhost-gpu", 0).0;
+    let map = r.open_device(b"/dev/nvmap", 0).0;
+    let no_arg = |r: &mut Rig, fd: u32, code: u32| {
+        r.call(&message(1, &[fd, code], None, None)).unwrap();
+        r.m.read_u32(0x2020).unwrap()
+    };
+    let bind = |r: &mut Rig, group: u32, fd: u32| {
+        r.m.write(0x6000, &fd.to_le_bytes()).unwrap();
+        r.call(&message(1, &[group, 0x40045401], Some((0x6000, 4)), None)).unwrap();
+        r.m.read_u32(0x2020).unwrap()
+    };
+    let set = |r: &mut Rig, code: u32, value: u32| {
+        r.m.write(0x6000, &words(&[value, 0])).unwrap();
+        r.call(&message(1, &[tsg, code], Some((0x6000, 8)), None)).unwrap();
+        r.m.read_u32(0x2020).unwrap()
+    };
+    assert_eq!(bind(&mut r, tsg, channel), 0);
+    assert_eq!(bind(&mut r, tsg, channel), 4, "already bound");
+    assert_eq!(bind(&mut r, other, channel), 4, "bound to another group");
+    assert_eq!(bind(&mut r, tsg, map), 4, "not a channel");
+    assert_eq!(bind(&mut r, tsg, 999), 4);
+    assert_eq!(set(&mut r, 0x40085409, 2000), 0, "timeslice");
+    assert_eq!(set(&mut r, 0x40085409, 0), 4);
+    assert_eq!(set(&mut r, 0x40085408, 2), 0, "interleave high");
+    assert_eq!(set(&mut r, 0x40085408, 3), 4);
+    for code in [0x5403, 0x5404, 0x5405] {
+        assert_eq!(no_arg(&mut r, tsg, code), 0, "{code:#x}");
+    }
+    assert_eq!(no_arg(&mut r, tsg, 0x5406), 2, "unknown TSG ioctl");
+    // Closing the channel leaves its group; a new channel binds anywhere.
+    assert_eq!(r.close_fd(channel), 0);
+    let channel = r.open_device(b"/dev/nvhost-gpu", 0).0;
+    assert_eq!(bind(&mut r, other, channel), 0);
+    r.m.write(0x6000, &channel.to_le_bytes()).unwrap();
+    r.call(&message(1, &[other, 0x40045402], Some((0x6000, 4)), None)).unwrap();
+    assert_eq!(r.m.read_u32(0x2020).unwrap(), 0, "unbind");
+    assert_eq!(bind(&mut r, tsg, channel), 0);
 }
