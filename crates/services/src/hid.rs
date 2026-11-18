@@ -11,44 +11,130 @@ use std::rc::Rc;
 
 pub const HID_SHARED_MEMORY_SIZE: usize = 0x40000; // 256 KiB
 
+// Horizon HID shared memory layout (offsets into the 0x40000-byte block).
+pub const DEBUG_PAD_OFFSET: usize = 0x0;
+pub const TOUCH_SCREEN_OFFSET: usize = 0x400;
+pub const MOUSE_OFFSET: usize = 0x3400;
+pub const KEYBOARD_OFFSET: usize = 0x3800;
+pub const NPAD_OFFSET: usize = 0x9a00;
+pub const NPAD_ENTRY_SIZE: usize = 0x5000;
+pub const NPAD_COUNT: usize = 10;
+
+// Fields of one npad entry (`NpadInternalState`).
+pub const NPAD_STYLE_SET: usize = 0x0;
+pub const NPAD_JOY_ASSIGNMENT_MODE: usize = 0x4;
+pub const NPAD_FULL_KEY_COLOR: usize = 0x8;
+pub const NPAD_JOY_COLOR: usize = 0x14;
+/// Seven common-state LIFOs (FullKey, Handheld, JoyDual, JoyLeft, JoyRight,
+/// Palma, SystemExt), 0x350 bytes each.
+pub const NPAD_COMMON_LIFOS: usize = 0x30;
+pub const NPAD_COMMON_LIFO_SIZE: usize = 0x350;
+/// Six six-axis LIFOs (FullKey, Handheld, JoyDual left/right, JoyLeft,
+/// JoyRight), 0x708 bytes each.
+pub const NPAD_SIX_AXIS_LIFOS: usize = 0x1760;
+pub const NPAD_SIX_AXIS_LIFO_SIZE: usize = 0x708;
+pub const NPAD_DEVICE_TYPE: usize = 0x4190;
+pub const NPAD_SYSTEM_PROPERTIES: usize = 0x4198;
+pub const NPAD_SYSTEM_BUTTON_PROPERTIES: usize = 0x41a0;
+pub const NPAD_BATTERY_LEVELS: usize = 0x41a4;
+
+/// LIFO header: u64 unused, u64 buffer count, u64 tail index, u64 count.
+pub const LIFO_HEADER_SIZE: usize = 0x20;
+pub const LIFO_ENTRIES: u64 = 17;
+
+/// Npad style bits.
+pub const NPAD_STYLE_FULL_KEY: u32 = 1 << 0;
+pub const NPAD_STYLE_HANDHELD: u32 = 1 << 1;
+/// Npad id of the console's own (handheld) controller and its entry index.
+pub const NPAD_ID_HANDHELD: u32 = 0x20;
+pub const HANDHELD_ENTRY: usize = 8;
+/// Index of the Handheld LIFO among the common and six-axis LIFOs.
+const HANDHELD_LIFO: usize = 1;
+
+/// Common-state attributes: connected and wired, both halves attached.
+pub const NPAD_ATTRIBUTES_HANDHELD: u32 = 0x3f;
+
+/// Entry index in the npad array for an npad id (No1-No8, Handheld, Other).
+pub fn npad_entry(id: u32) -> Option<usize> {
+    match id {
+        0..=7 => Some(id as usize),
+        NPAD_ID_HANDHELD => Some(HANDHELD_ENTRY),
+        0x10 => Some(9),
+        _ => None,
+    }
+}
+
+fn put(mem: &mut [u8], at: usize, bytes: &[u8]) {
+    mem[at..at + bytes.len()].copy_from_slice(bytes);
+}
+
+/// A LIFO holding one sample (sampling number 0) whose state starts with
+/// `state`; everything else in the sample is zero.
+fn lifo(mem: &mut [u8], at: usize, state: &[u8]) {
+    put(mem, at + 8, &LIFO_ENTRIES.to_le_bytes());
+    put(mem, at + 0x10, &0u64.to_le_bytes()); // tail: entry 0
+    put(mem, at + 0x18, &1u64.to_le_bytes()); // one sample
+    // Entry 0: u64 sampling number, then the state.
+    put(mem, at + LIFO_HEADER_SIZE + 8, state);
+}
+
+/// HID shared memory for a console whose only controller is the attached
+/// handheld pair (npad 0x20, style Handheld) with nothing pressed. Every
+/// other device and npad reads as disconnected. All LIFOs hold one sample;
+/// sampling numbers do not advance until host input is wired in.
 pub fn create_hid_shared_memory() -> Rc<RefCell<Vec<u8>>> {
     let mut mem = vec![0u8; HID_SHARED_MEMORY_SIZE];
-    // TouchScreen at 0x400: Header
-    // header: sample counter (u64), latest index (u64)
-    mem[0x400..0x408].copy_from_slice(&1u64.to_le_bytes());
-    mem[0x408..0x410].copy_from_slice(&0u64.to_le_bytes());
-
-    // Npad entries at 0x9A00 + i * 0x5000:
-    // Npad 0: Handheld, Npad 1: Player1, etc.
-    for i in 0..10 {
-        let base = 0x9A00 + i * 0x5000;
-        if base + 0x5000 <= HID_SHARED_MEMORY_SIZE {
-            // Header at base:
-            // sample counter = 17, latest sample index = 0, sample count = 17
-            mem[base..base + 8].copy_from_slice(&17u64.to_le_bytes());
-            mem[base + 8..base + 16].copy_from_slice(&0u64.to_le_bytes());
-            mem[base + 16..base + 24].copy_from_slice(&17u64.to_le_bytes());
-
-            // Initialize 17 samples at base + 0x20
-            let sample_size = 0x40; // 64 bytes per sample
-            for s in 0..17 {
-                let sample_offset = base + 0x20 + s * sample_size;
-                // sampling_number: u64
-                mem[sample_offset..sample_offset + 8].copy_from_slice(&((s + 1) as u64).to_le_bytes());
-                // sampling_number2: u64
-                mem[sample_offset + 8..sample_offset + 16].copy_from_slice(&((s + 1) as u64).to_le_bytes());
-                // buttons: u64 (0 = no buttons)
-                mem[sample_offset + 16..sample_offset + 24].copy_from_slice(&0u64.to_le_bytes());
-                // analog_stick_l: x: i32, y: i32 (centered = 0, 0)
-                mem[sample_offset + 24..sample_offset + 28].copy_from_slice(&0i32.to_le_bytes());
-                mem[sample_offset + 28..sample_offset + 32].copy_from_slice(&0i32.to_le_bytes());
-                // analog_stick_r: x: i32, y: i32 (centered = 0, 0)
-                mem[sample_offset + 32..sample_offset + 36].copy_from_slice(&0i32.to_le_bytes());
-                mem[sample_offset + 36..sample_offset + 40].copy_from_slice(&0i32.to_le_bytes());
-                // attributes: u64 (1 = connected, 2 = wired)
-                let attr: u64 = if i <= 1 { 1 } else { 0 };
-                mem[sample_offset + 40..sample_offset + 48].copy_from_slice(&attr.to_le_bytes());
+    for device in [DEBUG_PAD_OFFSET, TOUCH_SCREEN_OFFSET, MOUSE_OFFSET, KEYBOARD_OFFSET] {
+        lifo(&mut mem, device, &[]);
+    }
+    for entry in 0..NPAD_COUNT {
+        let base = NPAD_OFFSET + entry * NPAD_ENTRY_SIZE;
+        let handheld = entry == HANDHELD_ENTRY;
+        for index in 0..7 {
+            // NpadCommonState: sampling number, buttons, two sticks, attributes.
+            let mut state = vec![0u8; 0x28];
+            if handheld && index == HANDHELD_LIFO {
+                state[0x20..0x24].copy_from_slice(&NPAD_ATTRIBUTES_HANDHELD.to_le_bytes());
             }
+            lifo(&mut mem, base + NPAD_COMMON_LIFOS + index * NPAD_COMMON_LIFO_SIZE, &state);
+        }
+        for index in 0..6 {
+            // SixAxisSensorState: delta time, sampling number, acceleration,
+            // angular velocity, angle, 3x3 direction, attributes.
+            let mut state = vec![0u8; 0x60];
+            if handheld && index == HANDHELD_LIFO {
+                state[0x18..0x1c].copy_from_slice(&(-1.0f32).to_le_bytes()); // gravity on z
+                for axis in 0..3 {
+                    let at = 0x34 + axis * 16; // identity direction matrix
+                    state[at..at + 4].copy_from_slice(&1.0f32.to_le_bytes());
+                }
+                state[0x58..0x5c].copy_from_slice(&1u32.to_le_bytes()); // IsConnected
+            }
+            lifo(&mut mem, base + NPAD_SIX_AXIS_LIFOS + index * NPAD_SIX_AXIS_LIFO_SIZE, &state);
+        }
+        if !handheld {
+            continue;
+        }
+        put(&mut mem, base + NPAD_STYLE_SET, &NPAD_STYLE_HANDHELD.to_le_bytes());
+        put(&mut mem, base + NPAD_JOY_ASSIGNMENT_MODE, &0u32.to_le_bytes()); // Dual
+        // Colors: attribute Ok (0), then main/sub RGBA for the pad and each half.
+        for (at, words) in [
+            (NPAD_FULL_KEY_COLOR, &[0u32, 0xff32_3232, 0xff0f_0f0f][..]),
+            (NPAD_JOY_COLOR, &[0u32, 0xff82_8282, 0xff0f_0f0f, 0xff82_8282, 0xff0f_0f0f][..]),
+        ] {
+            for (i, word) in words.iter().enumerate() {
+                put(&mut mem, base + at + i * 4, &word.to_le_bytes());
+            }
+        }
+        // Device type: HandheldLeft | HandheldRight.
+        put(&mut mem, base + NPAD_DEVICE_TYPE, &0x0cu32.to_le_bytes());
+        // Powered left/right, ABXY oriented, plus/minus/d-pad available.
+        let properties: u64 = (1 << 4) | (1 << 5) | (1 << 11) | (1 << 13) | (1 << 14) | (1 << 15);
+        put(&mut mem, base + NPAD_SYSTEM_PROPERTIES, &properties.to_le_bytes());
+        // Unintended home button input protection enabled.
+        put(&mut mem, base + NPAD_SYSTEM_BUTTON_PROPERTIES, &1u32.to_le_bytes());
+        for i in 0..3 {
+            put(&mut mem, base + NPAD_BATTERY_LEVELS + i * 4, &4u32.to_le_bytes()); // full
         }
     }
     Rc::new(RefCell::new(mem))
