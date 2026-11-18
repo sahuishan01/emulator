@@ -963,7 +963,8 @@ impl Kernel {
             .map_err(KernelError::Memory)?;
         let copied = self.copied_handles(&request.copy_handles)?;
         let context = ServiceContext::new(memory, &request, self.process.clone(), copied)
-            .map_err(KernelError::Service)?;
+            .map_err(KernelError::Service)?
+            .with_virtual_time(self.scheduler.stats().virtual_time_ns);
         context
             .validate_reply(&reply_view)
             .map_err(KernelError::Service)?;

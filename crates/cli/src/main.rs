@@ -868,8 +868,9 @@ fn print_run_report(
     let failures = emulator_services::nv_failures();
     if !failures.is_empty() {
         println!("nvdrv failures (device, ioctl, nv error: count):");
-        for ((device, code, error), count) in failures {
-            println!("  {device} {code:#010x} error={error:#x}: {count}");
+        for ((device, code, error), (count, first)) in failures {
+            let words: Vec<String> = first.iter().map(|w| format!("{w:08x}")).collect();
+            println!("  {device} {code:#010x} error={error:#x}: {count} (first args: {})", words.join(" "));
         }
     }
     let total: u64 = samples.values().sum();

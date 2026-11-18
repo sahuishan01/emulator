@@ -50,8 +50,18 @@ pub struct ServiceContext<'a> {
     pointer_receive: Vec<Option<MemoryView>>,
     process: ProcessIdentity,
     copied: Vec<Object>,
+    /// Guest virtual time when the request was sent (GetSystemTick's clock).
+    time_ns: u64,
 }
 impl<'a> ServiceContext<'a> {
+    /// Guest virtual time in nanoseconds at the request.
+    pub fn virtual_time_ns(&self) -> u64 {
+        self.time_ns
+    }
+    pub(crate) fn with_virtual_time(mut self, time_ns: u64) -> Self {
+        self.time_ns = time_ns;
+        self
+    }
     pub(crate) fn new(
         memory: &'a AddressSpace,
         request: &Request,
@@ -66,6 +76,7 @@ impl<'a> ServiceContext<'a> {
             pointer_receive: Vec::new(),
             process,
             copied,
+            time_ns: 0,
         };
         let mut total = 0_u64;
         let mut spans = 0;

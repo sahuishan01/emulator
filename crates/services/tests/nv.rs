@@ -910,6 +910,21 @@ fn failed_opens_and_ioctls_are_tallied_for_diagnostics() {
     assert_eq!(r.ioctl(fd, 0xc0080101, &[0, 77], 1), 4);
     assert_eq!(r.ioctl(fd, 0xc0080101, &[0, 77], 1), 4);
     let failures = emulator_services::nv_failures();
-    assert!(failures.contains(&(("open /dev/nvhost-tsg-gpu".to_owned(), 0, 2), 1)));
-    assert!(failures.contains(&(("nvmap".to_owned(), 0xc0080101, 4), 2)));
+    assert!(failures.contains(&(("open /dev/nvhost-tsg-gpu".to_owned(), 0, 2), (1, vec![]))));
+    assert!(failures.contains(&(("nvmap".to_owned(), 0xc0080101, 4), (2, vec![0, 77]))));
+}
+
+#[test]
+fn ctrl_gpu_time_reads_the_guest_clock() {
+    let mut r = Rig::device_rig(Box::new(NvDriver::default()));
+    let fd = r.open_device(b"/dev/nvhost-ctrl-gpu", 0).0;
+    r.m.write(0x6000, &[0xee; 8]).unwrap();
+    // _IOR: output-only argument buffer.
+    r.call(&message(1, &[fd, 0x80084714], None, Some((0x6000, 8)))).unwrap();
+    assert_eq!(r.m.read_u32(0x2020).unwrap(), 0);
+    let time = r.m.read_u64(0x6000).unwrap();
+    assert_ne!(time, 0xeeee_eeee_eeee_eeee, "timestamp written");
+    // A wrong-sized argument is rejected.
+    r.call(&message(1, &[fd, 0x80044714], None, Some((0x6000, 4)))).unwrap();
+    assert_ne!(r.m.read_u32(0x2020).unwrap(), 0);
 }

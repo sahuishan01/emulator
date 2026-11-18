@@ -15,6 +15,8 @@ pub(crate) const FREE_SPACE: u32 = 0xc0104103;
 const ALLOC_FIXED_OFFSET: u32 = 1;
 const MAP_FIXED_OFFSET: u32 = 1;
 const MAP_CACHEABLE: u32 = 4;
+/// Switch MAP_BUFFER_EX flag: change an existing mapping's sub-range in place.
+const MAP_REMAP: u32 = 0x100;
 const ALLOC_SPARSE: u32 = 2;
 const MAX_RESERVATIONS: usize = 256;
 /// Live mappings per address space. NVN maps every memory pool (often twice),
@@ -239,6 +241,28 @@ impl NvAddressSpace {
                     output[at + 16..at + 24].copy_from_slice(&(bytes / u64::from(page)).to_le_bytes());
                 }
             }
+            MAP_BUFFER if word(input, 0) & MAP_REMAP != 0 => {
+                // Remap with handle 0: re-kind [offset + buffer_offset, +size)
+                // of the mapping that starts at `offset`, keeping its backing.
+                // Kinds have no effect on the linear GPU memory model, so this
+                // validates the range and leaves the pages as they are.
+                // Remapping onto a different nvmap handle is not implemented.
+                let flags = word(input, 0);
+                if flags & !(MAP_REMAP | MAP_FIXED_OFFSET | MAP_CACHEABLE) != 0
+                    || !(word(input, 4) <= 0xff || word(input, 4) == u32::MAX)
+                {
+                    return Err(NOT_SUPPORTED);
+                }
+                if word(input, 8) != 0 {
+                    return Err(NOT_SUPPORTED);
+                }
+                let (buffer_offset, size, base) = (wide(input, 16), wide(input, 24), wide(input, 32));
+                let region = self.regions.iter().find(|r| r.address == base).ok_or(BAD_PARAMETER)?;
+                let end = buffer_offset.checked_add(size).ok_or(BAD_PARAMETER)?;
+                if size == 0 || buffer_offset % 4096 != 0 || size % 4096 != 0 || end > region.length as u64 {
+                    return Err(BAD_PARAMETER);
+                }
+            }
             MAP_BUFFER => {
                 let page_size = word(input, 12);
                 let flags = word(input, 0);
@@ -435,6 +459,36 @@ mod tests {
             .unwrap()
             .write(GpuVa(VA_BASE), &[1])
             .is_err());
+    }
+    #[test]
+    fn kind_remaps_keep_the_backing_and_reject_foreign_ranges() {
+        let mut m = AddressSpace::default();
+        m.map(0x8000, vec![0; 8192], Permissions::READ_WRITE).unwrap();
+        m.write_u64(0x9000, 42).unwrap();
+        let view = m.pin(0x8000, 8192, Permissions::READ_WRITE).unwrap();
+        let mut a = init();
+        map(&mut a, &view, &[0, u32::MAX, 1, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        let (lo, hi) = (VA_BASE as u32, (VA_BASE >> 32) as u32);
+        // Re-kind the second page of the mapping: nothing moves.
+        let out = map(&mut a, &view, &[0x101, 0xdb, 0, 0, 4096, 0, 4096, 0, lo, hi]).unwrap();
+        assert_eq!(wide(&out, 32), VA_BASE);
+        assert_eq!(a.regions.len(), 1);
+        let mut actual = [0; 8];
+        a.space.as_ref().unwrap().read(GpuVa(VA_BASE + 4096), &mut actual).unwrap();
+        assert_eq!(u64::from_le_bytes(actual), 42);
+        for (args, error) in [
+            // Not the start of a mapping.
+            ([0x101, 0xdb, 0, 0, 0, 0, 4096, 0, lo + 4096, hi], BAD_PARAMETER),
+            // Past the end of the mapping.
+            ([0x101, 0xdb, 0, 0, 4096, 0, 8192, 0, lo, hi], BAD_PARAMETER),
+            ([0x101, 0xdb, 0, 0, 0, 0, 0, 0, lo, hi], BAD_PARAMETER),
+            // Remapping onto another buffer, unknown flags.
+            ([0x101, 0xdb, 1, 0, 0, 0, 4096, 0, lo, hi], NOT_SUPPORTED),
+            ([0x103, 0xdb, 0, 0, 0, 0, 4096, 0, lo, hi], NOT_SUPPORTED),
+        ] {
+            assert_eq!(map(&mut a, &view, &args), Err(error), "{args:x?}");
+        }
+        assert_eq!(a.regions.len(), 1);
     }
     #[test]
     fn unsupported_and_invalid_requests_do_not_publish_regions_or_change_existing_maps() {
