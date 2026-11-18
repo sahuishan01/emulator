@@ -82,6 +82,8 @@ pub struct ServiceManager {
     romfs: Option<emulator_loader::RomFsArchive>,
     /// Raw data storage of the current program (OpenDataStorageByCurrentProcess).
     data_storage: Option<DataStorage>,
+    /// Applet messages and launch parameters, shared by every applet session.
+    applet: applet::SharedAppletState,
 }
 
 /// Shared read-only storage handed to every fsp-srv session.
@@ -153,7 +155,7 @@ impl Service for ServiceManager {
                     b"vi:m\0\0\0\0" | b"vi:u\0\0\0\0" | b"vi:s\0\0\0\0" => {
                         Box::new(ViManagerService::with_graphics(self.graphics.clone()))
                     }
-                    b"appletAE" | b"appletOE" => Box::new(AppletManagerService::default()),
+                    b"appletAE" | b"appletOE" => Box::new(AppletManagerService::with_state(self.applet.clone())),
                     b"hid\0\0\0\0\0" | b"hid:sys\0" | b"hid:dbg\0" => Box::new(HidService::default()),
                     b"acc:u0\0\0" | b"acc:u1\0\0" | b"acc:e\0\0\0" => {
                         Box::new(AccountService::default())
