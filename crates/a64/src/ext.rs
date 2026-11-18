@@ -601,6 +601,43 @@ fn int3(opcode: u32, u: bool, bits: u32, a: u64, b: u64, d: u64) -> Option<u64> 
                 }
             }
         }
+        // SQSHL/UQSHL, SRSHL/URSHL, SQRSHL/UQRSHL (register): shift by the
+        // signed low byte of `b`; negative shifts go right.
+        9..=11 => {
+            let rounding = opcode != 9;
+            let saturating = opcode != 10;
+            let shift = sx(b & 0xff, 8);
+            let mask = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+            if shift >= 0 {
+                let shift = shift as u32;
+                if wa == 0 {
+                    0
+                } else if saturating {
+                    if shift >= bits {
+                        saturate(if wa < 0 { i128::MIN / 2 } else { i128::MAX / 2 })
+                    } else {
+                        saturate(wa << shift)
+                    }
+                } else if shift >= bits {
+                    0
+                } else {
+                    (a << shift) & mask
+                }
+            } else {
+                let right = (-shift) as u32;
+                let value = if rounding {
+                    if right > 66 {
+                        0
+                    } else {
+                        (wa + (1i128 << (right - 1))) >> right
+                    }
+                } else {
+                    wa >> right.min(127)
+                };
+                // A rounded right shift can carry out of the unsigned range.
+                if saturating { saturate(value) } else { value as u64 & mask }
+            }
+        }
         12 => (if wa > wb { wa } else { wb }) as u64,
         13 => (if wa < wb { wa } else { wb }) as u64,
         14 => (wa - wb).unsigned_abs() as u64,
@@ -628,6 +665,12 @@ fn int3(opcode: u32, u: bool, bits: u32, a: u64, b: u64, d: u64) -> Option<u64> 
             }
         }
         19 if !u => a.wrapping_mul(b),
+        // SQDMULH / SQRDMULH: high half of the doubled product, saturated.
+        22 if matches!(bits, 16 | 32) => {
+            let (x, y) = (i128::from(sx(a, bits)), i128::from(sx(b, bits)));
+            let round = if u { 1i128 << (bits - 1) } else { 0 };
+            clamp_signed((2 * x * y + round) >> bits, bits)
+        }
         _ => return None,
     })
 }
@@ -735,7 +778,10 @@ fn three_same(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
         if q { value } else { value & LOW }
     } else {
         let bits = 8 << size;
-        if scalar && !(matches!(opcode, 1 | 5) || (matches!(opcode, 6 | 7 | 8 | 16 | 17) && size == 3))
+        if scalar
+            && !(matches!(opcode, 1 | 5 | 9 | 11)
+                || (matches!(opcode, 6 | 7 | 8 | 10 | 16 | 17) && size == 3)
+                || (opcode == 22 && matches!(size, 1 | 2)))
         {
             return None;
         }
