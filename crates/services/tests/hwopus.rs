@@ -4,16 +4,17 @@ use emulator_kernel::{
     SVC_CREATE_TRANSFER_MEMORY, SVC_SEND_SYNC_REQUEST,
 };
 use emulator_memory::{AddressSpace, Permissions};
-use emulator_opus::Decoder;
+use emulator_opus::{Decoder, MultiStreamDecoder};
 use emulator_services::hwopus::{
-    OpusDecoderManager, OpusParameters, RESULT_OPUS_BUFFER_TOO_SMALL, RESULT_OPUS_INPUT_TOO_SMALL,
-    RESULT_OPUS_INVALID_ARGUMENT, RESULT_OPUS_INVALID_PACKET,
+    OpusDecoderManager, OpusMultiStreamParameters, OpusParameters, RESULT_OPUS_BUFFER_TOO_SMALL,
+    RESULT_OPUS_INPUT_TOO_SMALL, RESULT_OPUS_INVALID_ARGUMENT, RESULT_OPUS_INVALID_PACKET,
 };
 
 const TMEM_SIZE: u64 = 0x2_0000;
 const INPUT: u64 = 0x40000;
 const OUTPUT: u64 = 0x50000;
 const OUTPUT_SIZE: u64 = 0x10000;
+const PARAMS: u64 = 0x30000;
 
 struct Rig {
     k: Kernel,
@@ -39,6 +40,7 @@ impl Rig {
         )
         .unwrap();
         m.map(INPUT, vec![0; 0x1000], Permissions::READ_WRITE).unwrap();
+        m.map(PARAMS, vec![0; 0x1000], Permissions::READ_WRITE).unwrap();
         m.map(OUTPUT, vec![0; OUTPUT_SIZE as usize], Permissions::READ_WRITE)
             .unwrap();
         c.x[1] = 0x10000;
@@ -120,6 +122,59 @@ impl Rig {
         self.k
             .dispatch(SVC_SEND_SYNC_REQUEST, &mut self.c, &mut self.m)
             .map(|_| ())
+    }
+
+    /// CMIF request with an optional copied handle, X (pointer send), A
+    /// and B buffers and raw payload bytes.
+    fn full(
+        &mut self,
+        command: u32,
+        handle: Option<u32>,
+        x: &[(u64, u64)],
+        a: &[(u64, u64)],
+        b: &[(u64, u64)],
+        data: &[u8],
+    ) -> Result<(), KernelError> {
+        let mut p = [0u8; 256];
+        let word0 = 4 | ((x.len() as u32) << 16) | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
+        let raw_words = 8 + data.len().div_ceil(4) as u32;
+        let word1 = raw_words | if handle.is_some() { 0x8000_0000 } else { 0 };
+        p[..4].copy_from_slice(&word0.to_le_bytes());
+        p[4..8].copy_from_slice(&word1.to_le_bytes());
+        let mut at = 8;
+        if let Some(h) = handle {
+            p[8..12].copy_from_slice(&2_u32.to_le_bytes());
+            p[12..16].copy_from_slice(&h.to_le_bytes());
+            at = 16;
+        }
+        for (index, &(address, size)) in x.iter().enumerate() {
+            let fields = index as u32 | ((size as u32) << 16);
+            p[at..at + 4].copy_from_slice(&fields.to_le_bytes());
+            p[at + 4..at + 8].copy_from_slice(&(address as u32).to_le_bytes());
+            at += 8;
+        }
+        for &(address, size) in a.iter().chain(b) {
+            for (i, v) in [size as u32, address as u32, 0].into_iter().enumerate() {
+                p[at + i * 4..at + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+            }
+            at += 12;
+        }
+        let header = (at + 15) & !15;
+        p[header..header + 4].copy_from_slice(b"SFCI");
+        p[header + 8..header + 12].copy_from_slice(&command.to_le_bytes());
+        p[header + 16..header + 16 + data.len()].copy_from_slice(data);
+        self.m.write(0x2000, &p).unwrap();
+        self.c.x[0] = self.session as u64;
+        self.k
+            .dispatch(SVC_SEND_SYNC_REQUEST, &mut self.c, &mut self.m)
+            .map(|_| ())
+    }
+
+    /// Write multi-stream parameters at `PARAMS`; returns the X descriptor.
+    fn put_params(&mut self, params: &OpusMultiStreamParameters, ex: bool) -> (u64, u64) {
+        let bytes = params.to_bytes(ex);
+        self.m.write(PARAMS, &bytes).unwrap();
+        (PARAMS, bytes.len() as u64)
     }
 
     /// Result word and raw reply bytes (no handles in the reply).
@@ -246,11 +301,16 @@ fn open_rejects_missing_handle_and_undersized_buffers() {
         .unwrap();
     assert_eq!(r.plain_reply().0, RESULT_OPUS_INVALID_ARGUMENT);
     assert!(matches!(
-        r.request(2, None, &[]),
+        r.request(10, None, &[]),
         Err(KernelError::Service(ServiceError::UnsupportedCommand {
             service: "hwopus",
             ..
         }))
+    ));
+    // Multi-stream open needs its X parameter buffer.
+    assert!(matches!(
+        r.request(2, Some(r.tmem), &[0x1_0000]),
+        Err(KernelError::Service(ServiceError::InvalidBufferCounts { .. }))
     ));
 }
 
@@ -341,4 +401,147 @@ fn decode_errors_are_reported_with_hwopus_results() {
     let a = r.put_packet(&[0xfd, 1, 2, 3], 0);
     r.buffers(8, &[a], &[(OUTPUT, OUTPUT_SIZE)], &[0]).unwrap();
     assert_eq!(r.reply(4).0, RESULT_OPUS_INVALID_PACKET);
+}
+
+/// 5.1 surround as in RFC 7845 family 1: 4 streams, 2 coupled.
+fn surround() -> OpusMultiStreamParameters {
+    OpusMultiStreamParameters {
+        sample_rate: 48_000,
+        channel_count: 6,
+        stream_count: 4,
+        stereo_stream_count: 2,
+        large_frames: false,
+        mapping: vec![0, 4, 1, 2, 3, 5],
+    }
+}
+
+/// One self-delimited CELT frame (stereo or mono TOC) of `len` payload bytes.
+fn self_delimited(stereo: bool, len: u8, seed: u8) -> Vec<u8> {
+    let mut p = vec![if stereo { 0xfc } else { 0xf8 }, len];
+    p.extend((0..len).map(|i| i.wrapping_mul(29).wrapping_add(seed)));
+    p
+}
+
+/// Multistream packet for `surround()`: three self-delimited streams, the
+/// last one in normal framing.
+fn surround_packet(seed: u8) -> Vec<u8> {
+    let mut p = self_delimited(true, 60, seed);
+    p.extend(self_delimited(true, 50, seed ^ 0x55));
+    p.extend(self_delimited(false, 40, seed ^ 0xaa));
+    p.push(0xf8);
+    p.extend((0..30u8).map(|i| i.wrapping_mul(13).wrapping_add(seed)));
+    p
+}
+
+#[test]
+fn multistream_work_buffer_size_reads_x_parameters() {
+    let mut r = Rig::new();
+    let params = surround();
+    for (command, ex) in [(3, false), (7, true), (9, true)] {
+        let x = r.put_params(&params, ex);
+        r.full(command, None, &[x], &[], &[], &[]).unwrap();
+        let (result, size) = r.plain_reply();
+        assert_eq!(result, 0, "command {command}");
+        assert_eq!(size, params.work_buffer_size());
+        assert_eq!(size % 0x1000, 0);
+    }
+    let large = OpusMultiStreamParameters {
+        large_frames: true,
+        ..surround()
+    };
+    let x = r.put_params(&large, true);
+    r.full(7, None, &[x], &[], &[], &[]).unwrap();
+    assert!(r.plain_reply().1 > params.work_buffer_size());
+    // Invalid: mapping beyond the coded channels, too many coupled streams,
+    // unsupported rate, no streams.
+    let bad = [
+        OpusMultiStreamParameters {
+            mapping: vec![0, 4, 1, 2, 3, 6],
+            ..surround()
+        },
+        OpusMultiStreamParameters {
+            stereo_stream_count: 5,
+            ..surround()
+        },
+        OpusMultiStreamParameters {
+            sample_rate: 44_100,
+            ..surround()
+        },
+        OpusMultiStreamParameters {
+            stream_count: 0,
+            stereo_stream_count: 0,
+            ..surround()
+        },
+    ];
+    for params in bad {
+        let x = r.put_params(&params, false);
+        r.full(3, None, &[x], &[], &[], &[]).unwrap();
+        assert_eq!(r.plain_reply().0, RESULT_OPUS_INVALID_ARGUMENT, "{params:?}");
+    }
+    // A truncated parameter buffer is rejected too.
+    r.full(3, None, &[(PARAMS, 0x20)], &[], &[], &[]).unwrap();
+    assert_eq!(r.plain_reply().0, RESULT_OPUS_INVALID_ARGUMENT);
+    // Without the X buffer the request is malformed.
+    assert!(matches!(
+        r.request(3, None, &[]),
+        Err(KernelError::Service(ServiceError::InvalidBufferCounts { .. }))
+    ));
+}
+
+#[test]
+fn multistream_decoder_matches_the_library_and_rejects_single_stream_commands() {
+    let mut r = Rig::new();
+    let params = surround();
+    let size = params.work_buffer_size();
+    assert!(u64::from(size) <= TMEM_SIZE);
+    // Undersized work buffer.
+    let x = r.put_params(&params, false);
+    r.full(2, Some(r.tmem), &[x], &[], &[], &(size - 0x1000).to_le_bytes()).unwrap();
+    assert_eq!(r.m.read_u32(0x2018).unwrap(), RESULT_OPUS_INVALID_ARGUMENT);
+    // OpenHardwareOpusDecoderForMultiStreamEx.
+    let x = r.put_params(&params, true);
+    r.full(6, Some(r.tmem), &[x], &[], &[], &size.to_le_bytes()).unwrap();
+    assert_ne!(r.m.read_u32(0x2004).unwrap() & 0x8000_0000, 0);
+    r.session = r.m.read_u32(0x200c).unwrap();
+
+    let mut reference = MultiStreamDecoder::new(48_000, 6, 4, 2, &params.mapping).unwrap();
+    let mut want = vec![0i16; 960 * 6];
+    for (round, command) in [9u32, 2, 5, 7].into_iter().enumerate() {
+        let packet = surround_packet(round as u8);
+        let reset = matches!(command, 7 | 9) && round == 3;
+        if reset {
+            reference.reset();
+        }
+        let samples = reference.decode(Some(&packet), &mut want, 960).unwrap();
+        assert_eq!(samples, 960);
+        let a = r.put_packet(&packet, reference.final_range());
+        let data: &[u8] = if matches!(command, 7 | 9) {
+            &[u8::from(reset)]
+        } else {
+            &[]
+        };
+        r.buffers(command, &[a], &[(OUTPUT, OUTPUT_SIZE)], data).unwrap();
+        let (result, out) = r.reply(8);
+        assert_eq!(result, 0, "command {command}");
+        assert_eq!(u32::from_le_bytes(out[..4].try_into().unwrap()), packet.len() as u32 + 8);
+        assert_eq!(u32::from_le_bytes(out[4..8].try_into().unwrap()), 960);
+        assert_eq!(r.pcm(960 * 6), want, "command {command}");
+    }
+    // A packet missing its last stream is malformed.
+    let mut short = self_delimited(true, 60, 9);
+    short.extend(self_delimited(true, 50, 9));
+    let a = r.put_packet(&short, 0);
+    r.buffers(9, &[a], &[(OUTPUT, OUTPUT_SIZE)], &[0]).unwrap();
+    assert_eq!(r.reply(4).0, RESULT_OPUS_INVALID_PACKET);
+    // Single-stream decode commands do not apply to a multi-stream decoder.
+    let a = r.put_packet(&celt_packet(1), 0);
+    for command in [0, 4, 6, 8] {
+        assert!(matches!(
+            r.buffers(command, &[a], &[(OUTPUT, OUTPUT_SIZE)], &[0]),
+            Err(KernelError::Service(ServiceError::UnsupportedCommand {
+                service: "IHardwareOpusDecoder",
+                ..
+            }))
+        ));
+    }
 }
