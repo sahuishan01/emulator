@@ -52,6 +52,7 @@ pub struct ServiceContext<'a> {
     copied: Vec<Object>,
     /// Guest virtual time when the request was sent (GetSystemTick's clock).
     time_ns: u64,
+    timers: Rc<crate::timers::TimerQueue>,
 }
 impl<'a> ServiceContext<'a> {
     /// Guest virtual time in nanoseconds at the request.
@@ -60,6 +61,15 @@ impl<'a> ServiceContext<'a> {
     }
     pub(crate) fn with_virtual_time(mut self, time_ns: u64) -> Self {
         self.time_ns = time_ns;
+        self
+    }
+    /// The kernel's timer queue. Arm timers from a committed effect, not
+    /// while preparing, so failed requests leave no timers behind.
+    pub fn timers(&self) -> &Rc<crate::timers::TimerQueue> {
+        &self.timers
+    }
+    pub(crate) fn with_timers(mut self, timers: Rc<crate::timers::TimerQueue>) -> Self {
+        self.timers = timers;
         self
     }
     pub(crate) fn new(
@@ -77,6 +87,7 @@ impl<'a> ServiceContext<'a> {
             process,
             copied,
             time_ns: 0,
+            timers: Rc::default(),
         };
         let mut total = 0_u64;
         let mut spans = 0;

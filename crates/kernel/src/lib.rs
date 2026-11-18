@@ -4,12 +4,14 @@ mod handles;
 mod scheduler;
 pub mod service;
 mod sync;
+pub mod timers;
 
 use emulator_a64::Cpu;
 use emulator_ipc::{encode_reply, CommandType, IpcError, IPC_BUFFER_SIZE};
 use emulator_memory::{Access, AddressSpace, MemoryError, Permissions};
 pub use handles::{HandleError, Object, ProcessIdentity, TransferMemory};
 use handles::{HandleTable, ThreadObject};
+pub use timers::{TimerError, TimerQueue};
 pub use scheduler::{ThreadSummary, 
     ScheduleOutcome, SchedulerError, SchedulerStats, MAX_THREADS, THREAD_QUANTUM, THREAD_TLS_ARENA,
 };
@@ -977,7 +979,8 @@ impl Kernel {
         let copied = self.copied_handles(&request.copy_handles)?;
         let context = ServiceContext::new(memory, &request, self.process.clone(), copied)
             .map_err(KernelError::Service)?
-            .with_virtual_time(self.scheduler.stats().virtual_time_ns);
+            .with_virtual_time(self.scheduler.stats().virtual_time_ns)
+            .with_timers(self.scheduler.timers());
         context
             .validate_reply(&reply_view)
             .map_err(KernelError::Service)?;

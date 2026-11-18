@@ -1,6 +1,7 @@
 //! Original deterministic single-core reference scheduler. Guest time is a
 //! model: one virtual ns per interpreted instruction, not a hardware frequency.
 use crate::handles::ThreadObject;
+use crate::timers::TimerQueue;
 use emulator_a64::Cpu;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -28,6 +29,9 @@ pub fn overlaps_tls(address: u64, end: u64) -> bool {
     (address < low_end && THREAD_TLS_ARENA < end) || (address < high_end && HIGH_TLS_ARENA < end)
 }
 pub const THREAD_QUANTUM: u32 = 64;
+/// Idle time advances that fire timers without waking a thread before the
+/// scheduler jumps straight to the earliest thread deadline.
+const IDLE_TIMER_STEPS: usize = 4096;
 const MAIN_PRIORITY: u8 = 44;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +119,7 @@ pub struct Scheduler {
     next_deadline: u64,
     ready_order: u128,
     stats: SchedulerStats,
+    timers: Rc<TimerQueue>,
 }
 impl Scheduler {
     pub fn new(main: ThreadObject) -> Self {
@@ -140,7 +145,22 @@ impl Scheduler {
                 threads_created: 1,
                 ..SchedulerStats::default()
             },
+            timers: Rc::default(),
         }
+    }
+    /// Timed signals fired as guest virtual time passes.
+    pub fn timers(&self) -> Rc<TimerQueue> {
+        Rc::clone(&self.timers)
+    }
+    fn thread_deadline(&self) -> Option<u64> {
+        self.threads
+            .iter()
+            .filter_map(|t| match &t.state {
+                State::Waiting { deadline, .. } => *deadline,
+                State::Sleeping { deadline } => Some(*deadline),
+                _ => None,
+            })
+            .min()
     }
     pub fn next_thread(&self) -> Result<usize, SchedulerError> {
         if self.threads.len() >= MAX_THREADS {
@@ -330,6 +350,7 @@ impl Scheduler {
         self.threads.get(id).map(|t| t.priority)
     }
     fn wake(&mut self) {
+        self.timers.fire(self.stats.virtual_time_ns);
         for id in 0..self.threads.len() {
             let now = self.stats.virtual_time_ns;
             let (ready, result) = match &self.threads[id].state {
@@ -412,6 +433,45 @@ impl Scheduler {
     pub fn request_reschedule(&mut self) {
         self.dirty = true;
     }
+    /// Every thread is blocked: move guest time forward to the next timer or
+    /// thread deadline until a thread wakes. Timers that wake nobody are
+    /// stepped through a bounded number of times, then time jumps to the
+    /// earliest thread deadline (periodic timers collapse missed periods).
+    /// With no thread deadline, once every live timer has fired the threads
+    /// stay blocked: further firings cannot set anything new.
+    fn advance_idle(&mut self) -> Option<usize> {
+        let mut steps = 0;
+        loop {
+            let thread_deadline = self.thread_deadline();
+            let timer_due = self.timers.next_due();
+            let target = match (thread_deadline, timer_due) {
+                (None, None) => return None,
+                (Some(thread), None) => thread,
+                (None, Some(timer)) => {
+                    if steps > self.timers.len() {
+                        return None;
+                    }
+                    timer
+                }
+                (Some(thread), Some(timer)) => {
+                    if steps >= IDLE_TIMER_STEPS {
+                        thread
+                    } else {
+                        thread.min(timer)
+                    }
+                }
+            };
+            self.stats.virtual_time_ns = self.stats.virtual_time_ns.max(target);
+            self.wake();
+            if let Some(best) = self.best() {
+                return Some(best);
+            }
+            if Some(target) == thread_deadline {
+                return None;
+            }
+            steps += 1;
+        }
+    }
     pub fn prepare(&mut self, cpu: &mut Cpu) -> ScheduleOutcome {
         // Fast path: nothing outside the current thread's instruction stream
         // changed and its quantum is not used up, so it keeps running with its
@@ -446,29 +506,12 @@ impl Scheduler {
         }
         let mut best = self.best();
         if best.is_none() {
-            let deadline = self
-                .threads
-                .iter()
-                .filter_map(|t| match &t.state {
-                    State::Waiting { deadline, .. } => *deadline,
-                    State::Sleeping { deadline } => Some(*deadline),
-                    _ => None,
-                })
-                .min();
-            if let Some(deadline) = deadline {
-                self.stats.virtual_time_ns = deadline;
-                self.wake();
-                best = self.best();
-            }
+            best = self.advance_idle();
         }
         self.next_deadline = self
-            .threads
-            .iter()
-            .filter_map(|t| match &t.state {
-                State::Waiting { deadline, .. } => *deadline,
-                State::Sleeping { deadline } => Some(*deadline),
-                _ => None,
-            })
+            .thread_deadline()
+            .into_iter()
+            .chain(self.timers.next_due())
             .min()
             .unwrap_or(u64::MAX);
         let Some(next) = best else {
@@ -488,5 +531,60 @@ impl Scheduler {
             cpu.clear_exclusive();
         }
         ScheduleOutcome::Ready
+    }
+}
+
+#[cfg(test)]
+mod timer_tests {
+    use super::*;
+
+    fn scheduler() -> (Scheduler, Cpu) {
+        let mut scheduler = Scheduler::new(ThreadObject::new(0));
+        let mut cpu = Cpu::default();
+        assert_eq!(scheduler.prepare(&mut cpu), ScheduleOutcome::Ready);
+        (scheduler, cpu)
+    }
+
+    #[test]
+    fn a_periodic_timer_wakes_an_infinite_wait_at_its_due_time() {
+        let (mut s, mut cpu) = scheduler();
+        let vsync = Rc::new(Cell::new(false));
+        s.timers().arm_periodic(&vsync, 16_666_666, 16_666_666).unwrap();
+        s.wait(vec![WaitTarget(vsync.clone())], -1).unwrap();
+        assert_eq!(s.prepare(&mut cpu), ScheduleOutcome::Ready);
+        assert_eq!(s.stats().virtual_time_ns, 16_666_666);
+        assert_eq!(cpu.x[0], 0);
+        // The guest clears the event and waits for the next frame.
+        vsync.set(false);
+        s.wait(vec![WaitTarget(vsync.clone())], -1).unwrap();
+        assert_eq!(s.prepare(&mut cpu), ScheduleOutcome::Ready);
+        assert_eq!(s.stats().virtual_time_ns, 33_333_332);
+    }
+
+    #[test]
+    fn unrelated_timers_do_not_stop_time_from_reaching_a_sleep_deadline() {
+        let (mut s, mut cpu) = scheduler();
+        let unrelated = Rc::new(Cell::new(false));
+        s.timers().arm_periodic(&unrelated, 100_000, 100_000).unwrap();
+        // 10 s of sleep spans 100k timer periods; the idle path steps a
+        // bounded number of them, then jumps to the deadline.
+        s.sleep(10_000_000_000).unwrap();
+        assert_eq!(s.prepare(&mut cpu), ScheduleOutcome::Ready);
+        assert_eq!(s.stats().virtual_time_ns, 10_000_000_000);
+        assert!(unrelated.get());
+        assert!(s.timers().next_due().unwrap() > 10_000_000_000);
+    }
+
+    #[test]
+    fn timers_that_wake_nobody_leave_an_infinite_wait_blocked() {
+        let (mut s, mut cpu) = scheduler();
+        let unrelated = Rc::new(Cell::new(false));
+        let never = Rc::new(Cell::new(false));
+        s.timers().arm_periodic(&unrelated, 100_000, 100_000).unwrap();
+        s.wait(vec![WaitTarget(never)], -1).unwrap();
+        assert_eq!(s.prepare(&mut cpu), ScheduleOutcome::Blocked);
+        assert!(unrelated.get());
+        // Bounded: time moved by at most a couple of periods.
+        assert!(s.stats().virtual_time_ns <= 300_000);
     }
 }
