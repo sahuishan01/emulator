@@ -175,6 +175,24 @@ impl<'a> ServiceContext<'a> {
         }
         Ok(())
     }
+    /// Exact descriptor counts: A (send), B (receive), X (pointer send) and C
+    /// (pointer receive). An empty X descriptor still counts.
+    pub fn require_exact_buffers(
+        &self,
+        send: usize,
+        receive: usize,
+        pointer_send: usize,
+        pointer_receive: usize,
+    ) -> Result<(), ServiceError> {
+        if self.send.len() != send
+            || self.receive.len() != receive
+            || self.pointer_send.len() != pointer_send
+            || self.pointer_receive.len() != pointer_receive
+        {
+            return Err(self.buffer_error());
+        }
+        Ok(())
+    }
     /// Counts for auto-select (0x21/0x22) buffers: each logical buffer may
     /// arrive as a map-alias descriptor, a pointer descriptor, or both.
     /// Callers emit every declared buffer, so descriptors past the `send` /

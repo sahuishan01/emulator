@@ -355,16 +355,23 @@ impl Service for FileSystemProxy {
 pub struct FspSrvService {
     romfs: Option<RomFsArchive>,
     data_storage: Option<crate::DataStorage>,
+    save_data: crate::savedata::SaveDataStore,
 }
 
 impl FspSrvService {
     pub fn with_romfs(romfs: Option<RomFsArchive>) -> Self {
         let data_storage = romfs.clone().map(|romfs| std::rc::Rc::new(romfs) as crate::DataStorage);
-        Self { romfs, data_storage }
+        Self { romfs, data_storage, ..Self::default() }
     }
 
     pub fn with_storage(romfs: Option<RomFsArchive>, data_storage: Option<crate::DataStorage>) -> Self {
-        Self { romfs, data_storage }
+        Self { romfs, data_storage, ..Self::default() }
+    }
+
+    /// Save data shared with every other fsp-srv session of the process.
+    pub fn with_save_data(mut self, save_data: crate::savedata::SaveDataStore) -> Self {
+        self.save_data = save_data;
+        self
     }
 }
 
@@ -394,15 +401,9 @@ impl Service for FspSrvService {
                     effect: None,
                 })
             }
-            // OpenSaveDataFileSystem: returns IFileSystem session object
-            18 | 51 | 52 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: vec![Box::new(FileSystemProxy::default())],
-                    effect: None,
-                })
-            }
+            // OpenSaveDataFileSystem (51) / OpenReadOnlySaveDataFileSystem (53).
+            // The SD card (18) and system saves by id (52) are not available.
+            51 | 53 => crate::savedata::open_save_data(&self.save_data, request, request.command_id == 51),
             // OpenDataStorageByCurrentProcess -> IStorage over the RomFS image.
             // Other titles' data storages are not available and fail explicitly.
             200 => {

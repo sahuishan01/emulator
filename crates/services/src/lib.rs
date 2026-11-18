@@ -19,6 +19,7 @@ pub mod lm;
 pub mod pctl;
 pub mod plu;
 pub mod reference;
+pub mod savedata;
 pub mod setsys;
 pub mod timesys;
 pub mod timezone;
@@ -84,6 +85,8 @@ pub struct ServiceManager {
     data_storage: Option<DataStorage>,
     /// Applet messages and launch parameters, shared by every applet session.
     applet: applet::SharedAppletState,
+    /// Committed save data, shared by every fsp-srv session.
+    save_data: savedata::SaveDataStore,
 }
 
 /// Shared read-only storage handed to every fsp-srv session.
@@ -149,7 +152,10 @@ impl Service for ServiceManager {
                     b"nvdrv\0\0\0" | b"nvdrv:a\0" | b"nvdrv:s\0" | b"nvdrv:t\0" => {
                         Box::new(NvDriver::with_graphics(self.graphics.clone()))
                     }
-                    b"fsp-srv\0" | b"fsp-pr\0\0" => Box::new(FspSrvService::with_storage(self.romfs.clone(), self.data_storage.clone())),
+                    b"fsp-srv\0" | b"fsp-pr\0\0" => Box::new(
+                        FspSrvService::with_storage(self.romfs.clone(), self.data_storage.clone())
+                            .with_save_data(self.save_data.clone()),
+                    ),
                     b"set:sys\0" | b"set\0\0\0\0\0" => Box::new(SetSysService::default()),
                     b"time:s\0\0" | b"time:u\0\0" | b"time:a\0\0" => Box::new(TimeService::default()),
                     b"vi:m\0\0\0\0" | b"vi:u\0\0\0\0" | b"vi:s\0\0\0\0" => {

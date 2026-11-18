@@ -45,13 +45,33 @@ impl Rig {
         c: Option<(u64, u64)>,
         data: &[u8],
     ) -> Result<(), emulator_kernel::KernelError> {
+        self.try_request(command, &[], a, b, c, data)
+    }
+
+    /// Full CMIF request on the current session, with X (pointer send)
+    /// buffers below 4 GiB.
+    pub fn try_request(
+        &mut self,
+        command: u32,
+        x: &[(u64, u64)],
+        a: &[(u64, u64)],
+        b: &[(u64, u64)],
+        c: Option<(u64, u64)>,
+        data: &[u8],
+    ) -> Result<(), emulator_kernel::KernelError> {
         let mut p = [0u8; 256];
-        let word0 = 4 | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
+        let word0 = 4 | ((x.len() as u32) << 16) | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
         let raw_words = 8 + data.len().div_ceil(4) as u32;
         let word1 = raw_words | if c.is_some() { 2 << 10 } else { 0 };
         p[..4].copy_from_slice(&word0.to_le_bytes());
         p[4..8].copy_from_slice(&word1.to_le_bytes());
         let mut at = 8;
+        for (index, &(address, size)) in x.iter().enumerate() {
+            let fields = index as u32 | ((size as u32) << 16);
+            p[at..at + 4].copy_from_slice(&fields.to_le_bytes());
+            p[at + 4..at + 8].copy_from_slice(&(address as u32).to_le_bytes());
+            at += 8;
+        }
         for &(address, size) in a.iter().chain(b) {
             for (i, v) in [size as u32, address as u32, 0].into_iter().enumerate() {
                 p[at + i * 4..at + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
@@ -89,6 +109,26 @@ impl Rig {
     ) -> Result<(), emulator_kernel::KernelError> {
         let own = std::mem::replace(&mut self.session, session);
         let outcome = self.try_call(command, a, b, None, data);
+        self.session = own;
+        outcome
+    }
+
+    /// Request on `session` with X buffers; panics on a kernel-level error.
+    pub fn x_call_on(&mut self, session: u32, command: u32, x: &[(u64, u64)], a: &[(u64, u64)], b: &[(u64, u64)], data: &[u8]) {
+        self.try_x_call_on(session, command, x, a, b, data).unwrap();
+    }
+
+    pub fn try_x_call_on(
+        &mut self,
+        session: u32,
+        command: u32,
+        x: &[(u64, u64)],
+        a: &[(u64, u64)],
+        b: &[(u64, u64)],
+        data: &[u8],
+    ) -> Result<(), emulator_kernel::KernelError> {
+        let own = std::mem::replace(&mut self.session, session);
+        let outcome = self.try_request(command, x, a, b, None, data);
         self.session = own;
         outcome
     }
