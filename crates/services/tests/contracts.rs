@@ -584,3 +584,20 @@ fn shared_font_service_serves_the_bundled_system_font() {
     assert!(decode_font(&small, at, 0).is_none(), "size word needs the key");
     assert!(SharedFontService::with_font(&vec![0; SHARED_FONT_REGION_SIZE]).is_none());
 }
+
+#[test]
+fn aoc_reports_no_add_on_content_for_the_calling_process() {
+    use emulator_services::aoc::AddOnContentManager;
+    let mut aoc = AddOnContentManager;
+    let pid = [0u8; 8];
+    let count = aoc.dispatch(&request(2, &pid, Some(0x51))).unwrap();
+    assert_eq!((count.result, count.data), (0, 0u32.to_le_bytes().to_vec()));
+    // CheckAddOnContentMountStatus: nothing mounted, nothing lost.
+    let status = aoc.dispatch(&request(50, &pid, Some(0x51))).unwrap();
+    assert_eq!((status.result, status.data.len()), (0, 0));
+    // Both identify the caller by its process id.
+    assert!(aoc.dispatch(&request(50, &pid, None)).is_err());
+    assert!(aoc.dispatch(&request(50, &[], Some(0x51))).is_err());
+    // Preparing (mounting) add-on content cannot succeed with none installed.
+    assert!(aoc.dispatch(&request(7, &[0; 16], Some(0x51))).is_err());
+}

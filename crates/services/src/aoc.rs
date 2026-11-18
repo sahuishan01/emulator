@@ -28,6 +28,15 @@ impl Service for AddOnContentManager {
                     ..ServiceReply::default()
                 })
             }
+            // CheckAddOnContentMountStatus(process id): nothing is installed,
+            // so no mounted add-on content can have been lost.
+            50 => {
+                payload(request, 8)?;
+                if request.pid.is_none() {
+                    return Err(ServiceError::MissingSenderIdentity);
+                }
+                Ok(ServiceReply::default())
+            }
             // GetAddOnContentListChangedEvent (8) and its process-id variant (10).
             8 | 10 => {
                 payload(request, if request.command_id == 8 { 0 } else { 8 })?;
