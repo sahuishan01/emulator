@@ -873,6 +873,13 @@ fn print_run_report(
             println!("  {device} {code:#010x} error={error:#x}: {count} (first args: {})", words.join(" "));
         }
     }
+    let submit_errors = emulator_services::nv_submit_errors();
+    if !submit_errors.is_empty() {
+        println!("GPFIFO submits rejected by the GPU model (reason: count):");
+        for (error, count) in submit_errors {
+            println!("  {error}: {count}");
+        }
+    }
     let total: u64 = samples.values().sum();
     if total > 0 {
         let mut hot: Vec<(u64, u64)> = samples.iter().map(|(pc, count)| (*pc, *count)).collect();

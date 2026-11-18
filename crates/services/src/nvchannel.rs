@@ -197,7 +197,10 @@ impl Channel {
         let (processor, work) = self
             .processor
             .prepare_for_class(space, &entries_bytes, self.context)
-            .map_err(|_| BAD_PARAMETER)?;
+            .map_err(|error| {
+                crate::nv::record_submit_error(error);
+                BAD_PARAMETER
+            })?;
         let mut next = self.clone();
         next.processor = processor;
         let mut output = input.to_vec();

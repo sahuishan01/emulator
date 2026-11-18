@@ -74,6 +74,26 @@ fn record_failure(what: String, code: u32, error: u32, arguments: &[u8]) {
     });
 }
 
+thread_local! {
+    static SUBMIT_ERRORS: RefCell<BTreeMap<String, u64>> = RefCell::default();
+}
+
+/// Keep the GPU-side reason a GPFIFO submit was rejected (diagnostics).
+pub(crate) fn record_submit_error(error: String) {
+    SUBMIT_ERRORS.with(|errors| {
+        let mut errors = errors.borrow_mut();
+        if errors.len() < FAILURE_KINDS || errors.contains_key(&error) {
+            *errors.entry(error).or_default() += 1;
+        }
+    });
+}
+
+/// Distinct GPU errors behind rejected GPFIFO submits on this thread, with
+/// counts. Diagnostics only.
+pub fn nv_submit_errors() -> Vec<(String, u64)> {
+    SUBMIT_ERRORS.with(|errors| errors.borrow().iter().map(|(k, v)| (k.clone(), *v)).collect())
+}
+
 /// nvdrv requests on this thread that returned a non-zero nv error:
 /// ((device or "open <path>", ioctl code, error), (count, first arguments)).
 /// Diagnostics only.
