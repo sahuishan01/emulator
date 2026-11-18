@@ -99,6 +99,17 @@ impl Service for AccountService {
                     ..ServiceReply::default()
                 })
             }
+            // GetBaasAccountManagerForApplication(Uid) -> IManagerForApplication
+            101 => {
+                let user = uid_argument(request)?;
+                if user != DEFAULT_USER_ID {
+                    return Ok(failure(RESULT_ACCOUNT_USER_NOT_FOUND));
+                }
+                Ok(ServiceReply {
+                    moved_objects: vec![Box::new(ManagerForApplication { user_id: user })],
+                    ..ServiceReply::default()
+                })
+            }
             // IsUserRegistrationRequestPermitted(pid) -> bool: no user creation.
             50 => Ok(reply(vec![0])),
             // TrySelectUserWithoutInteraction(bool) -> Uid: the only user.
@@ -160,5 +171,33 @@ impl Service for ProfileService {
             // project does not ship yet.
             command => Err(ServiceError::UnsupportedCommand { service: "IProfile", command }),
         }
+    }
+}
+
+/// `IManagerForApplication` for a registered user. The user has no linked
+/// network service account and the project has no account server, so every
+/// network command (availability, account id, id tokens, authorization,
+/// licenses) fails explicitly until it is modelled.
+#[derive(Clone, Debug, Default)]
+pub struct ManagerForApplication {
+    user_id: [u8; 16],
+}
+
+impl ManagerForApplication {
+    pub fn user_id(&self) -> [u8; 16] {
+        self.user_id
+    }
+}
+
+impl Service for ManagerForApplication {
+    fn clone_for_request(&self) -> Box<dyn Service> {
+        Box::new(self.clone())
+    }
+
+    fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
+        Err(ServiceError::UnsupportedCommand {
+            service: "IManagerForApplication",
+            command: request.command_id,
+        })
     }
 }
