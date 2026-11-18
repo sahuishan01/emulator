@@ -11,6 +11,7 @@ pub mod ectx;
 pub mod applet;
 pub mod aud;
 pub mod bcat;
+pub mod csrng;
 pub mod binder;
 pub mod event;
 pub mod fspsrv;
@@ -178,6 +179,7 @@ impl Service for ServiceManager {
                     b"audout:u" => Box::new(AudioOutManager::default()),
                     b"hwopus\0\0" => Box::new(hwopus::OpusDecoderManager),
                     b"bcat:u\0\0" => Box::new(bcat::BcatServiceCreator),
+                    b"csrng\0\0\0" => Box::new(csrng::RandomService),
                     b"pl:u\0\0\0\0" => Box::new(plu::SharedFontService::default()),
                     _ => return Err(ServiceError::UnsupportedService(name)),
                 };
