@@ -213,7 +213,9 @@ fn test_vi_and_applet_services() {
     assert_eq!(&profile_base.data[..16], &user);
     assert_eq!(&profile_base.data[0x18..0x18 + 6], b"Player");
     assert!(profile.dispatch(&request(10, &[], None)).is_err(), "no profile image yet");
-    assert!(acc.dispatch(&request(101, &user, None)).is_err(), "no network service account");
+    // The BaaS manager exists, but the user has no network service account.
+    let mut manager = acc.dispatch(&request(101, &user, None)).unwrap().moved_objects.remove(0);
+    assert!(manager.dispatch(&request(0, &[], None)).is_err(), "no network service account");
 
     // Performance Management Service (apm)
     let mut apm = sm
