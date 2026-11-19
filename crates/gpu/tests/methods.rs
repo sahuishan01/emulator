@@ -532,7 +532,11 @@ fn inline_to_memory_writes_pitch_lines_from_3d_and_i2m_classes() {
     let mut rig = Rig::new();
     let mut methods = vec![(2, 0, KEPLER_INLINE_TO_MEMORY_B)];
     methods.extend(i2m_setup(2, 5, 1, 0, 32));
-    methods.extend([(2, 0x1b0, 0x11), (2, 0x1b4, 0xaabb_ccdd), (2, 0x1b4, 0xee)]);
+    methods.extend([
+        (2, 0x1b0, 0x1051),
+        (2, 0x1b4, 0xaabb_ccdd),
+        (2, 0x1b4, 0xee),
+    ]);
     let id = rig.submit(&methods);
     rig.execute(id).unwrap();
     assert_eq!(&rig.bytes()[32..38], &[0xdd, 0xcc, 0xbb, 0xaa, 0xee, 37]);
@@ -551,6 +555,10 @@ fn inline_to_memory_failures_are_explicit() {
         (
             [i2m_setup(2, 8, 1, 0, 0), vec![(2, 0x1b0, 1), (2, 0x1b4, 1)]].concat(),
             ExecutionError::InlineToMemory("launch data incomplete"),
+        ),
+        (
+            [i2m_setup(2, 4, 1, 0, 0), vec![(2, 0x1b0, 0x3)]].concat(),
+            ExecutionError::InlineToMemoryLaunch(0x3),
         ),
         (
             vec![(2, 0x1b4, 1)],

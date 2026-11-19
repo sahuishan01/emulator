@@ -89,8 +89,11 @@ impl I2m {
         if (flags >> 4) & 3 > 1 {
             return Err(error("semaphore completion"));
         }
-        if flags & !0x31 != 0 {
-            return Err(error("unsupported launch bits"));
+        // bit 6 SYSMEMBAR_DISABLE (no barrier to skip in a coherent model) and
+        // bit 12 SEMAPHORE_STRUCT_SIZE (unused without a semaphore) are
+        // accepted; reduction (bit 1, 13-17) and other bits fail with the value.
+        if flags & !0x1071 != 0 {
+            return Err(ExecutionError::InlineToMemoryLaunch(flags));
         }
         let length = u64::from(self.reg(0x180)?);
         let count = u64::from(self.reg(0x184)?);

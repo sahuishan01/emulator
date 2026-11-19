@@ -136,6 +136,7 @@ pub enum ExecutionError {
     UnmodelledState(u32),
     ConstantBuffer(&'static str),
     InlineToMemory(&'static str),
+    InlineToMemoryLaunch(u32),
 }
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
