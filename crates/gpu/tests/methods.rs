@@ -352,6 +352,7 @@ fn host_methods_run_on_any_subchannel_without_a_bound_class() {
         (0, 0x08, 0x110e),
         (3, 0x24, 0),
         (5, 0x78, 0),
+        (6, 0x50, 0x1234), // SET_REFERENCE
     ];
     methods.extend(copy(0, DATA, DATA + 16, 8));
     let id = rig.submit(&methods);

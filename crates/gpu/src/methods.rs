@@ -47,6 +47,7 @@ fn configuration_only(class: u32, offset: u32) -> bool {
     }
 }
 
+const HOST_SET_REFERENCE: u32 = 0x50;
 const HOST_SYNCPOINT_A: u32 = 0x70;
 const HOST_SYNCPOINT_B: u32 = 0x74;
 const HOST_SEMAPHORE_A: u32 = 0x10;
@@ -235,6 +236,8 @@ pub(crate) struct MethodState {
     semaphore: [Option<u32>; 3],
     /// SYNCPOINTA payload (a wait threshold; increments ignore it).
     syncpoint_payload: Option<u32>,
+    /// Last SET_REFERENCE value.
+    reference: Option<u32>,
     /// GPU time for timestamped releases; set per submit by the channel.
     gpu_time_ns: Option<u64>,
 }
@@ -478,6 +481,10 @@ impl MethodState {
             if offset < 0x100 {
                 if (HOST_SEMAPHORE_A..=HOST_SEMAPHORE_D).contains(&offset) {
                     batch.semaphore(space, offset, write.data, &mut spans)?;
+                } else if offset == HOST_SET_REFERENCE {
+                    // The channel reference counter (host-readable through
+                    // USERD). No reader is modelled; the value is kept.
+                    batch.state.reference = Some(write.data);
                 } else if offset == HOST_SYNCPOINT_A {
                     batch.state.syncpoint_payload = Some(write.data);
                 } else if offset == HOST_SYNCPOINT_B {
