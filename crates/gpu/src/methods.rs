@@ -193,12 +193,13 @@ const CB_SIZE: u32 = 0x2380;
 const CB_POS: u32 = 0x238c;
 const CB_DATA_FIRST: u32 = 0x2390;
 const CB_DATA_LAST: u32 = 0x23cc;
-/// 3D methods with effects beyond register state that are not modelled:
-/// the report semaphore trigger (SET_REPORT_SEMAPHORE_D). They fail instead of being recorded.
-/// Draw begin/end (VERTEX_BEGIN/END_GL 0x1614/0x1618) and report-counter reset
-/// (0x1530) are included so a draw outside the modelled triggers cannot be
-/// recorded as plain state.
-const THREED_ACTIONS: [u32; 4] = [0x1b0c, 0x1530, 0x1614, 0x1618];
+/// 3D methods with effects beyond register state that are not modelled: the
+/// report semaphore trigger (SET_REPORT_SEMAPHORE_D 0x1b0c) and draw
+/// begin/end (VERTEX_BEGIN/END_GL 0x1614/0x1618), so a draw outside the
+/// modelled triggers cannot be recorded as plain state. Report-counter reset
+/// (0x1530) is plain state: the model keeps no counters and every report
+/// fails, so a reset has nothing to change.
+const THREED_ACTIONS: [u32; 3] = [0x1b0c, 0x1614, 0x1618];
 /// Compute methods with effects: LAUNCH (0x2bc) and the report semaphore
 /// trigger (0x1b0c).
 const COMPUTE_ACTIONS: [u32; 2] = [0x2bc, 0x1b0c];

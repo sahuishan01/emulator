@@ -481,7 +481,7 @@ fn unmodelled_threed_state_is_recorded_but_blocks_draws_and_clears() {
 }
 #[test]
 fn threed_action_methods_fail_explicitly() {
-    for offset in [0x1b0c, 0x1530, 0x1614, 0x1618] {
+    for offset in [0x1b0c, 0x1614, 0x1618] {
         let mut rig = Rig::new();
         let id = rig.submit(&[(0, 0, MAXWELL_B), (0, offset, 0)]);
         assert_eq!(
