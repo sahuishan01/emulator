@@ -28,6 +28,18 @@ pub fn class_allowed(context: u32, class: u32) -> bool {
     GRAPHICS_CLASSES.contains(&context) && GRAPHICS_CLASSES.contains(&class)
 }
 
+/// Configuration ranges of classes without an executor: 2D surface, clip,
+/// ROP and pattern setup (below the solid-primitive, CPU-pixel and
+/// memory-blit trigger methods from 0x580) and inline-to-memory geometry
+/// (below LAUNCH_DMA 0x1b0). Writes here change nothing observable on their own.
+fn configuration_only(class: u32, offset: u32) -> bool {
+    match class {
+        FERMI_TWOD_A => offset == 0x100 || (0x200..0x580).contains(&offset),
+        KEPLER_INLINE_TO_MEMORY_B => offset == 0x100 || (0x180..0x1b0).contains(&offset),
+        _ => false,
+    }
+}
+
 /// Host (PFIFO) methods, byte offsets below 0x100, valid on every subchannel.
 const HOST_NOP: u32 = 0x08;
 const HOST_FB_FLUSH: u32 = 0x24;
@@ -188,7 +200,9 @@ enum EngineState {
         Box<crate::draw::Registers>,
         Box<ThreedExtra>,
     ),
-    Unimplemented,
+    /// Class without an executor: configuration writes are accepted (they
+    /// have no effect until a trigger), every trigger fails explicitly.
+    Unimplemented(u32),
 }
 #[derive(Debug)]
 enum CopyInput {
@@ -397,7 +411,9 @@ impl MethodState {
                             ..ThreedExtra::default()
                         }),
                     ),
-                    KEPLER_INLINE_TO_MEMORY_B | FERMI_TWOD_A => EngineState::Unimplemented,
+                    KEPLER_INLINE_TO_MEMORY_B | FERMI_TWOD_A => {
+                        EngineState::Unimplemented(write.data)
+                    }
                     _ => return Err(ExecutionError::UnsupportedClass(write.data)),
                 };
                 // This subset binds a class directly. NV object handles and
@@ -412,7 +428,10 @@ impl MethodState {
             let engine = channel
                 .as_mut()
                 .ok_or(ExecutionError::UnboundSubchannel(write.subchannel))?;
-            if let EngineState::Unimplemented = engine {
+            if let EngineState::Unimplemented(class) = engine {
+                if configuration_only(*class, offset) {
+                    continue;
+                }
                 return Err(ExecutionError::UnsupportedMethod {
                     subchannel: write.subchannel,
                     offset,

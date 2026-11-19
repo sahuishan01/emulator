@@ -380,14 +380,19 @@ fn unmodelled_host_methods_fail_explicitly_and_roll_back() {
 fn graphics_engine_classes_bind_but_unimplemented_methods_fail() {
     for class in [KEPLER_INLINE_TO_MEMORY_B, FERMI_TWOD_A] {
         let mut rig = Rig::new();
-        let id = rig.submit(&[(2, 0, class), (2, 0x08, 0)]);
+        let (config, trigger) = if class == FERMI_TWOD_A {
+            (0x2ac, 0x8fc)
+        } else {
+            (0x180, 0x1b0)
+        };
+        let id = rig.submit(&[(2, 0, class), (2, 0x08, 0), (2, config, 1)]);
         rig.execute(id).unwrap();
-        let id = rig.submit(&[(2, 0x180, 1)]);
+        let id = rig.submit(&[(2, trigger, 1)]);
         assert_eq!(
             rig.execute(id),
             Err(ExecutionError::UnsupportedMethod {
                 subchannel: 2,
-                offset: 0x180
+                offset: trigger
             })
         );
     }
