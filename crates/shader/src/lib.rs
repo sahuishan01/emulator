@@ -4,6 +4,7 @@
 use std::fmt;
 pub mod census;
 pub mod cfg;
+pub mod exec;
 mod header;
 pub mod maxwell;
 pub mod reference;
