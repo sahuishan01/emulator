@@ -587,6 +587,7 @@ impl MethodState {
                 if extra.unmodelled.is_some() {
                     let launches = offset == 0x19d0 || DRAW_TRIGGERS.contains(&offset);
                     if launches {
+                        draw_registers.record_shaders(space);
                         return Err(extra.unmodelled_error().expect("recorded"));
                     }
                 }
@@ -617,10 +618,13 @@ impl MethodState {
                         None
                     }
                     Err(ExecutionError::UnsupportedMethod { offset, .. }) => {
+                        if extra.threed && offset == 0x1618 {
+                            draw_registers.record_shaders(space);
+                        }
                         return Err(ExecutionError::UnsupportedMethod {
                             subchannel: write.subchannel,
                             offset,
-                        })
+                        });
                     }
                     Err(error) => return Err(error),
                 };

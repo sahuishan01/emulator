@@ -2,6 +2,7 @@
 //! Raw instruction bundles only. Stage/interface metadata is supplied explicitly;
 //! bounded vertex varyings and one explicit-LOD 2D texture binding are supported.
 use std::fmt;
+pub mod census;
 mod header;
 pub mod reference;
 mod spirv;

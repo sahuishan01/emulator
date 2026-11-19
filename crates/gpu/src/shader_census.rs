@@ -1,0 +1,88 @@
+//! Diagnostics: which shader programs Z-A binds at refused draws and which
+//! instructions they use (see `emulator_shader::census`). Thread-local like
+//! the services' nvdrv failure lists; never affects execution results.
+use crate::{GpuAddressSpace, GpuVa};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
+const STAGES: [&str; 6] = [
+    "VertexA", "VertexB", "TessCtrl", "TessEval", "Geometry", "Fragment",
+];
+/// Largest program scanned (header excluded).
+const MAX_CODE: usize = 64 * 1024;
+const MAX_PROGRAMS: usize = 4096;
+
+#[derive(Clone, Debug)]
+pub struct ShaderRecord {
+    pub stage: &'static str,
+    pub draws: u64,
+    /// SPH word 0, or None when the header was unreadable.
+    pub header: Option<u32>,
+    pub census: emulator_shader::census::Census,
+    /// Bytes scanned; less than requested when memory ended early.
+    pub code_bytes: usize,
+}
+
+thread_local! {
+    static PROGRAMS: RefCell<BTreeMap<u64, ShaderRecord>> = RefCell::default();
+}
+
+/// Record every enabled stage (control word bit 0) at a refused draw.
+pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u32>; 3]; 6]) {
+    for (slot, p) in pipeline.iter().enumerate() {
+        let (Some(control), Some(offset)) = (p[0], p[1]) else {
+            continue;
+        };
+        if control & 1 == 0 {
+            continue;
+        }
+        let Some(base) = region.checked_add(u64::from(offset)) else {
+            continue;
+        };
+        PROGRAMS.with(|programs| {
+            let mut programs = programs.borrow_mut();
+            if let Some(record) = programs.get_mut(&base) {
+                record.draws += 1;
+                return;
+            }
+            if programs.len() >= MAX_PROGRAMS {
+                return;
+            }
+            let mut header = [0u8; 4];
+            let header = space
+                .read(GpuVa(base), &mut header)
+                .ok()
+                .map(|_| u32::from_le_bytes(header));
+            let mut code = Vec::new();
+            let mut bundle = [0u8; 32];
+            while code.len() < MAX_CODE
+                && space
+                    .read(GpuVa(base + 80 + code.len() as u64), &mut bundle)
+                    .is_ok()
+            {
+                code.extend_from_slice(&bundle);
+                if bundle[8..].chunks_exact(8).any(|w| {
+                    u64::from_le_bytes(w.try_into().expect("word"))
+                        == emulator_shader::census::SELF_BRANCH
+                }) {
+                    break;
+                }
+            }
+            programs.insert(
+                base,
+                ShaderRecord {
+                    stage: STAGES[slot],
+                    draws: 1,
+                    header,
+                    census: emulator_shader::census::scan(&code),
+                    code_bytes: code.len(),
+                },
+            );
+        });
+    }
+}
+
+/// Programs seen at refused draws on this thread, keyed by GPU address.
+pub fn shader_census() -> Vec<(u64, ShaderRecord)> {
+    PROGRAMS.with(|p| p.borrow().iter().map(|(k, v)| (*k, v.clone())).collect())
+}

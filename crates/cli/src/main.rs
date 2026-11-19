@@ -958,6 +958,56 @@ fn print_run_report(
             println!("  {error}: {count} (first: {first})");
         }
     }
+    let shaders = emulator_services::shader_census();
+    if !shaders.is_empty() {
+        let mut known = std::collections::BTreeMap::<&str, (usize, usize)>::new();
+        let mut unknown = std::collections::BTreeMap::<u16, (usize, usize)>::new();
+        let (mut instructions, mut unterminated) = (0, 0);
+        for (_, record) in &shaders {
+            instructions += record.census.instructions;
+            unterminated += usize::from(!record.census.terminated);
+            for (name, n) in &record.census.known {
+                let e = known.entry(name).or_default();
+                e.0 += n;
+                e.1 += 1;
+            }
+            for (top, n) in &record.census.unknown {
+                let e = unknown.entry(*top).or_default();
+                e.0 += n;
+                e.1 += 1;
+            }
+        }
+        println!(
+            "shader programs at refused draws: {} ({instructions} instruction words, {unterminated} without the end self-branch; opcode names unverified)",
+            shaders.len()
+        );
+        let mut known: Vec<_> = known.into_iter().collect();
+        known.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        let line: Vec<String> = known
+            .iter()
+            .map(|(n, (c, p))| format!("{n}={c}/{p}"))
+            .collect();
+        println!("  known (name=words/programs): {}", line.join(" "));
+        let mut unknown: Vec<_> = unknown.into_iter().collect();
+        unknown.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        let line: Vec<String> = unknown
+            .iter()
+            .take(64)
+            .map(|(t, (c, p))| format!("{t:04x}={c}/{p}"))
+            .collect();
+        println!("  unknown top16 (top 64): {}", line.join(" "));
+        for (address, record) in shaders.iter().take(24) {
+            println!(
+                "  {address:#012x} {} draws={} sph0={} bytes={} words={} unknown={}",
+                record.stage,
+                record.draws,
+                record.header.map_or("?".into(), |h| format!("{h:#010x}")),
+                record.code_bytes,
+                record.census.instructions,
+                record.census.unknown.values().sum::<usize>()
+            );
+        }
+    }
     let total: u64 = samples.values().sum();
     if total > 0 {
         let mut hot: Vec<(u64, u64)> = samples.iter().map(|(pc, count)| (*pc, *count)).collect();

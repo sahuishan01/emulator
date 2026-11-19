@@ -227,6 +227,13 @@ impl Registers {
         }
         Ok(Some(None))
     }
+    /// Diagnostics at a refused draw: census the bound shader programs.
+    pub(crate) fn record_shaders(&self, space: &GpuAddressSpace) {
+        if let (Some(high), Some(low)) = (self.region[0], self.region[1]) {
+            let region = (u64::from(high & 0xff) << 32) | u64::from(low);
+            crate::shader_census::record(space, region, &self.pipeline);
+        }
+    }
     pub(crate) fn plan(
         &self,
         space: &GpuAddressSpace,

@@ -1,6 +1,7 @@
 //! Original, deliberately small service implementations for owned homebrew.
 mod gpu;
 mod nv;
+pub use emulator_gpu::shader_census;
 pub use nv::{nv_failures, nv_submit_errors};
 pub mod acc;
 pub mod aoc;

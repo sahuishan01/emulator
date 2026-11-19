@@ -18,6 +18,8 @@ mod macros;
 mod methods;
 pub use clear::{ColorClear, BGRA8_UNORM, MAXWELL_B, RGBA8_UNORM};
 pub use macros::{MacroError, INSTRUCTION_WORDS, MACRO_BASE, MACRO_COUNT, STEP_LIMIT};
+mod shader_census;
+pub use shader_census::{shader_census, ShaderRecord};
 mod submission;
 pub use address_space::{
     AddressSpaceId, GpuAddressSpace, GpuMemoryError, GpuMemoryRange, MappingId,
