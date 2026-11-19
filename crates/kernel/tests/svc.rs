@@ -1,7 +1,7 @@
 use emulator_a64::Cpu;
 use emulator_kernel::{
-    Kernel, KernelError, KernelEvent, RESULT_INVALID_ADDRESS, RESULT_INVALID_POINTER, RESULT_TIMEOUT, SVC_EXIT_PROCESS,
-    SVC_OUTPUT_DEBUG_STRING, SVC_QUERY_MEMORY,
+    Kernel, KernelError, KernelEvent, RESULT_INVALID_ADDRESS, RESULT_INVALID_POINTER,
+    RESULT_TIMEOUT, SVC_EXIT_PROCESS, SVC_OUTPUT_DEBUG_STRING, SVC_QUERY_MEMORY,
 };
 use emulator_memory::{AddressSpace, Permissions};
 
@@ -194,7 +194,10 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
     assert_eq!(cpu.x[0], 0);
     assert_eq!(cpu.x[1], 0);
     assert_eq!(memory.read_u64(0x1000).unwrap(), 1_u64 << 39);
-    assert_eq!(memory.read_u64(0x1008).unwrap(), 0u64.wrapping_sub(1_u64 << 39));
+    assert_eq!(
+        memory.read_u64(0x1008).unwrap(),
+        0u64.wrapping_sub(1_u64 << 39)
+    );
     assert_eq!(memory.read_u32(0x1010).unwrap(), 0);
     assert_eq!(memory.read_u32(0x1018).unwrap(), 0);
 
@@ -253,7 +256,9 @@ fn query_memory_returns_accurate_descriptors_and_page_aligned_traversal() {
 fn set_heap_size_allocates_and_queries_memory_state() {
     use emulator_kernel::{DEFAULT_HEAP_BASE, RESULT_INVALID_SIZE, SVC_SET_HEAP_SIZE};
     let mut memory = AddressSpace::default();
-    memory.map(0x1000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
+    memory
+        .map(0x1000, vec![0; 4096], Permissions::READ_WRITE)
+        .unwrap();
 
     let mut kernel = Kernel::default();
     let mut cpu = Cpu::new(0, 0);
@@ -262,7 +267,9 @@ fn set_heap_size_allocates_and_queries_memory_state() {
     cpu.x[0] = 0x1000;
     cpu.x[2] = DEFAULT_HEAP_BASE;
     assert_eq!(
-        kernel.dispatch(SVC_QUERY_MEMORY, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_QUERY_MEMORY, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -272,7 +279,9 @@ fn set_heap_size_allocates_and_queries_memory_state() {
     // Invalid non-page-aligned size
     cpu.x[1] = 4095;
     assert_eq!(
-        kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], RESULT_INVALID_SIZE);
@@ -280,7 +289,9 @@ fn set_heap_size_allocates_and_queries_memory_state() {
     // Allocate 2 MiB heap
     cpu.x[1] = 0x20_0000;
     assert_eq!(
-        kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -290,7 +301,9 @@ fn set_heap_size_allocates_and_queries_memory_state() {
     cpu.x[0] = 0x1000;
     cpu.x[2] = DEFAULT_HEAP_BASE + 0x1000;
     assert_eq!(
-        kernel.dispatch(SVC_QUERY_MEMORY, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_QUERY_MEMORY, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -310,7 +323,9 @@ fn set_heap_size_allocates_and_queries_memory_state() {
     // Shrink heap to 1 MiB
     cpu.x[1] = 0x10_0000;
     assert_eq!(
-        kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -320,28 +335,33 @@ fn set_heap_size_allocates_and_queries_memory_state() {
 #[test]
 fn system_tick_thread_id_futex_and_processor_primitives() {
     use emulator_kernel::{
-        SVC_ARBITRATE_LOCK, SVC_ARBITRATE_UNLOCK, SVC_BREAK,
-        SVC_GET_CURRENT_PROCESSOR_NUMBER, SVC_GET_INFO, SVC_GET_PROCESS_ID,
-        SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID, SVC_SET_MEMORY_ATTRIBUTE,
-        SVC_SET_MEMORY_PERMISSION, SVC_SIGNAL_PROCESS_WIDE_KEY,
+        SVC_ARBITRATE_LOCK, SVC_ARBITRATE_UNLOCK, SVC_BREAK, SVC_GET_CURRENT_PROCESSOR_NUMBER,
+        SVC_GET_INFO, SVC_GET_PROCESS_ID, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID,
+        SVC_SET_MEMORY_ATTRIBUTE, SVC_SET_MEMORY_PERMISSION, SVC_SIGNAL_PROCESS_WIDE_KEY,
         SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC,
     };
     let mut memory = AddressSpace::default();
-    memory.map(0x1000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
+    memory
+        .map(0x1000, vec![0; 4096], Permissions::READ_WRITE)
+        .unwrap();
 
     let mut kernel = Kernel::default();
     let mut cpu = Cpu::new(0, 0);
 
     // Current processor number
     assert_eq!(
-        kernel.dispatch(SVC_GET_CURRENT_PROCESSOR_NUMBER, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_CURRENT_PROCESSOR_NUMBER, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
 
     // System tick
     assert_eq!(
-        kernel.dispatch(SVC_GET_SYSTEM_TICK, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_SYSTEM_TICK, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
 
@@ -351,7 +371,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[2] = 0;
     cpu.x[3] = 0;
     assert_eq!(
-        kernel.dispatch(SVC_SET_MEMORY_ATTRIBUTE, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_SET_MEMORY_ATTRIBUTE, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -360,7 +382,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[0] = 0x1000;
     cpu.x[1] = 0xffff_8000; // current thread
     assert_eq!(
-        kernel.dispatch(SVC_GET_THREAD_ID, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_THREAD_ID, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -371,7 +395,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[0] = 0x1000;
     cpu.x[1] = 0xffff_8001;
     assert_eq!(
-        kernel.dispatch(SVC_GET_PROCESS_ID, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_PROCESS_ID, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -384,7 +410,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[2] = 0xffff_8001;
     cpu.x[3] = 0;
     assert_eq!(
-        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_INFO, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -397,7 +425,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[1] = 20;
     cpu.x[2] = 0xffff_8001;
     cpu.x[3] = 0;
-    kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap();
+    kernel
+        .dispatch(SVC_GET_INFO, &mut cpu, &mut memory)
+        .unwrap();
     assert_eq!(cpu.x[0], 0);
     assert_eq!(cpu.x[1], emulator_kernel::USER_EXCEPTION_CONTEXT);
     assert_ne!(cpu.x[1], 0);
@@ -410,7 +440,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[2] = 0xffff_8001;
     cpu.x[3] = 0;
     assert_eq!(
-        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_INFO, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -422,7 +454,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[2] = 0xffff_8001;
     cpu.x[3] = 0;
     assert_eq!(
-        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_INFO, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -436,7 +470,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[2] = 0xffff_8001;
     cpu.x[3] = 0;
     assert_eq!(
-        kernel.dispatch(SVC_GET_INFO, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_GET_INFO, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -448,7 +484,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[1] = 4096;
     cpu.x[2] = 1; // Read only
     assert_eq!(
-        kernel.dispatch(SVC_SET_MEMORY_PERMISSION, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_SET_MEMORY_PERMISSION, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -458,7 +496,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[1] = 4096;
     cpu.x[2] = 3; // ReadWrite
     assert_eq!(
-        kernel.dispatch(SVC_SET_MEMORY_PERMISSION, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_SET_MEMORY_PERMISSION, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -469,7 +509,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     cpu.x[1] = 0x1000; // mutex_addr
     cpu.x[2] = 0; // expected tag
     assert_eq!(
-        kernel.dispatch(SVC_ARBITRATE_LOCK, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_ARBITRATE_LOCK, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -477,7 +519,9 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
 
     cpu.x[0] = 0x1000;
     assert_eq!(
-        kernel.dispatch(SVC_ARBITRATE_UNLOCK, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_ARBITRATE_UNLOCK, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
@@ -486,10 +530,12 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     // Condition variable wait (timeout 0) / signal
     cpu.x[0] = 0x1000; // mutex_addr
     cpu.x[1] = 0x1010; // key_addr
-    cpu.x[2] = 1;      // thread_handle / tag
-    cpu.x[3] = 0;      // timeout_ns = 0 -> immediate timeout
+    cpu.x[2] = 1; // thread_handle / tag
+    cpu.x[3] = 0; // timeout_ns = 0 -> immediate timeout
     assert_eq!(
-        kernel.dispatch(SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], RESULT_TIMEOUT);
@@ -497,13 +543,19 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
     assert_eq!(memory.read_u32(0x1010).unwrap(), 1);
 
     cpu.x[0] = 0x1010; // key_addr
-    cpu.x[1] = 1;      // count
+    cpu.x[1] = 1; // count
     assert_eq!(
-        kernel.dispatch(SVC_SIGNAL_PROCESS_WIDE_KEY, &mut cpu, &mut memory).unwrap(),
+        kernel
+            .dispatch(SVC_SIGNAL_PROCESS_WIDE_KEY, &mut cpu, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
-    assert_eq!(memory.read_u32(0x1010).unwrap(), 0, "no waiters left clears the key");
+    assert_eq!(
+        memory.read_u32(0x1010).unwrap(),
+        0,
+        "no waiters left clears the key"
+    );
 
     // A fatal break stops the guest instead of returning to it.
     cpu.x[0] = 0x42;
@@ -526,14 +578,21 @@ fn system_tick_thread_id_futex_and_processor_primitives() {
         KernelEvent::Continue
     );
     assert_eq!(cpu.x[0], 0);
-    assert!(kernel.debug_records().iter().any(|r| String::from_utf8_lossy(r).contains("svcBreak")));
+    assert!(kernel
+        .debug_records()
+        .iter()
+        .any(|r| String::from_utf8_lossy(r).contains("svcBreak")));
 }
 
 #[test]
 fn test_condvar_wait_signal_requeue_cycle() {
     let mut memory = AddressSpace::default();
-    memory.map(0x1000, vec![0; 4096], Permissions::READ_EXECUTE).unwrap();
-    memory.map(0x4000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
+    memory
+        .map(0x1000, vec![0; 4096], Permissions::READ_EXECUTE)
+        .unwrap();
+    memory
+        .map(0x4000, vec![0; 4096], Permissions::READ_WRITE)
+        .unwrap();
     let mut kernel = Kernel::default();
     let mut cpu0 = Cpu::new(0x1000, 0x5000);
 
@@ -544,13 +603,17 @@ fn test_condvar_wait_signal_requeue_cycle() {
     cpu0.x[4] = 44; // priority (same as main)
     cpu0.x[5] = 0; // core
     assert_eq!(
-        kernel.dispatch(emulator_kernel::SVC_CREATE_THREAD, &mut cpu0, &mut memory).unwrap(),
+        kernel
+            .dispatch(emulator_kernel::SVC_CREATE_THREAD, &mut cpu0, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     let child_handle = cpu0.x[1] as u32;
     cpu0.x[0] = child_handle as u64;
     assert_eq!(
-        kernel.dispatch(emulator_kernel::SVC_START_THREAD, &mut cpu0, &mut memory).unwrap(),
+        kernel
+            .dispatch(emulator_kernel::SVC_START_THREAD, &mut cpu0, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
 
@@ -559,7 +622,9 @@ fn test_condvar_wait_signal_requeue_cycle() {
     cpu0.x[1] = 0x4000; // mutex_addr
     cpu0.x[2] = 1; // tag
     assert_eq!(
-        kernel.dispatch(emulator_kernel::SVC_ARBITRATE_LOCK, &mut cpu0, &mut memory).unwrap(),
+        kernel
+            .dispatch(emulator_kernel::SVC_ARBITRATE_LOCK, &mut cpu0, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(memory.read_u32(0x4000).unwrap(), 1);
@@ -570,7 +635,13 @@ fn test_condvar_wait_signal_requeue_cycle() {
     cpu0.x[2] = 1; // tag
     cpu0.x[3] = u64::MAX; // -1 (infinite timeout)
     assert_eq!(
-        kernel.dispatch(emulator_kernel::SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC, &mut cpu0, &mut memory).unwrap(),
+        kernel
+            .dispatch(
+                emulator_kernel::SVC_WAIT_PROCESS_WIDE_KEY_ATOMIC,
+                &mut cpu0,
+                &mut memory
+            )
+            .unwrap(),
         KernelEvent::Continue
     );
     // Mutex should now be unlocked (0)
@@ -579,7 +650,10 @@ fn test_condvar_wait_signal_requeue_cycle() {
 
     // Thread 0 is blocked waiting on condvar, so scheduler runs Thread 1
     let mut cpu1 = Cpu::default();
-    assert_eq!(kernel.prepare_execution(&mut cpu1), emulator_kernel::ScheduleOutcome::Ready);
+    assert_eq!(
+        kernel.prepare_execution(&mut cpu1),
+        emulator_kernel::ScheduleOutcome::Ready
+    );
     assert_eq!(kernel.current_thread_id(), 1);
 
     // Thread 1 locks mutex at 0x4000
@@ -587,7 +661,9 @@ fn test_condvar_wait_signal_requeue_cycle() {
     cpu1.x[1] = 0x4000; // mutex_addr
     cpu1.x[2] = 2; // tag
     assert_eq!(
-        kernel.dispatch(emulator_kernel::SVC_ARBITRATE_LOCK, &mut cpu1, &mut memory).unwrap(),
+        kernel
+            .dispatch(emulator_kernel::SVC_ARBITRATE_LOCK, &mut cpu1, &mut memory)
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(memory.read_u32(0x4000).unwrap(), 2);
@@ -598,7 +674,13 @@ fn test_condvar_wait_signal_requeue_cycle() {
     cpu1.x[0] = 0x4010;
     cpu1.x[1] = 1; // wake 1
     assert_eq!(
-        kernel.dispatch(emulator_kernel::SVC_SIGNAL_PROCESS_WIDE_KEY, &mut cpu1, &mut memory).unwrap(),
+        kernel
+            .dispatch(
+                emulator_kernel::SVC_SIGNAL_PROCESS_WIDE_KEY,
+                &mut cpu1,
+                &mut memory
+            )
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(memory.read_u32(0x4000).unwrap(), 2 | 0x4000_0000);
@@ -607,7 +689,13 @@ fn test_condvar_wait_signal_requeue_cycle() {
     // Thread 0 should be unblocked and assigned ownership of mutex 0x4000!
     cpu1.x[0] = 0x4000;
     assert_eq!(
-        kernel.dispatch(emulator_kernel::SVC_ARBITRATE_UNLOCK, &mut cpu1, &mut memory).unwrap(),
+        kernel
+            .dispatch(
+                emulator_kernel::SVC_ARBITRATE_UNLOCK,
+                &mut cpu1,
+                &mut memory
+            )
+            .unwrap(),
         KernelEvent::Continue
     );
     assert_eq!(memory.read_u32(0x4000).unwrap(), 1); // Mutex owned by Thread 0
@@ -617,7 +705,10 @@ fn test_condvar_wait_signal_requeue_cycle() {
     for _ in 0..64 {
         kernel.instruction_completed().unwrap();
     }
-    assert_eq!(kernel.prepare_execution(&mut cpu0), emulator_kernel::ScheduleOutcome::Ready);
+    assert_eq!(
+        kernel.prepare_execution(&mut cpu0),
+        emulator_kernel::ScheduleOutcome::Ready
+    );
     assert_eq!(kernel.current_thread_id(), 0);
 }
 
@@ -630,7 +721,9 @@ fn map_memory_aliases_hides_the_source_and_unmap_requires_the_exact_pair() {
     memory
         .map(0x10000, vec![7; 0x2000], Permissions::READ_WRITE)
         .unwrap();
-    memory.map(0x20000, vec![1; 0x1000], Permissions::READ).unwrap();
+    memory
+        .map(0x20000, vec![1; 0x1000], Permissions::READ)
+        .unwrap();
     let mut kernel = Kernel::default();
     let call = |kernel: &mut Kernel, memory: &mut AddressSpace, id, d: u64, s: u64, n: u64| {
         let mut cpu = Cpu::new(0, 0);
@@ -648,32 +741,73 @@ fn map_memory_aliases_hides_the_source_and_unmap_requires_the_exact_pair() {
         (0x40000, 0x30000, 0x1000, RESULT_INVALID_CURRENT_MEMORY),
         (0x20000, 0x10000, 0x1000, RESULT_INVALID_CURRENT_MEMORY),
     ] {
-        assert_eq!(call(&mut kernel, &mut memory, SVC_MAP_MEMORY, d, s, n), expected);
+        assert_eq!(
+            call(&mut kernel, &mut memory, SVC_MAP_MEMORY, d, s, n),
+            expected
+        );
         assert_eq!(memory.read_u8(0x10000).unwrap(), 7);
         assert!(memory.read_u8(0x40000).is_err());
     }
-    assert_eq!(call(&mut kernel, &mut memory, SVC_MAP_MEMORY, 0x40000, 0x10000, 0x2000), 0);
+    assert_eq!(
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_MAP_MEMORY,
+            0x40000,
+            0x10000,
+            0x2000
+        ),
+        0
+    );
     assert!(memory.read_u8(0x10000).is_err());
     assert!(memory.write_u8(0x11000, 1).is_err());
     assert_eq!(memory.read_u8(0x41fff).unwrap(), 7);
     memory.write_u8(0x40004, 9).unwrap();
     // A hidden source cannot be mapped again, and partial unmaps are refused.
     assert_eq!(
-        call(&mut kernel, &mut memory, SVC_MAP_MEMORY, 0x50000, 0x10000, 0x1000),
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_MAP_MEMORY,
+            0x50000,
+            0x10000,
+            0x1000
+        ),
         RESULT_INVALID_CURRENT_MEMORY
     );
-    for (d, s, n) in [(0x40000, 0x10000, 0x1000), (0x40000, 0x11000, 0x2000), (0x50000, 0x10000, 0x2000)] {
+    for (d, s, n) in [
+        (0x40000, 0x10000, 0x1000),
+        (0x40000, 0x11000, 0x2000),
+        (0x50000, 0x10000, 0x2000),
+    ] {
         assert_eq!(
             call(&mut kernel, &mut memory, SVC_UNMAP_MEMORY, d, s, n),
             RESULT_INVALID_CURRENT_MEMORY
         );
     }
-    assert_eq!(call(&mut kernel, &mut memory, SVC_UNMAP_MEMORY, 0x40000, 0x10000, 0x2000), 0);
+    assert_eq!(
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_UNMAP_MEMORY,
+            0x40000,
+            0x10000,
+            0x2000
+        ),
+        0
+    );
     assert!(memory.read_u8(0x40000).is_err());
     assert_eq!(memory.read_u8(0x10004).unwrap(), 9);
     memory.write_u8(0x11000, 3).unwrap();
     assert_eq!(
-        call(&mut kernel, &mut memory, SVC_UNMAP_MEMORY, 0x40000, 0x10000, 0x2000),
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_UNMAP_MEMORY,
+            0x40000,
+            0x10000,
+            0x2000
+        ),
         RESULT_INVALID_CURRENT_MEMORY
     );
 }
@@ -690,7 +824,10 @@ fn timed_out_condvar_and_mutex_waiters_are_not_handed_ownership() {
     assert_eq!(sync.condvar_waiter_count(0x4010), 1);
     let woken = sync.signal_condition(0x4010, 1);
     assert_eq!(woken.len(), 1);
-    assert_eq!(woken[0].tag, 0x150, "the live waiter, not the timed-out one");
+    assert_eq!(
+        woken[0].tag, 0x150,
+        "the live waiter, not the timed-out one"
+    );
     drop(woken);
     drop(live);
 

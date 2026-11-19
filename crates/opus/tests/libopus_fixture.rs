@@ -63,10 +63,21 @@ fn load() -> Vec<Stream> {
                         .chunks(2)
                         .map(|c| i16::from_le_bytes([c[0], c[1]]))
                         .collect();
-                    Op { kind, packet, final_range, pcm }
+                    Op {
+                        kind,
+                        packet,
+                        final_range,
+                        pcm,
+                    }
                 })
                 .collect();
-            Stream { name, rate, channels, multistream, ops }
+            Stream {
+                name,
+                rate,
+                channels,
+                multistream,
+                ops,
+            }
         })
         .collect()
 }
@@ -77,7 +88,13 @@ fn compare(name: &str, index: usize, want: &[i16], got: &[i16], exact: bool) {
         if let Some(i) = want.iter().zip(got).position(|(a, b)| a != b) {
             let n = want.iter().zip(got).filter(|(a, b)| a != b).count();
             if std::env::var("OPUS_FIXTURE_DEBUG").is_ok() {
-                for (k, (a, b)) in want.iter().zip(got).enumerate().filter(|(_, (a, b))| a != b).take(40) {
+                for (k, (a, b)) in want
+                    .iter()
+                    .zip(got)
+                    .enumerate()
+                    .filter(|(_, (a, b))| a != b)
+                    .take(40)
+                {
                     eprintln!("  [{k}] ch{} sample {}: want {a} got {b}", k % 2, k / 2);
                 }
             }
@@ -94,8 +111,15 @@ fn compare(name: &str, index: usize, want: &[i16], got: &[i16], exact: bool) {
         sig += f64::from(a) * f64::from(a);
         err += f64::from(d) * f64::from(d);
     }
-    let snr = if err == 0.0 { f64::INFINITY } else { 10.0 * (sig.max(1.0) / err).log10() };
-    assert!(max <= 4 && snr >= 50.0, "{name} op {index}: max diff {max}, SNR {snr:.1} dB");
+    let snr = if err == 0.0 {
+        f64::INFINITY
+    } else {
+        10.0 * (sig.max(1.0) / err).log10()
+    };
+    assert!(
+        max <= 4 && snr >= 50.0,
+        "{name} op {index}: max diff {max}, SNR {snr:.1} dB"
+    );
 }
 
 #[test]
@@ -106,11 +130,17 @@ fn matches_reference_decoder_output() {
         let exact = s.name.starts_with("silk");
         let mut pcm = vec![0i16; 5760 * s.channels];
         if let Some((streams, coupled, mapping)) = &s.multistream {
-            let mut dec = MultiStreamDecoder::new(s.rate, s.channels, *streams, *coupled, mapping).unwrap();
+            let mut dec =
+                MultiStreamDecoder::new(s.rate, s.channels, *streams, *coupled, mapping).unwrap();
             for (i, op) in s.ops.iter().enumerate() {
                 assert_eq!(op.kind, 0);
                 let n = dec.decode(Some(&op.packet), &mut pcm, 5760).unwrap();
-                assert_eq!(dec.final_range(), op.final_range, "{} op {i}: final range", s.name);
+                assert_eq!(
+                    dec.final_range(),
+                    op.final_range,
+                    "{} op {i}: final range",
+                    s.name
+                );
                 compare(&s.name, i, &op.pcm, &pcm[..n * s.channels], exact);
             }
             continue;
@@ -121,7 +151,12 @@ fn matches_reference_decoder_output() {
             let n = match op.kind {
                 0 => {
                     let n = dec.decode(Some(&op.packet), &mut pcm, 5760).unwrap();
-                    assert_eq!(dec.final_range(), op.final_range, "{} op {i}: final range", s.name);
+                    assert_eq!(
+                        dec.final_range(),
+                        op.final_range,
+                        "{} op {i}: final range",
+                        s.name
+                    );
                     n
                 }
                 1 => dec.decode(None, &mut pcm, want_samples).unwrap(),

@@ -47,11 +47,20 @@ impl Toc {
         let config = toc >> 3;
         let (mode, bandwidth, frame_size_48k) = match config {
             0..=11 => {
-                let bw = [Bandwidth::Narrow, Bandwidth::Medium, Bandwidth::Wide][usize::from(config / 4)];
-                (Mode::SilkOnly, bw, [480, 960, 1920, 2880][usize::from(config & 3)])
+                let bw = [Bandwidth::Narrow, Bandwidth::Medium, Bandwidth::Wide]
+                    [usize::from(config / 4)];
+                (
+                    Mode::SilkOnly,
+                    bw,
+                    [480, 960, 1920, 2880][usize::from(config & 3)],
+                )
             }
             12..=15 => {
-                let bw = if config < 14 { Bandwidth::SuperWide } else { Bandwidth::Full };
+                let bw = if config < 14 {
+                    Bandwidth::SuperWide
+                } else {
+                    Bandwidth::Full
+                };
                 (Mode::Hybrid, bw, [480, 960][usize::from(config & 1)])
             }
             _ => {
@@ -272,11 +281,20 @@ mod tests {
     #[test]
     fn toc_configurations() {
         let t = Toc::parse(0x00);
-        assert_eq!((t.mode, t.bandwidth, t.frame_size_48k), (Mode::SilkOnly, Bandwidth::Narrow, 480));
+        assert_eq!(
+            (t.mode, t.bandwidth, t.frame_size_48k),
+            (Mode::SilkOnly, Bandwidth::Narrow, 480)
+        );
         let t = Toc::parse(15 << 3 | 4);
-        assert_eq!((t.mode, t.bandwidth, t.frame_size_48k, t.stereo), (Mode::Hybrid, Bandwidth::Full, 960, true));
+        assert_eq!(
+            (t.mode, t.bandwidth, t.frame_size_48k, t.stereo),
+            (Mode::Hybrid, Bandwidth::Full, 960, true)
+        );
         let t = Toc::parse(31 << 3);
-        assert_eq!((t.mode, t.bandwidth, t.frame_size_48k), (Mode::CeltOnly, Bandwidth::Full, 960));
+        assert_eq!(
+            (t.mode, t.bandwidth, t.frame_size_48k),
+            (Mode::CeltOnly, Bandwidth::Full, 960)
+        );
         let t = Toc::parse(16 << 3);
         assert_eq!(t.frame_size_48k, 120);
     }

@@ -19,14 +19,22 @@ pub struct MultiStreamDecoder {
 }
 
 impl MultiStreamDecoder {
-    pub fn new(rate: u32, channels: usize, streams: usize, coupled: usize, mapping: &[u8]) -> Result<Self, Error> {
+    pub fn new(
+        rate: u32,
+        channels: usize,
+        streams: usize,
+        coupled: usize,
+        mapping: &[u8],
+    ) -> Result<Self, Error> {
         if channels == 0
             || channels > 255
             || streams == 0
             || coupled > streams
             || streams + coupled > 255
             || mapping.len() < channels
-            || mapping[..channels].iter().any(|&m| m != 255 && usize::from(m) >= streams + coupled)
+            || mapping[..channels]
+                .iter()
+                .any(|&m| m != 255 && usize::from(m) >= streams + coupled)
         {
             return Err(Error::BadArgument);
         }
@@ -81,8 +89,15 @@ impl MultiStreamDecoder {
     }
 
     /// Decode into interleaved 16-bit PCM (`channels` per sample).
-    pub fn decode(&mut self, packet: Option<&[u8]>, pcm: &mut [i16], frame_size: usize) -> Result<usize, Error> {
-        let mut frame_size = frame_size.min(self.rate as usize / 25 * 3).min(pcm.len() / self.channels);
+    pub fn decode(
+        &mut self,
+        packet: Option<&[u8]>,
+        pcm: &mut [i16],
+        frame_size: usize,
+    ) -> Result<usize, Error> {
+        let mut frame_size = frame_size
+            .min(self.rate as usize / 25 * 3)
+            .min(pcm.len() / self.channels);
         if frame_size == 0 {
             return Err(Error::BadArgument);
         }
@@ -101,7 +116,8 @@ impl MultiStreamDecoder {
         buf.resize(2 * frame_size, 0.0);
         let mut rest = data;
         for s in 0..streams {
-            let (n, consumed) = self.decoders[s].decode_stream(rest, s != streams - 1, &mut buf, frame_size)?;
+            let (n, consumed) =
+                self.decoders[s].decode_stream(rest, s != streams - 1, &mut buf, frame_size)?;
             if !plc {
                 rest = &rest[consumed.min(rest.len())..];
             }

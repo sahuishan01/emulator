@@ -126,9 +126,10 @@ pub fn parse_session_request(input: &[u8], domain: bool) -> Result<Request, IpcE
         4 | 6 => (CommandType::Request, None),
         5 | 7 => (CommandType::Control, None),
         // 15 is the TIPC close request, which stays unsupported.
-        tipc @ TIPC_COMMAND_BASE..=TIPC_COMMAND_LAST => {
-            (CommandType::Request, Some(u32::from(tipc - TIPC_COMMAND_BASE)))
-        }
+        tipc @ TIPC_COMMAND_BASE..=TIPC_COMMAND_LAST => (
+            CommandType::Request,
+            Some(u32::from(tipc - TIPC_COMMAND_BASE)),
+        ),
         other => return Err(IpcError::UnsupportedType(other)),
     };
     let pointer_count = ((first >> 16) & 15) as usize;

@@ -1,6 +1,8 @@
 //! Original uncompressed NSO0 parsing and mapping.
 
-use crate::{word, LoadError, LoadedImage, Segment, MAX_IMAGE_FILE_SIZE, MAX_IMAGE_MEMORY, PAGE_SIZE};
+use crate::{
+    word, LoadError, LoadedImage, Segment, MAX_IMAGE_FILE_SIZE, MAX_IMAGE_MEMORY, PAGE_SIZE,
+};
 use emulator_memory::{AddressSpace, Mapping, Permissions};
 
 pub const NSO_HEADER_SIZE: usize = 0x100;
@@ -93,7 +95,9 @@ impl NsoImage {
             let mem_offset = u64::from(hdr.memory_offset);
             let size = hdr.decompressed_size as usize;
             if mem_offset % PAGE_SIZE != 0 {
-                return Err(LoadError::Invalid("NSO section memory offset must be page-aligned"));
+                return Err(LoadError::Invalid(
+                    "NSO section memory offset must be page-aligned",
+                ));
             }
             if mem_offset < previous_end {
                 return Err(LoadError::Invalid("NSO section overlap"));
@@ -105,16 +109,24 @@ impl NsoImage {
 
             let decompressed_data = if is_compressed {
                 let comp_size = word(input, 0x60 + i * 4) as usize;
-                let file_end = file_start.checked_add(comp_size).ok_or(LoadError::LimitExceeded)?;
+                let file_end = file_start
+                    .checked_add(comp_size)
+                    .ok_or(LoadError::LimitExceeded)?;
                 if file_end > input.len() {
-                    return Err(LoadError::Invalid("compressed NSO section extends beyond file bounds"));
+                    return Err(LoadError::Invalid(
+                        "compressed NSO section extends beyond file bounds",
+                    ));
                 }
                 let raw_compressed = &input[file_start..file_end];
                 crate::lz4::lz4_decompress(raw_compressed, size)?
             } else {
-                let file_end = file_start.checked_add(size).ok_or(LoadError::LimitExceeded)?;
+                let file_end = file_start
+                    .checked_add(size)
+                    .ok_or(LoadError::LimitExceeded)?;
                 if file_end > input.len() {
-                    return Err(LoadError::Invalid("NSO section data extends beyond file bounds"));
+                    return Err(LoadError::Invalid(
+                        "NSO section data extends beyond file bounds",
+                    ));
                 }
                 input[file_start..file_end].to_vec()
             };
@@ -131,13 +143,16 @@ impl NsoImage {
             }
 
             let raw_mem_size = if i == 2 {
-                size.checked_add(bss_size as usize).ok_or(LoadError::LimitExceeded)?
+                size.checked_add(bss_size as usize)
+                    .ok_or(LoadError::LimitExceeded)?
             } else {
                 size
             };
             let memory_size = ((raw_mem_size as u64 + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)) as usize;
 
-            total_memory = total_memory.checked_add(memory_size).ok_or(LoadError::LimitExceeded)?;
+            total_memory = total_memory
+                .checked_add(memory_size)
+                .ok_or(LoadError::LimitExceeded)?;
             if total_memory > MAX_IMAGE_MEMORY {
                 return Err(LoadError::LimitExceeded);
             }
@@ -150,12 +165,16 @@ impl NsoImage {
             };
 
             let mut section_bytes = Vec::new();
-            section_bytes.try_reserve_exact(memory_size).map_err(|_| LoadError::LimitExceeded)?;
+            section_bytes
+                .try_reserve_exact(memory_size)
+                .map_err(|_| LoadError::LimitExceeded)?;
             section_bytes.extend_from_slice(&decompressed_data);
             section_bytes.resize(memory_size, 0);
             payloads[i] = section_bytes;
 
-            previous_end = mem_offset.checked_add(memory_size as u64).ok_or(LoadError::AddressOverflow)?;
+            previous_end = mem_offset
+                .checked_add(memory_size as u64)
+                .ok_or(LoadError::AddressOverflow)?;
         }
 
         Ok(Self {
@@ -185,8 +204,12 @@ impl NsoImage {
         let mut mappings = Vec::new();
         let mut end = base;
         for (i, segment) in self.segments.iter().enumerate() {
-            let address = base.checked_add(segment.offset).ok_or(LoadError::AddressOverflow)?;
-            let segment_end = address.checked_add(segment.memory_size as u64).ok_or(LoadError::AddressOverflow)?;
+            let address = base
+                .checked_add(segment.offset)
+                .ok_or(LoadError::AddressOverflow)?;
+            let segment_end = address
+                .checked_add(segment.memory_size as u64)
+                .ok_or(LoadError::AddressOverflow)?;
             end = end.max(segment_end);
             if segment.memory_size == 0 {
                 continue;
@@ -201,7 +224,9 @@ impl NsoImage {
         let segment_states = [0x03u32, 0x03u32, 0x04u32]; // CodeStatic, CodeStatic, CodeMutable
         for (i, segment) in self.segments.iter().enumerate() {
             if segment.memory_size > 0 {
-                let address = base.checked_add(segment.offset).ok_or(LoadError::AddressOverflow)?;
+                let address = base
+                    .checked_add(segment.offset)
+                    .ok_or(LoadError::AddressOverflow)?;
                 let _ = memory.set_state(address, segment.memory_size, segment_states[i]);
             }
         }
@@ -264,4 +289,3 @@ impl NsoProgram {
         Ok(image)
     }
 }
-

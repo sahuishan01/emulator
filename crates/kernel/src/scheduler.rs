@@ -549,7 +549,9 @@ mod timer_tests {
     fn a_periodic_timer_wakes_an_infinite_wait_at_its_due_time() {
         let (mut s, mut cpu) = scheduler();
         let vsync = Rc::new(Cell::new(false));
-        s.timers().arm_periodic(&vsync, 16_666_666, 16_666_666).unwrap();
+        s.timers()
+            .arm_periodic(&vsync, 16_666_666, 16_666_666)
+            .unwrap();
         s.wait(vec![WaitTarget(vsync.clone())], -1).unwrap();
         assert_eq!(s.prepare(&mut cpu), ScheduleOutcome::Ready);
         assert_eq!(s.stats().virtual_time_ns, 16_666_666);
@@ -565,7 +567,9 @@ mod timer_tests {
     fn unrelated_timers_do_not_stop_time_from_reaching_a_sleep_deadline() {
         let (mut s, mut cpu) = scheduler();
         let unrelated = Rc::new(Cell::new(false));
-        s.timers().arm_periodic(&unrelated, 100_000, 100_000).unwrap();
+        s.timers()
+            .arm_periodic(&unrelated, 100_000, 100_000)
+            .unwrap();
         // 10 s of sleep spans 100k timer periods; the idle path steps a
         // bounded number of them, then jumps to the deadline.
         s.sleep(10_000_000_000).unwrap();
@@ -580,7 +584,9 @@ mod timer_tests {
         let (mut s, mut cpu) = scheduler();
         let unrelated = Rc::new(Cell::new(false));
         let never = Rc::new(Cell::new(false));
-        s.timers().arm_periodic(&unrelated, 100_000, 100_000).unwrap();
+        s.timers()
+            .arm_periodic(&unrelated, 100_000, 100_000)
+            .unwrap();
         s.wait(vec![WaitTarget(never)], -1).unwrap();
         assert_eq!(s.prepare(&mut cpu), ScheduleOutcome::Blocked);
         assert!(unrelated.get());

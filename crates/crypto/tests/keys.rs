@@ -120,29 +120,32 @@ fn test_titlekek_and_key_area_derivation_in_parse_lenient() {
     let keys = KeyFile::parse_lenient(contents.as_bytes());
 
     assert!(keys.title_kek(0).is_some());
-    assert!(keys.key_area_key(emulator_crypto::keys::KeyArea::Application, 0).is_some());
+    assert!(keys
+        .key_area_key(emulator_crypto::keys::KeyArea::Application, 0)
+        .is_some());
 }
 
 #[test]
 fn test_title_key_masked_and_prefix_lookups() {
     let mut contents = String::new();
     // Register title key with lower 8 bytes masked
-    contents.push_str("titlekey_01001234567800000000000000000000 = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+    contents
+        .push_str("titlekey_01001234567800000000000000000000 = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
     // Register another title key with 16-hex title ID prefix
     contents.push_str("0100abcdef120000 = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n");
     let keys = KeyFile::parse_lenient(contents.as_bytes());
 
     // Exact query with unmasked rights ID ending in 0000000000000001
     let rights_id_1: [u8; 16] = [
-        0x01, 0x00, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x01, 0x00, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01,
     ];
     assert_eq!(keys.title_key(&rights_id_1), Some(&[0xAA; 16]));
 
     // Query for 16-hex prefix
     let rights_id_2: [u8; 16] = [
-        0x01, 0x00, 0xab, 0xcd, 0xef, 0x12, 0x00, 0x00,
-        0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+        0x01, 0x00, 0xab, 0xcd, 0xef, 0x12, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde,
+        0xf0,
     ];
     assert_eq!(keys.title_key(&rights_id_2), Some(&[0xBB; 16]));
 }

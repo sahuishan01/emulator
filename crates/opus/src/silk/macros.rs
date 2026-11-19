@@ -193,8 +193,11 @@ pub fn sum_sqr_shift(x: &[i16]) -> (i32, i32) {
         let mut nrg = init;
         let mut i = 0;
         while i + 1 < x.len() {
-            let t = (smulbb(i32::from(x[i]), i32::from(x[i])) as u32)
-                .wrapping_add(smulbb(i32::from(x[i + 1]), i32::from(x[i + 1])) as u32);
+            let t = (smulbb(i32::from(x[i]), i32::from(x[i])) as u32).wrapping_add(smulbb(
+                i32::from(x[i + 1]),
+                i32::from(x[i + 1]),
+            )
+                as u32);
             nrg = (nrg as u32).wrapping_add(t >> shft) as i32;
             i += 2;
         }

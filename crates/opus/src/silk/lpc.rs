@@ -113,7 +113,8 @@ pub fn nlsf_stabilize(nlsf: &mut [i16], delta_min: &[i16]) {
     }
     nlsf[l - 1] = (i32::from(nlsf[l - 1]).min((1 << 15) - i32::from(delta_min[l]))) as i16;
     for i in (0..l - 1).rev() {
-        nlsf[i] = (i32::from(nlsf[i]).min(i32::from(nlsf[i + 1]) - i32::from(delta_min[i + 1]))) as i16;
+        nlsf[i] =
+            (i32::from(nlsf[i]).min(i32::from(nlsf[i + 1]) - i32::from(delta_min[i + 1]))) as i16;
     }
 }
 
@@ -250,9 +251,11 @@ fn find_poly(out: &mut [i32], c_lsf: &[i32], stride_off: usize, dd: usize) {
     out[1] = -c_lsf[stride_off];
     for k in 1..dd {
         let ftmp = c_lsf[2 * k + stride_off];
-        out[k + 1] = (out[k - 1] << 1) - rshift_round64(i64::from(ftmp) * i64::from(out[k]), QA) as i32;
+        out[k + 1] =
+            (out[k - 1] << 1) - rshift_round64(i64::from(ftmp) * i64::from(out[k]), QA) as i32;
         for n in (2..=k).rev() {
-            out[n] += out[n - 2] - rshift_round64(i64::from(ftmp) * i64::from(out[n - 1]), QA) as i32;
+            out[n] +=
+                out[n - 2] - rshift_round64(i64::from(ftmp) * i64::from(out[n - 1]), QA) as i32;
         }
         out[1] -= ftmp;
     }

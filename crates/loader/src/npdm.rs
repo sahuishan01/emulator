@@ -32,7 +32,10 @@ pub struct NpdmMeta {
 
 fn ascii_field(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    std::str::from_utf8(&bytes[..end]).unwrap_or("").trim().to_string()
+    std::str::from_utf8(&bytes[..end])
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 fn u32_at(data: &[u8], offset: usize) -> u32 {

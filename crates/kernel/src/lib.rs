@@ -11,17 +11,18 @@ use emulator_ipc::{encode_reply, CommandType, IpcError, IPC_BUFFER_SIZE};
 use emulator_memory::{Access, AddressSpace, MemoryError, Permissions};
 pub use handles::{HandleError, Object, ProcessIdentity, TransferMemory};
 use handles::{HandleTable, ThreadObject};
-pub use timers::{TimerError, TimerQueue};
-pub use scheduler::{ThreadSummary, 
-    ScheduleOutcome, SchedulerError, SchedulerStats, MAX_THREADS, THREAD_QUANTUM, THREAD_TLS_ARENA,
+pub use scheduler::{
+    ScheduleOutcome, SchedulerError, SchedulerStats, ThreadSummary, MAX_THREADS, THREAD_QUANTUM,
+    THREAD_TLS_ARENA,
 };
 use scheduler::{Scheduler, WaitTarget};
 use service::{Service, ServiceContext, ServiceError};
-pub use sync::{FutexArbitrator, Waiter};
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
+pub use sync::{FutexArbitrator, Waiter};
+pub use timers::{TimerError, TimerQueue};
 
 pub const SVC_SET_HEAP_SIZE: u16 = 0x01;
 pub const SVC_SET_MEMORY_PERMISSION: u16 = 0x02;
@@ -136,7 +137,11 @@ pub enum KernelError {
     InvalidThreadPriority(i32),
     UnsupportedProcessor(i32),
     /// The guest aborted itself with svcBreak.
-    GuestBreak { reason: u32, info1: u64, info2: u64 },
+    GuestBreak {
+        reason: u32,
+        info1: u64,
+        info2: u64,
+    },
     InvalidTransferMemory {
         address: u64,
         size: u64,
@@ -272,8 +277,10 @@ pub struct MemorySvcRecord {
 }
 
 fn is_memory_svc(id: u16, info_type: u64) -> bool {
-    matches!(id, 0x01 | 0x04 | 0x05 | 0x13 | 0x14 | 0x15 | 0x2c | 0x2d | 0x51 | 0x52)
-        || (id == 0x29 && matches!(info_type, 6 | 7 | 16 | 17 | 21 | 22))
+    matches!(
+        id,
+        0x01 | 0x04 | 0x05 | 0x13 | 0x14 | 0x15 | 0x2c | 0x2d | 0x51 | 0x52
+    ) || (id == 0x29 && matches!(info_type, 6 | 7 | 16 | 17 | 21 | 22))
 }
 
 type SessionObject = Rc<std::cell::RefCell<Box<dyn Service>>>;
@@ -456,7 +463,9 @@ impl Kernel {
         if size == 0 || size % 4096 != 0 {
             return Err(RESULT_INVALID_SIZE);
         }
-        let end = address.checked_add(size).ok_or(RESULT_INVALID_MEMORY_REGION)?;
+        let end = address
+            .checked_add(size)
+            .ok_or(RESULT_INVALID_MEMORY_REGION)?;
         if address < ALIAS_REGION_BASE || end > ALIAS_REGION_BASE + ALIAS_REGION_SIZE {
             return Err(RESULT_INVALID_MEMORY_REGION);
         }
@@ -504,7 +513,9 @@ impl Kernel {
                     .is_err()
                 {
                     for &(done, done_length) in &mapped {
-                        memory.unmap(done, done_length as usize).expect("mapped by this call");
+                        memory
+                            .unmap(done, done_length as usize)
+                            .expect("mapped by this call");
                     }
                     return RESULT_OUT_OF_MEMORY;
                 }
@@ -834,7 +845,8 @@ impl Kernel {
         memory
             .check_access(cpu.tpidrro_el0, IPC_BUFFER_SIZE, Access::Write)
             .map_err(KernelError::Memory)?;
-        self.domains.retain(|domain| domain.session.strong_count() != 0);
+        self.domains
+            .retain(|domain| domain.session.strong_count() != 0);
         for (index, word) in trace.words.iter_mut().enumerate() {
             *word = u32::from_le_bytes(input[index * 4..index * 4 + 4].try_into().expect("word"));
         }
@@ -1021,9 +1033,7 @@ impl Kernel {
         for moved in reply.moved_objects {
             match (moved.as_handle(), in_domain) {
                 (Some(object), _) => staged_objects.push(object),
-                (None, Some(_)) => {
-                    domain_objects.push(Rc::new(std::cell::RefCell::new(moved)))
-                }
+                (None, Some(_)) => domain_objects.push(Rc::new(std::cell::RefCell::new(moved))),
                 (None, None) => sessions.push(Object::session(moved)),
             }
         }
@@ -1035,9 +1045,7 @@ impl Kernel {
                 let end = domain
                     .next_id
                     .checked_add(domain_objects.len() as u32)
-                    .filter(|_| {
-                        domain.objects.len() + domain_objects.len() <= MAX_DOMAIN_OBJECTS
-                    })
+                    .filter(|_| domain.objects.len() + domain_objects.len() <= MAX_DOMAIN_OBJECTS)
                     .ok_or(KernelError::Handle(handles::HandleError::Limit))?;
                 Some((domain.next_id..end).collect())
             }
@@ -1075,7 +1083,11 @@ impl Kernel {
         reply_view
             .write(0, &encoded)
             .expect("prepared IPC reply pin");
-        let origin = format!("{} cmd {}", short_type_name(candidate.name()), request.command_id);
+        let origin = format!(
+            "{} cmd {}",
+            short_type_name(candidate.name()),
+            request.command_id
+        );
         for id in &pending.ids {
             self.handle_origins.insert(*id, origin.clone());
         }
@@ -1536,14 +1548,15 @@ impl Kernel {
             SVC_SET_THREAD_PRIORITY => {
                 let handle = cpu.x[0] as u32;
                 let priority = cpu.x[1] as u8;
-                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
-                    self.scheduler.current()
-                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
-                    t.id
-                } else {
-                    cpu.x[0] = RESULT_INVALID_HANDLE;
-                    return Ok(KernelEvent::Continue);
-                };
+                let thread_id =
+                    if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                        self.scheduler.current()
+                    } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                        t.id
+                    } else {
+                        cpu.x[0] = RESULT_INVALID_HANDLE;
+                        return Ok(KernelEvent::Continue);
+                    };
                 if self.scheduler.set_thread_priority(thread_id, priority) {
                     cpu.x[0] = 0;
                 } else {
@@ -1553,14 +1566,15 @@ impl Kernel {
             }
             SVC_GET_THREAD_PRIORITY => {
                 let handle = cpu.x[1] as u32;
-                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
-                    self.scheduler.current()
-                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
-                    t.id
-                } else {
-                    cpu.x[0] = RESULT_INVALID_HANDLE;
-                    return Ok(KernelEvent::Continue);
-                };
+                let thread_id =
+                    if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                        self.scheduler.current()
+                    } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                        t.id
+                    } else {
+                        cpu.x[0] = RESULT_INVALID_HANDLE;
+                        return Ok(KernelEvent::Continue);
+                    };
                 if let Some(priority) = self.scheduler.get_thread_priority(thread_id) {
                     cpu.x[0] = 0;
                     cpu.x[1] = priority as u64;
@@ -1571,14 +1585,15 @@ impl Kernel {
             }
             SVC_GET_THREAD_CORE_MASK => {
                 let handle = cpu.x[2] as u32;
-                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
-                    self.scheduler.current()
-                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
-                    t.id
-                } else {
-                    cpu.x[0] = RESULT_INVALID_HANDLE;
-                    return Ok(KernelEvent::Continue);
-                };
+                let thread_id =
+                    if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                        self.scheduler.current()
+                    } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                        t.id
+                    } else {
+                        cpu.x[0] = RESULT_INVALID_HANDLE;
+                        return Ok(KernelEvent::Continue);
+                    };
                 if let Some((ideal, mask)) = self.scheduler.get_thread_core_mask(thread_id) {
                     cpu.x[0] = 0;
                     cpu.x[1] = ideal as u64;
@@ -1592,15 +1607,19 @@ impl Kernel {
                 let handle = cpu.x[0] as u32;
                 let ideal_core = cpu.x[1] as i32;
                 let mask = cpu.x[2];
-                let thread_id = if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
-                    self.scheduler.current()
-                } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
-                    t.id
-                } else {
-                    cpu.x[0] = RESULT_INVALID_HANDLE;
-                    return Ok(KernelEvent::Continue);
-                };
-                if self.scheduler.set_thread_core_mask(thread_id, ideal_core, mask) {
+                let thread_id =
+                    if handle == CURRENT_PROCESS_HANDLE || handle == MAIN_THREAD_HANDLE as u32 {
+                        self.scheduler.current()
+                    } else if let Ok(Object::Thread(t)) = self.handles.get(handle) {
+                        t.id
+                    } else {
+                        cpu.x[0] = RESULT_INVALID_HANDLE;
+                        return Ok(KernelEvent::Continue);
+                    };
+                if self
+                    .scheduler
+                    .set_thread_core_mask(thread_id, ideal_core, mask)
+                {
                     cpu.x[0] = 0;
                 } else {
                     cpu.x[0] = RESULT_INVALID_STATE;
@@ -1684,7 +1703,9 @@ impl Kernel {
                     || current_val == (owner_tag | 0x4000_0000)
                 {
                     let _ = memory.write_u32(mutex_addr, current_val | 0x4000_0000);
-                    let (signal, _) = self.sync.lock_mutex(self.scheduler.current(), my_tag, mutex_addr);
+                    let (signal, _) =
+                        self.sync
+                            .lock_mutex(self.scheduler.current(), my_tag, mutex_addr);
                     if self.scheduler.wait(vec![WaitTarget(signal)], -1).is_err() {
                         cpu.x[0] = RESULT_INVALID_STATE;
                     }
@@ -1755,8 +1776,14 @@ impl Kernel {
                     cpu.x[0] = RESULT_TIMEOUT;
                     return Ok(KernelEvent::Continue);
                 }
-                let (signal, _) = self.sync.wait_condition(self.scheduler.current(), tag, key_addr, mutex_addr);
-                if self.scheduler.wait(vec![WaitTarget(signal)], timeout_ns).is_err() {
+                let (signal, _) =
+                    self.sync
+                        .wait_condition(self.scheduler.current(), tag, key_addr, mutex_addr);
+                if self
+                    .scheduler
+                    .wait(vec![WaitTarget(signal)], timeout_ns)
+                    .is_err()
+                {
                     cpu.x[0] = RESULT_INVALID_STATE;
                 } else {
                     cpu.x[0] = 0;
@@ -1814,12 +1841,20 @@ impl Kernel {
                     }
                 };
                 // 0: WaitIfLessThan, 1: DecrementAndWaitIfLessThan, 2: WaitIfEqual.
-                let should_wait = if kind == 2 { current == value } else { current < value };
+                let should_wait = if kind == 2 {
+                    current == value
+                } else {
+                    current < value
+                };
                 if !should_wait {
                     cpu.x[0] = RESULT_INVALID_STATE;
                     return Ok(KernelEvent::Continue);
                 }
-                if kind == 1 && memory.write_u32(addr, current.wrapping_sub(1) as u32).is_err() {
+                if kind == 1
+                    && memory
+                        .write_u32(addr, current.wrapping_sub(1) as u32)
+                        .is_err()
+                {
                     cpu.x[0] = RESULT_INVALID_CURRENT_MEMORY;
                     return Ok(KernelEvent::Continue);
                 }
@@ -1828,7 +1863,11 @@ impl Kernel {
                     return Ok(KernelEvent::Continue);
                 }
                 let signal = self.sync.wait_address(self.scheduler.current(), addr);
-                if self.scheduler.wait(vec![WaitTarget(signal)], timeout_ns).is_err() {
+                if self
+                    .scheduler
+                    .wait(vec![WaitTarget(signal)], timeout_ns)
+                    .is_err()
+                {
                     cpu.x[0] = RESULT_INVALID_STATE;
                 } else {
                     cpu.x[0] = 0;
@@ -1927,40 +1966,40 @@ impl Kernel {
                 let _handle = cpu.x[2] as u32;
                 let _subtype = cpu.x[3];
                 let val: u64 = match info_type {
-                    0 => 7, // InfoType_CoreMask (cores 0, 1, 2)
-                    1 => !0u64, // InfoType_PriorityMask (all priorities)
-                    2 => ALIAS_REGION_BASE, // InfoType_AliasRegionAddress
-                    3 => ALIAS_REGION_SIZE, // InfoType_AliasRegionSize
-                    4 => self.heap_base, // InfoType_HeapRegionAddress
-                    5 => HEAP_REGION_SIZE, // InfoType_HeapRegionSize (6 GiB, 39-bit layout)
+                    0 => 7,                     // InfoType_CoreMask (cores 0, 1, 2)
+                    1 => !0u64,                 // InfoType_PriorityMask (all priorities)
+                    2 => ALIAS_REGION_BASE,     // InfoType_AliasRegionAddress
+                    3 => ALIAS_REGION_SIZE,     // InfoType_AliasRegionSize
+                    4 => self.heap_base,        // InfoType_HeapRegionAddress
+                    5 => HEAP_REGION_SIZE,      // InfoType_HeapRegionSize (6 GiB, 39-bit layout)
                     6 => APPLICATION_POOL_SIZE, // InfoType_TotalMemorySize
                     // InfoType_UsedMemorySize: charged pages plus the system resource.
                     7 => self.used_non_system_memory() + self.system_resource_size,
-                    8 => 0, // InfoType_DebuggerAttached
-                    9 => 0, // InfoType_ResourceLimit
-                    10 => 0, // InfoType_IdleTickCount
-                    11 => 0x0123_4567_89ab_cdef, // InfoType_RandomEntropy
-                    12 => self.aslr_base, // InfoType_AslrRegionAddress
-                    13 => self.aslr_size, // InfoType_AslrRegionSize
-                    14 => 0x70_0000_0000, // InfoType_StackRegionAddress
-                    15 => 0x1000_0000, // InfoType_StackRegionSize
-                    16 => self.system_resource_size, // InfoType_SystemResourceSizeTotal
+                    8 => 0,                            // InfoType_DebuggerAttached
+                    9 => 0,                            // InfoType_ResourceLimit
+                    10 => 0,                           // InfoType_IdleTickCount
+                    11 => 0x0123_4567_89ab_cdef,       // InfoType_RandomEntropy
+                    12 => self.aslr_base,              // InfoType_AslrRegionAddress
+                    13 => self.aslr_size,              // InfoType_AslrRegionSize
+                    14 => 0x70_0000_0000,              // InfoType_StackRegionAddress
+                    15 => 0x1000_0000,                 // InfoType_StackRegionSize
+                    16 => self.system_resource_size,   // InfoType_SystemResourceSizeTotal
                     17 => self.system_resource_used(), // InfoType_SystemResourceSizeUsed
-                    18 => self.program_id, // InfoType_ProgramId
-                    19 => 0, // InfoType_InitialProcessIdRange
+                    18 => self.program_id,             // InfoType_ProgramId
+                    19 => 0,                           // InfoType_InitialProcessIdRange
                     // InfoType_UserExceptionContextAddress: Horizon reserves a
                     // 0x200-byte TLS slot per process. Thread TLS starts at page
                     // offset 0x200, so the main thread page's first slot is free
                     // and always mapped; returning 0 made guests write to null.
                     20 => USER_EXCEPTION_CONTEXT,
                     21 => self.total_non_system_memory(), // InfoType_TotalNonSystemMemorySize
-                    22 => self.used_non_system_memory(), // InfoType_UsedNonSystemMemorySize
-                    23 => 1, // InfoType_IsApplication (true)
-                    24 => 128, // InfoType_FreeThreadCount
-                    25 => 0, // InfoType_ThreadTickCount
-                    26 => 1, // InfoType_IsSvcPermitted
-                    27 => 0, // InfoType_IoRegionHint
-                    28 => 0, // InfoType_AliasRegionExtraSize
+                    22 => self.used_non_system_memory(),  // InfoType_UsedNonSystemMemorySize
+                    23 => 1,                              // InfoType_IsApplication (true)
+                    24 => 128,                            // InfoType_FreeThreadCount
+                    25 => 0,                              // InfoType_ThreadTickCount
+                    26 => 1,                              // InfoType_IsSvcPermitted
+                    27 => 0,                              // InfoType_IoRegionHint
+                    28 => 0,                              // InfoType_AliasRegionExtraSize
                     _ => {
                         cpu.x[0] = RESULT_INVALID_ENUM_VALUE;
                         return Ok(KernelEvent::Continue);

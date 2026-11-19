@@ -121,7 +121,12 @@ fn bfly4(x0: Complex, x1: Complex, x2: Complex, x3: Complex, w: &[Complex]) -> [
     let t1 = x0.sub(x2);
     let t2 = x1.add(x3);
     let t3 = x1.sub(x3).mul_neg_i();
-    [t0.add(t2), t1.add(t3).mul(w[0]), t0.sub(t2).mul(w[1]), t1.sub(t3).mul(w[2])]
+    [
+        t0.add(t2),
+        t1.add(t3).mul(w[0]),
+        t0.sub(t2).mul(w[1]),
+        t1.sub(t3).mul(w[2]),
+    ]
 }
 
 #[inline(always)]
@@ -136,7 +141,14 @@ fn bfly3(a0: Complex, x1: Complex, x2: Complex, w: &[Complex]) -> [Complex; 3] {
 }
 
 #[inline(always)]
-fn bfly5(x0: Complex, x1: Complex, x2: Complex, x3: Complex, x4: Complex, w: &[Complex]) -> [Complex; 5] {
+fn bfly5(
+    x0: Complex,
+    x1: Complex,
+    x2: Complex,
+    x3: Complex,
+    x4: Complex,
+    w: &[Complex],
+) -> [Complex; 5] {
     // cos/sin of 2*pi/5 and 4*pi/5.
     const C1: f32 = 0.309_017;
     const S1: f32 = -0.951_056_5;
@@ -164,7 +176,14 @@ fn bfly5(x0: Complex, x1: Complex, x2: Complex, x3: Complex, x4: Complex, w: &[C
 /// One Stockham DIF stage: `p` groups of `m * s` inputs to `m` groups of
 /// `p * s` outputs, twiddled by `w^(q r)`.
 #[inline]
-fn stockham_stage(src: &[Complex], dst: &mut [Complex], m: usize, s: usize, p: usize, tw: &[Complex]) {
+fn stockham_stage(
+    src: &[Complex],
+    dst: &mut [Complex],
+    m: usize,
+    s: usize,
+    p: usize,
+    tw: &[Complex],
+) {
     let ms = m * s;
     match p {
         2 => {
@@ -182,7 +201,11 @@ fn stockham_stage(src: &[Complex], dst: &mut [Complex], m: usize, s: usize, p: u
             let (x0, rest) = src[..4 * m].split_at(m);
             let (x1, rest) = rest.split_at(m);
             let (x2, x3) = rest.split_at(m);
-            for (q, (d, w)) in dst[..4 * m].chunks_exact_mut(4).zip(tw.chunks_exact(3)).enumerate() {
+            for (q, (d, w)) in dst[..4 * m]
+                .chunks_exact_mut(4)
+                .zip(tw.chunks_exact(3))
+                .enumerate()
+            {
                 let r = bfly4(x0[q], x1[q], x2[q], x3[q], w);
                 d.copy_from_slice(&r);
             }
@@ -231,7 +254,8 @@ fn stockham_stage(src: &[Complex], dst: &mut [Complex], m: usize, s: usize, p: u
                 let (d2, rest) = rest.split_at_mut(s);
                 let (d3, d4) = rest.split_at_mut(s);
                 for k in 0..s {
-                    [d0[k], d1[k], d2[k], d3[k], d4[k]] = bfly5(x0[k], x1[k], x2[k], x3[k], x4[k], w);
+                    [d0[k], d1[k], d2[k], d3[k], d4[k]] =
+                        bfly5(x0[k], x1[k], x2[k], x3[k], x4[k], w);
                 }
             }
         }
@@ -363,13 +387,21 @@ mod tests {
         for n in [60usize, 120, 240, 480, 15, 8, 6, 10] {
             let fft = Fft::new(n);
             let mut x: Vec<Complex> = (0..n)
-                .map(|i| Complex::new(((i * 7 + 3) % 11) as f32 - 5.0, ((i * 5 + 1) % 13) as f32 - 6.0))
+                .map(|i| {
+                    Complex::new(
+                        ((i * 7 + 3) % 11) as f32 - 5.0,
+                        ((i * 5 + 1) % 13) as f32 - 6.0,
+                    )
+                })
                 .collect();
             let want = naive_dft(&x);
             let mut s = vec![Complex::default(); n];
             let res = if fft.process(&mut x, &mut s) { s } else { x };
             for (a, b) in res.iter().zip(&want) {
-                assert!((a.re - b.re).abs() < 1e-2 && (a.im - b.im).abs() < 1e-2, "n={n}: {a:?} vs {b:?}");
+                assert!(
+                    (a.re - b.re).abs() < 1e-2 && (a.im - b.im).abs() < 1e-2,
+                    "n={n}: {a:?} vs {b:?}"
+                );
             }
         }
     }

@@ -1,8 +1,7 @@
 use emulator_a64::Cpu;
 use emulator_kernel::{
     HandleError, Kernel, KernelError, MAX_TRANSFER_MEMORY_OBJECTS, RESULT_INVALID_CURRENT_MEMORY,
-    SVC_CLOSE_HANDLE,
-    SVC_CREATE_TRANSFER_MEMORY, SVC_EXIT_PROCESS,
+    SVC_CLOSE_HANDLE, SVC_CREATE_TRANSFER_MEMORY, SVC_EXIT_PROCESS,
 };
 use emulator_memory::{AddressSpace, Permissions};
 fn create(
@@ -52,7 +51,11 @@ fn invalid_transfer_arguments_and_read_only_memory_preserve_cpu_and_memory() {
         (0x4000, 4096, 2),
         (0x4000, 4096, 4),
         (u64::MAX - 4095, 8192, 0),
-        (0x4000, emulator_kernel::MAX_TRANSFER_MEMORY_BYTES as u64 + 4096, 0),
+        (
+            0x4000,
+            emulator_kernel::MAX_TRANSFER_MEMORY_BYTES as u64 + 4096,
+            0,
+        ),
         (emulator_kernel::THREAD_TLS_ARENA, 4096, 0),
     ] {
         let mut k = Kernel::default();

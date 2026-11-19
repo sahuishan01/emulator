@@ -134,7 +134,9 @@ impl Cnmt {
             .ok_or(LoadError::LimitExceeded)?;
 
         if bytes.len() < records_end {
-            return Err(LoadError::Invalid("CNMT content records table is truncated"));
+            return Err(LoadError::Invalid(
+                "CNMT content records table is truncated",
+            ));
         }
 
         let mut contents = Vec::with_capacity(content_count);

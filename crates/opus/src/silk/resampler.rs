@@ -158,7 +158,11 @@ impl Resampler {
         let mut n_in;
         loop {
             n_in = remaining.min(self.batch_size);
-            up2_hq(&mut self.s_iir, &mut buf[ORDER_FIR_12..], &input[in_pos..in_pos + n_in]);
+            up2_hq(
+                &mut self.s_iir,
+                &mut buf[ORDER_FIR_12..],
+                &input[in_pos..in_pos + n_in],
+            );
             let max_index_q16 = (n_in as i32) << (16 + 1);
             let mut index_q16 = 0i32;
             while index_q16 < max_index_q16 {
@@ -168,7 +172,8 @@ impl Resampler {
                 let c0: &[i16; 4] = RESAMPLER_FRAC_FIR_12[table_index * 4..table_index * 4 + 4]
                     .try_into()
                     .expect("phase");
-                let c1: &[i16; 4] = RESAMPLER_FRAC_FIR_12[(11 - table_index) * 4..(11 - table_index) * 4 + 4]
+                let c1: &[i16; 4] = RESAMPLER_FRAC_FIR_12
+                    [(11 - table_index) * 4..(11 - table_index) * 4 + 4]
                     .try_into()
                     .expect("mirrored phase");
                 let mut res = i32::from(b[0]) * i32::from(c0[0]);

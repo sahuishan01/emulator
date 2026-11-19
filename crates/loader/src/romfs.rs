@@ -72,7 +72,9 @@ impl RomFsArchive {
             || file_hash_offset + file_hash_size > total_meta
             || file_table_offset + file_table_size > total_meta
         {
-            return Err(LoadError::Invalid("RomFS table offsets exceed metadata bounds"));
+            return Err(LoadError::Invalid(
+                "RomFS table offsets exceed metadata bounds",
+            ));
         }
 
         let dir_table = &image[dir_table_offset..dir_table_offset + dir_table_size];
@@ -87,12 +89,19 @@ impl RomFsArchive {
             if offset + 0x18 > dir_table.len() {
                 break;
             }
-            let parent_offset = u32::from_le_bytes(dir_table[offset..offset + 4].try_into().unwrap());
-            let _sibling_offset = u32::from_le_bytes(dir_table[offset + 4..offset + 8].try_into().unwrap());
-            let _child_dir_offset = u32::from_le_bytes(dir_table[offset + 8..offset + 12].try_into().unwrap());
-            let _child_file_offset = u32::from_le_bytes(dir_table[offset + 12..offset + 16].try_into().unwrap());
-            let _next_hash = u32::from_le_bytes(dir_table[offset + 16..offset + 20].try_into().unwrap());
-            let name_length = u32::from_le_bytes(dir_table[offset + 20..offset + 24].try_into().unwrap()) as usize;
+            let parent_offset =
+                u32::from_le_bytes(dir_table[offset..offset + 4].try_into().unwrap());
+            let _sibling_offset =
+                u32::from_le_bytes(dir_table[offset + 4..offset + 8].try_into().unwrap());
+            let _child_dir_offset =
+                u32::from_le_bytes(dir_table[offset + 8..offset + 12].try_into().unwrap());
+            let _child_file_offset =
+                u32::from_le_bytes(dir_table[offset + 12..offset + 16].try_into().unwrap());
+            let _next_hash =
+                u32::from_le_bytes(dir_table[offset + 16..offset + 20].try_into().unwrap());
+            let name_length =
+                u32::from_le_bytes(dir_table[offset + 20..offset + 24].try_into().unwrap())
+                    as usize;
 
             let name_end = offset + 0x18 + name_length;
             if name_end > dir_table.len() {
@@ -124,12 +133,33 @@ impl RomFsArchive {
             if file_offset + 0x20 > file_table.len() {
                 break;
             }
-            let parent_offset = u32::from_le_bytes(file_table[file_offset..file_offset + 4].try_into().unwrap());
-            let _sibling_offset = u32::from_le_bytes(file_table[file_offset + 4..file_offset + 8].try_into().unwrap());
-            let data_offset = u64::from_le_bytes(file_table[file_offset + 8..file_offset + 16].try_into().unwrap());
-            let data_size = u64::from_le_bytes(file_table[file_offset + 16..file_offset + 24].try_into().unwrap());
-            let _next_hash = u32::from_le_bytes(file_table[file_offset + 24..file_offset + 28].try_into().unwrap());
-            let name_length = u32::from_le_bytes(file_table[file_offset + 28..file_offset + 32].try_into().unwrap()) as usize;
+            let parent_offset =
+                u32::from_le_bytes(file_table[file_offset..file_offset + 4].try_into().unwrap());
+            let _sibling_offset = u32::from_le_bytes(
+                file_table[file_offset + 4..file_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            let data_offset = u64::from_le_bytes(
+                file_table[file_offset + 8..file_offset + 16]
+                    .try_into()
+                    .unwrap(),
+            );
+            let data_size = u64::from_le_bytes(
+                file_table[file_offset + 16..file_offset + 24]
+                    .try_into()
+                    .unwrap(),
+            );
+            let _next_hash = u32::from_le_bytes(
+                file_table[file_offset + 24..file_offset + 28]
+                    .try_into()
+                    .unwrap(),
+            );
+            let name_length = u32::from_le_bytes(
+                file_table[file_offset + 28..file_offset + 32]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
 
             let name_end = file_offset + 0x20 + name_length;
             if name_end > file_table.len() {
@@ -161,7 +191,10 @@ impl RomFsArchive {
 
     /// Parses RomFS from an NCA section decrypted payload using its `NcaFsHeader`.
     /// Handles IVFC (Hierarchical Integrity) level descriptors.
-    pub fn from_section_payload(payload: &[u8], fs_header: &NcaFsHeader) -> Result<Self, LoadError> {
+    pub fn from_section_payload(
+        payload: &[u8],
+        fs_header: &NcaFsHeader,
+    ) -> Result<Self, LoadError> {
         if fs_header.hash_type == NcaHashType::HierarchicalIntegrity
             || fs_header.hash_type == NcaHashType::HierarchicalIntegritySha3
         {
@@ -184,8 +217,10 @@ impl RomFsArchive {
 
             for level_idx in (0..6).rev() {
                 let off = 0x10 + level_idx * 0x18;
-                let lvl_offset = u64::from_le_bytes(fs_header.hash_data[off..off + 8].try_into().unwrap());
-                let lvl_size = u64::from_le_bytes(fs_header.hash_data[off + 8..off + 16].try_into().unwrap());
+                let lvl_offset =
+                    u64::from_le_bytes(fs_header.hash_data[off..off + 8].try_into().unwrap());
+                let lvl_size =
+                    u64::from_le_bytes(fs_header.hash_data[off + 8..off + 16].try_into().unwrap());
                 if lvl_size > 0 {
                     data_level_offset = lvl_offset;
                     data_level_size = lvl_size;
@@ -193,11 +228,15 @@ impl RomFsArchive {
                 }
             }
 
-            if data_level_size == 0 || (payload.len() as u64) < data_level_offset + data_level_size {
-                return Err(LoadError::Invalid("IVFC data level exceeds section payload bounds"));
+            if data_level_size == 0 || (payload.len() as u64) < data_level_offset + data_level_size
+            {
+                return Err(LoadError::Invalid(
+                    "IVFC data level exceeds section payload bounds",
+                ));
             }
 
-            let romfs_slice = &payload[data_level_offset as usize..(data_level_offset + data_level_size) as usize];
+            let romfs_slice = &payload
+                [data_level_offset as usize..(data_level_offset + data_level_size) as usize];
             Self::parse(romfs_slice)
         } else {
             // Standalone RomFS directly at payload offset 0
@@ -338,7 +377,10 @@ mod tests {
     fn test_romfs_build_and_parse() {
         let sample_files = [
             ("main.lua", b"print('Hello Pokemon')".as_slice()),
-            ("config.json", b"{\"fps\": 30, \"resolution\": \"720p\"}".as_slice()),
+            (
+                "config.json",
+                b"{\"fps\": 30, \"resolution\": \"720p\"}".as_slice(),
+            ),
             ("title.txt", b"Pokemon Legends: Z-A".as_slice()),
         ];
         let image = build_romfs_image(&sample_files);
@@ -349,9 +391,15 @@ mod tests {
         assert!(archive.contains_file("romfs:/config.json"));
         assert!(archive.contains_file("/title.txt"));
 
-        assert_eq!(archive.get_file("main.lua").unwrap(), b"print('Hello Pokemon')");
+        assert_eq!(
+            archive.get_file("main.lua").unwrap(),
+            b"print('Hello Pokemon')"
+        );
         assert_eq!(archive.file_size("title.txt").unwrap(), 20);
-        assert_eq!(archive.get_file("title.txt").unwrap(), b"Pokemon Legends: Z-A");
+        assert_eq!(
+            archive.get_file("title.txt").unwrap(),
+            b"Pokemon Legends: Z-A"
+        );
     }
 
     #[test]

@@ -100,7 +100,9 @@ fn test_exefs_program_loading() {
 
     let mut mem = emulator_memory::AddressSpace::default();
     let mut program = emulator_loader::NsoProgram::new();
-    exefs.load_into(&mut program, &mut mem, 0x8000_0000).unwrap();
+    exefs
+        .load_into(&mut program, &mut mem, 0x8000_0000)
+        .unwrap();
     assert_eq!(program.modules().len(), 1);
     assert_eq!(program.modules()[0].name, "main");
 }

@@ -55,8 +55,12 @@ fn load_store_pair_pre_post_index_and_offsets() {
         0xe2, 0x0f, 0xc1, 0xa8, // ldp x2, x3, [sp], #16
         0x21, 0x00, 0x00, 0xd4, // svc #1
     ];
-    memory.map(CODE, program, Permissions::READ_EXECUTE).unwrap();
-    memory.map(0x7000, vec![0; 8192], Permissions::READ_WRITE).unwrap();
+    memory
+        .map(CODE, program, Permissions::READ_EXECUTE)
+        .unwrap();
+    memory
+        .map(0x7000, vec![0; 8192], Permissions::READ_WRITE)
+        .unwrap();
     let mut cpu = Cpu::new(CODE, 0x8000);
     cpu.x[0] = 0x1122334455667788;
     cpu.x[1] = 0x99aabbccddeeff00;
@@ -315,7 +319,8 @@ fn test_adr_and_adrp_address_calculation() {
     let mut code_bytes = vec![0u8; 0x2000];
     code_bytes[8..12].copy_from_slice(&adr_word.to_le_bytes());
     code_bytes[12..16].copy_from_slice(&adrp_word.to_le_bytes());
-    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE).unwrap();
+    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE)
+        .unwrap();
 
     let event = cpu.step(&mut mem).unwrap();
     assert_eq!(event, StepEvent::Continue);
@@ -349,7 +354,8 @@ fn test_logical_shifted_register_and_mov() {
     code_bytes[0..4].copy_from_slice(&mov_x0_x1.to_le_bytes());
     code_bytes[4..8].copy_from_slice(&and_x3_x1_x2.to_le_bytes());
     code_bytes[8..12].copy_from_slice(&eor_x4_x1_x2.to_le_bytes());
-    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE).unwrap();
+    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE)
+        .unwrap();
 
     // Step 1: MOV
     cpu.step(&mut mem).unwrap();
@@ -398,8 +404,10 @@ fn test_bitfield_and_exclusive_load_store() {
     code_bytes[4..8].copy_from_slice(&sbfx.to_le_bytes());
     code_bytes[8..12].copy_from_slice(&stxr.to_le_bytes());
     code_bytes[12..16].copy_from_slice(&ldxr.to_le_bytes());
-    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE).unwrap();
-    mem.map(0x8000_2000, vec![0u8; 0x1000], Permissions::READ_WRITE).unwrap();
+    mem.map(0x8000_1000, code_bytes, Permissions::READ_EXECUTE)
+        .unwrap();
+    mem.map(0x8000_2000, vec![0u8; 0x1000], Permissions::READ_WRITE)
+        .unwrap();
 
     // Step 1: UBFX
     cpu.step(&mut mem).unwrap();
@@ -411,7 +419,11 @@ fn test_bitfield_and_exclusive_load_store() {
     assert_eq!(cpu.x[3], 0xffff_ffff_ffff_ffef);
 
     // Step 3: STXR (with the reservation a preceding LDXR of the zeroed word takes)
-    cpu.exclusive = Some(emulator_a64::ExclusiveReservation { address: 0x8000_2000, bytes: 8, value: 0 });
+    cpu.exclusive = Some(emulator_a64::ExclusiveReservation {
+        address: 0x8000_2000,
+        bytes: 8,
+        value: 0,
+    });
     cpu.step(&mut mem).unwrap();
     assert_eq!(cpu.x[4], 0); // exclusive store status 0 (success)
     assert_eq!(mem.read_u64(0x8000_2000).unwrap(), 0x0123_4567_89ab_cdef);
@@ -561,7 +573,8 @@ fn test_byte_halfword_unscaled_and_register_loads_stores() {
     code[16..20].copy_from_slice(&ldrh.to_le_bytes());
     code[20..24].copy_from_slice(&ldur.to_le_bytes());
     mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
-    mem.map(0x2000, vec![0u8; 0x1000], Permissions::READ_WRITE).unwrap();
+    mem.map(0x2000, vec![0u8; 0x1000], Permissions::READ_WRITE)
+        .unwrap();
 
     cpu.x[1] = 0x2000;
     cpu.x[2] = 0xfe; // byte: -2 signed
@@ -614,7 +627,8 @@ fn test_load_store_single_pre_post_index_retail_za() {
     code[12..16].copy_from_slice(&ldr_w4_post.to_le_bytes());
 
     mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
-    mem.map(0x7000, vec![0u8; 0x2000], Permissions::READ_WRITE).unwrap();
+    mem.map(0x7000, vec![0u8; 0x2000], Permissions::READ_WRITE)
+        .unwrap();
 
     cpu.x[1] = 0xdead_beef_cafe_babe;
     cpu.sp = 0x8000;
@@ -659,17 +673,8 @@ fn test_data_processing_1src_and_retail_rbit() {
     // 36: cls w14, w13 (0x5ac015ae)
     // 40: cls x14, x13 (0xdac015ae)
     let insns: [u32; 11] = [
-        0xdac001ae,
-        0x5ac001ae,
-        0x5ac005ae,
-        0xdac005ae,
-        0x5ac009ae,
-        0xdac009ae,
-        0xdac00dae,
-        0x5ac011ae,
-        0xdac011ae,
-        0x5ac015ae,
-        0xdac015ae,
+        0xdac001ae, 0x5ac001ae, 0x5ac005ae, 0xdac005ae, 0x5ac009ae, 0xdac009ae, 0xdac00dae,
+        0x5ac011ae, 0xdac011ae, 0x5ac015ae, 0xdac015ae,
     ];
 
     let mut code = vec![0u8; 0x1000];
@@ -774,12 +779,7 @@ fn test_bitfield_bfm_bfi_bfxil_and_extract() {
     // 4: bfxil w14, w13, #4, #8 (0x33042dae)
     // 8: extr w14, w13, w12, #5 (0x138c15ae)
     // 12: extr x14, x13, x12, #5 (0x93cc15ae)
-    let insns: [u32; 4] = [
-        0x331c1dae,
-        0x33042dae,
-        0x138c15ae,
-        0x93cc15ae,
-    ];
+    let insns: [u32; 4] = [0x331c1dae, 0x33042dae, 0x138c15ae, 0x93cc15ae];
 
     let mut code = vec![0u8; 0x1000];
     for (i, &w) in insns.iter().enumerate() {
@@ -811,7 +811,8 @@ fn test_bitfield_bfm_bfi_bfxil_and_extract() {
     cpu.x[13] = 0x1122_3344_5566_7788;
     cpu.x[12] = 0x99aa_bbcc_ddee_ff00;
     cpu.step(&mut mem).unwrap();
-    let expected64 = (((0x1122_3344_5566_7788_u128 << 64) | 0x99aa_bbcc_ddee_ff00_u128) >> 5) as u64;
+    let expected64 =
+        (((0x1122_3344_5566_7788_u128 << 64) | 0x99aa_bbcc_ddee_ff00_u128) >> 5) as u64;
     assert_eq!(cpu.x[14], expected64);
 }
 
@@ -825,13 +826,7 @@ fn test_add_sub_carry_and_conditional_compare() {
     // 8: ccmp w13, w12, #4, eq (0x7a4c01a4)
     // 12: ccmp w13, #5, #4, ne (0x7a4519a4)
     // 16: ccmn w13, w12, #4, eq (0x3a4c01a4)
-    let insns: [u32; 5] = [
-        0x3a0c01ae,
-        0x7a0c01ae,
-        0x7a4c01a4,
-        0x7a4519a4,
-        0x3a4c01a4,
-    ];
+    let insns: [u32; 5] = [0x3a0c01ae, 0x7a0c01ae, 0x7a4c01a4, 0x7a4519a4, 0x3a4c01a4];
 
     let mut code = vec![0u8; 0x1000];
     for (i, &w) in insns.iter().enumerate() {
@@ -905,13 +900,7 @@ fn test_wide_multiplies() {
     // 8: umaddl x14, w13, w12, x11 (0x9bac2dae)
     // 12: smulh x14, x13, x12 (0x9b4c7dae)
     // 16: umulh x14, x13, x12 (0x9bcc7dae)
-    let insns: [u32; 5] = [
-        0x9b2c2dae,
-        0x9b2cadae,
-        0x9bac2dae,
-        0x9b4c7dae,
-        0x9bcc7dae,
-    ];
+    let insns: [u32; 5] = [0x9b2c2dae, 0x9b2cadae, 0x9bac2dae, 0x9b4c7dae, 0x9bcc7dae];
 
     let mut code = vec![0u8; 0x1000];
     for (i, &w) in insns.iter().enumerate() {
@@ -964,13 +953,7 @@ fn test_conditional_select_variants_and_cset_retail() {
     // 8: csinc w10, w1, w2, eq (0x1a82042a)
     // 12: csinv w12, w1, w2, ne (0x5a82102c)
     // 16: csneg x13, x1, x2, eq (0xda82042d)
-    let insns: [u32; 5] = [
-        0x1a9f17e8,
-        0x9a9f07e9,
-        0x1a82042a,
-        0x5a82102c,
-        0xda82042d,
-    ];
+    let insns: [u32; 5] = [0x1a9f17e8, 0x9a9f07e9, 0x1a82042a, 0x5a82102c, 0xda82042d];
 
     let mut code = vec![0u8; 0x1000];
     for (i, &w) in insns.iter().enumerate() {
@@ -1039,12 +1022,7 @@ fn test_add_sub_extended_register() {
     // 4: add x3, x1, w2, sxtw (0x8b22c023)
     // 8: cmp x1, w2, uxtw (0xeb22403f: subs xzr, x1, w2, uxtw)
     // 12: add sp, sp, x0 (0x8b2063ff)
-    let insns: [u32; 4] = [
-        0x8b224c20,
-        0x8b22c023,
-        0xeb22403f,
-        0x8b2063ff,
-    ];
+    let insns: [u32; 4] = [0x8b224c20, 0x8b22c023, 0xeb22403f, 0x8b2063ff];
 
     let mut code = vec![0u8; 0x1000];
     for (i, &w) in insns.iter().enumerate() {
@@ -1080,7 +1058,13 @@ fn test_add_sub_extended_register() {
     // Reserved encoding rejection: amount > 4
     let mut bad_mem = AddressSpace::default();
     let bad_amount = 0x8b225420u32; // imm3 = 5 > 4
-    bad_mem.map(0x2000, bad_amount.to_le_bytes().to_vec(), Permissions::READ_EXECUTE).unwrap();
+    bad_mem
+        .map(
+            0x2000,
+            bad_amount.to_le_bytes().to_vec(),
+            Permissions::READ_EXECUTE,
+        )
+        .unwrap();
     let mut bad_cpu = Cpu::new(0x2000, 0x8000);
     assert!(bad_cpu.step(&mut bad_mem).is_err());
 }
@@ -1097,12 +1081,7 @@ fn test_exclusive_load_store_variants_and_ldar_stlr() {
     // 16: ldarb w3, [x1] (0x08dffc23)
     // 20: stlrb w3, [x1] (0x089ffc23)
     let insns: [u32; 6] = [
-        0x88dffc20,
-        0x889ffc20,
-        0x885ffc20,
-        0x8802fc20,
-        0x08dffc23,
-        0x089ffc23,
+        0x88dffc20, 0x889ffc20, 0x885ffc20, 0x8802fc20, 0x08dffc23, 0x089ffc23,
     ];
 
     let mut code = vec![0u8; 0x1000];
@@ -1110,7 +1089,8 @@ fn test_exclusive_load_store_variants_and_ldar_stlr() {
         code[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
     }
     mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
-    mem.map(0x2000, vec![0u8; 0x1000], Permissions::READ_WRITE).unwrap();
+    mem.map(0x2000, vec![0u8; 0x1000], Permissions::READ_WRITE)
+        .unwrap();
 
     mem.write_u32(0x2000, 0x1234_5678).unwrap();
     cpu.x[1] = 0x2000;
@@ -1152,17 +1132,15 @@ fn test_ldpsw_signed_pair_loading() {
 
     // 0: ldpsw x0, x1, [x2] (0x69400440)
     // 4: ldpsw x3, x4, [x2, #8] (0x69411043)
-    let insns: [u32; 2] = [
-        0x69400440,
-        0x69411043,
-    ];
+    let insns: [u32; 2] = [0x69400440, 0x69411043];
 
     let mut code = vec![0u8; 0x1000];
     for (i, &w) in insns.iter().enumerate() {
         code[i * 4..(i + 1) * 4].copy_from_slice(&w.to_le_bytes());
     }
     mem.map(0x1000, code, Permissions::READ_EXECUTE).unwrap();
-    mem.map(0x2000, vec![0u8; 0x1000], Permissions::READ_WRITE).unwrap();
+    mem.map(0x2000, vec![0u8; 0x1000], Permissions::READ_WRITE)
+        .unwrap();
 
     // Write [ -2 (0xfffffffe), 5, -10 (0xfffffff6), 20 ]
     mem.write_u32(0x2000, 0xffff_fffe).unwrap();
@@ -1208,8 +1186,6 @@ fn test_disassemble_common_instructions() {
     // Raw unknown
     assert_eq!(disassemble(0x1000, 0x0000_0000), "raw 0x00000000");
 }
-
-
 
 #[test]
 fn prefetch_hints_do_not_write_memory_and_writeback_forms_are_reserved() {
@@ -1298,6 +1274,9 @@ fn store_exclusive_requires_a_live_matching_reservation() {
 
 #[test]
 fn disassembles_cache_maintenance_ops() {
-    assert_eq!(emulator_a64::disassemble(0x1000, 0xd50b_7e2a), "dc civac, x10");
+    assert_eq!(
+        emulator_a64::disassemble(0x1000, 0xd50b_7e2a),
+        "dc civac, x10"
+    );
     assert_eq!(emulator_a64::disassemble(0x1000, 0xd50b_7420), "dc zva, x0");
 }

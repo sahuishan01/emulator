@@ -3,7 +3,7 @@
 
 use emulator_a64::Cpu;
 use emulator_kernel::{
-    ALIAS_REGION_BASE, APPLICATION_POOL_SIZE, Kernel, RESULT_LIMIT_REACHED, SVC_GET_INFO,
+    Kernel, ALIAS_REGION_BASE, APPLICATION_POOL_SIZE, RESULT_LIMIT_REACHED, SVC_GET_INFO,
     SVC_MAP_PHYSICAL_MEMORY, SVC_SET_HEAP_SIZE, SVC_UNMAP_PHYSICAL_MEMORY,
 };
 use emulator_memory::{AddressSpace, Permissions};
@@ -37,7 +37,10 @@ fn process() -> (Kernel, AddressSpace) {
 fn non_system_totals_exclude_the_system_resource_and_count_only_charged_pages() {
     let (mut kernel, mut memory) = process();
     assert_eq!(info(&mut kernel, &mut memory, 6), APPLICATION_POOL_SIZE);
-    assert_eq!(info(&mut kernel, &mut memory, 21), APPLICATION_POOL_SIZE - SYSRES);
+    assert_eq!(
+        info(&mut kernel, &mut memory, 21),
+        APPLICATION_POOL_SIZE - SYSRES
+    );
     assert_eq!(info(&mut kernel, &mut memory, 22), IMAGE);
     assert_eq!(info(&mut kernel, &mut memory, 7), IMAGE + SYSRES);
     assert_eq!(info(&mut kernel, &mut memory, 16), SYSRES);
@@ -52,7 +55,13 @@ fn non_system_totals_exclude_the_system_resource_and_count_only_charged_pages() 
     // Physical mappings are charged; the system resource holds their tables.
     let mapped = 0x40_0000;
     assert_eq!(
-        call(&mut kernel, &mut memory, SVC_MAP_PHYSICAL_MEMORY, ALIAS_REGION_BASE, mapped),
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_MAP_PHYSICAL_MEMORY,
+            ALIAS_REGION_BASE,
+            mapped
+        ),
         0
     );
     assert_eq!(info(&mut kernel, &mut memory, 22), IMAGE + mapped);
@@ -62,11 +71,22 @@ fn non_system_totals_exclude_the_system_resource_and_count_only_charged_pages() 
     // Heap growth is charged too, and unmapping releases the charge.
     let mut cpu = Cpu::new(0, 0);
     cpu.x[1] = 0x20_0000;
-    kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap();
+    kernel
+        .dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory)
+        .unwrap();
     assert_eq!(cpu.x[0], 0);
-    assert_eq!(info(&mut kernel, &mut memory, 22), IMAGE + mapped + 0x20_0000);
     assert_eq!(
-        call(&mut kernel, &mut memory, SVC_UNMAP_PHYSICAL_MEMORY, ALIAS_REGION_BASE, mapped),
+        info(&mut kernel, &mut memory, 22),
+        IMAGE + mapped + 0x20_0000
+    );
+    assert_eq!(
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_UNMAP_PHYSICAL_MEMORY,
+            ALIAS_REGION_BASE,
+            mapped
+        ),
         0
     );
     assert_eq!(info(&mut kernel, &mut memory, 22), IMAGE + 0x20_0000);
@@ -82,7 +102,13 @@ fn growth_past_the_limit_fails_with_limit_reached_and_maps_nothing() {
     let resident = memory.resident_bytes();
 
     assert_eq!(
-        call(&mut kernel, &mut memory, SVC_MAP_PHYSICAL_MEMORY, ALIAS_REGION_BASE, 0x2000),
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_MAP_PHYSICAL_MEMORY,
+            ALIAS_REGION_BASE,
+            0x2000
+        ),
         RESULT_LIMIT_REACHED
     );
     assert_eq!(memory.resident_bytes(), resident);
@@ -91,18 +117,35 @@ fn growth_past_the_limit_fails_with_limit_reached_and_maps_nothing() {
 
     let mut cpu = Cpu::new(0, 0);
     cpu.x[1] = 0x2000;
-    kernel.dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory).unwrap();
+    kernel
+        .dispatch(SVC_SET_HEAP_SIZE, &mut cpu, &mut memory)
+        .unwrap();
     assert_eq!(cpu.x[0], RESULT_LIMIT_REACHED);
     assert_eq!(memory.resident_bytes(), resident);
 
     // The last page still fits, after which used == total and 21 - 22 == 0.
     assert_eq!(
-        call(&mut kernel, &mut memory, SVC_MAP_PHYSICAL_MEMORY, ALIAS_REGION_BASE, 0x1000),
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_MAP_PHYSICAL_MEMORY,
+            ALIAS_REGION_BASE,
+            0x1000
+        ),
         0
     );
-    assert_eq!(info(&mut kernel, &mut memory, 22), info(&mut kernel, &mut memory, 21));
     assert_eq!(
-        call(&mut kernel, &mut memory, SVC_MAP_PHYSICAL_MEMORY, ALIAS_REGION_BASE + 0x1000, 0x1000),
+        info(&mut kernel, &mut memory, 22),
+        info(&mut kernel, &mut memory, 21)
+    );
+    assert_eq!(
+        call(
+            &mut kernel,
+            &mut memory,
+            SVC_MAP_PHYSICAL_MEMORY,
+            ALIAS_REGION_BASE + 0x1000,
+            0x1000
+        ),
         RESULT_LIMIT_REACHED
     );
 }

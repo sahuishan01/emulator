@@ -54,7 +54,9 @@ pub fn apply_relocations(
     dynamic_offset: u64,
     max_dynamic_size: usize,
 ) -> Result<usize, LoadError> {
-    let dyn_addr = base_address.checked_add(dynamic_offset).ok_or(LoadError::AddressOverflow)?;
+    let dyn_addr = base_address
+        .checked_add(dynamic_offset)
+        .ok_or(LoadError::AddressOverflow)?;
     let mut rela_offset: Option<u64> = None;
     let mut rela_size: Option<u64> = None;
     let mut rela_ent: Option<u64> = None;
@@ -64,7 +66,9 @@ pub fn apply_relocations(
 
     for _ in 0..max_dyn_entries {
         let tag = memory.read_u64(current_dyn).map_err(LoadError::Memory)? as i64;
-        let val = memory.read_u64(current_dyn + 8).map_err(LoadError::Memory)?;
+        let val = memory
+            .read_u64(current_dyn + 8)
+            .map_err(LoadError::Memory)?;
         current_dyn += 16;
 
         if tag == DT_NULL {
@@ -85,13 +89,19 @@ pub fn apply_relocations(
             return Err(LoadError::Invalid("unsupported Elf64_Rela entry size"));
         }
         let count = total_size / entry_size;
-        let rela_addr = base_address.checked_add(rela_off).ok_or(LoadError::AddressOverflow)?;
+        let rela_addr = base_address
+            .checked_add(rela_off)
+            .ok_or(LoadError::AddressOverflow)?;
 
         for i in 0..count {
-            let entry_addr = rela_addr.checked_add(i * 24).ok_or(LoadError::AddressOverflow)?;
+            let entry_addr = rela_addr
+                .checked_add(i * 24)
+                .ok_or(LoadError::AddressOverflow)?;
             let r_offset = memory.read_u64(entry_addr).map_err(LoadError::Memory)?;
             let r_info = memory.read_u64(entry_addr + 8).map_err(LoadError::Memory)?;
-            let r_addend = memory.read_u64(entry_addr + 16).map_err(LoadError::Memory)? as i64;
+            let r_addend = memory
+                .read_u64(entry_addr + 16)
+                .map_err(LoadError::Memory)? as i64;
 
             let rela = Elf64Rela {
                 r_offset,
@@ -100,9 +110,13 @@ pub fn apply_relocations(
             };
 
             if rela.r_type() == R_AARCH64_RELATIVE {
-                let target_addr = base_address.checked_add(rela.r_offset).ok_or(LoadError::AddressOverflow)?;
+                let target_addr = base_address
+                    .checked_add(rela.r_offset)
+                    .ok_or(LoadError::AddressOverflow)?;
                 let resolved_value = base_address.wrapping_add_signed(rela.r_addend);
-                memory.write_u64(target_addr, resolved_value).map_err(LoadError::Memory)?;
+                memory
+                    .write_u64(target_addr, resolved_value)
+                    .map_err(LoadError::Memory)?;
                 applied_count += 1;
             }
         }

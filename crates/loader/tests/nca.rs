@@ -491,8 +491,7 @@ fn test_open_exefs_with_unextended_main_module() {
 
     let section_start = 0xC00u64;
     let mut archive = vec![0u8; ARCHIVE_SIZE_LARGE as usize];
-    archive[section_start as usize..section_start as usize + pfs0.len()]
-        .copy_from_slice(&pfs0);
+    archive[section_start as usize..section_start as usize + pfs0.len()].copy_from_slice(&pfs0);
 
     let program = dec_header.open_exefs(&archive, &keys).unwrap();
     assert_eq!(program.modules.len(), 1);
@@ -605,7 +604,8 @@ fn test_decrypt_section_ctr_with_key_area_slot_0() {
     aes128_ctr_xor(&raw_content_key, initial_counter, &mut encrypted_payload).unwrap();
 
     let mut archive = vec![0u8; ARCHIVE_SIZE as usize];
-    archive[section_start as usize..section_start as usize + 0xC00].copy_from_slice(&encrypted_payload);
+    archive[section_start as usize..section_start as usize + 0xC00]
+        .copy_from_slice(&encrypted_payload);
 
     let decrypted = dec_header.decrypt_section(&archive, 0, &keys).unwrap();
     assert_eq!(&decrypted[..4], b"PFS0");
@@ -694,8 +694,7 @@ fn test_open_exefs_hierarchical_sha256_partitionfs_with_data_offset() {
     let sec_start = 0xC00usize;
     archive[sec_start..sec_start + 0x4000].fill(0xAA);
     // Put PFS0 at sec_start + 0x4000
-    archive[sec_start + 0x4000..sec_start + 0x4000 + exefs_pfs0.len()]
-        .copy_from_slice(&exefs_pfs0);
+    archive[sec_start + 0x4000..sec_start + 0x4000 + exefs_pfs0.len()].copy_from_slice(&exefs_pfs0);
 
     let program = dec_header.open_exefs(&archive, &keys).unwrap();
     assert_eq!(program.modules.len(), 1);
@@ -709,7 +708,10 @@ fn test_open_exefs_hierarchical_sha256_partitionfs_ctr_encrypted() {
     use emulator_loader::nca::{make_section_ctr, NcaDecryptedHeader};
 
     let content_key = [0x71u8; 16];
-    let key_text = format!("titlekey_01000000000000010000000000000000 = {}", "71".repeat(16));
+    let key_text = format!(
+        "titlekey_01000000000000010000000000000000 = {}",
+        "71".repeat(16)
+    );
     let keys = KeyFile::parse(key_text.as_bytes()).unwrap();
 
     let mut fs_headers = [[0u8; NCA_FS_HEADER_SIZE]; 4];
@@ -766,4 +768,3 @@ fn test_open_exefs_hierarchical_sha256_partitionfs_ctr_encrypted() {
     assert_eq!(program.modules.len(), 1);
     assert_eq!(program.modules[0].name, "main");
 }
-

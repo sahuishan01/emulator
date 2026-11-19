@@ -37,7 +37,7 @@ fn main() {
         }
     }
     let mut rows: Vec<_> = by_mnemonic.into_iter().collect();
-    rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
     println!("total={total} missing={missing} distinct={}", rows.len());
     for (mnemonic, (count, sample)) in rows {
         println!("{count:>8} {mnemonic:<12} e.g. {sample:#010x}");

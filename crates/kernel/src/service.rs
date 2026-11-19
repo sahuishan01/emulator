@@ -137,13 +137,21 @@ impl<'a> ServiceContext<'a> {
         Ok(context)
     }
     pub(crate) fn validate_reply(&self, reply: &MemoryView) -> Result<(), ServiceError> {
-        if self.receive.iter().chain(&self.pointer_receive).flatten().any(|view| {
-            view.backing_ranges().any(|a| {
-                reply.backing_ranges().any(|b| {
-                    a.id == b.id && a.offset < b.offset + b.length && b.offset < a.offset + a.length
+        if self
+            .receive
+            .iter()
+            .chain(&self.pointer_receive)
+            .flatten()
+            .any(|view| {
+                view.backing_ranges().any(|a| {
+                    reply.backing_ranges().any(|b| {
+                        a.id == b.id
+                            && a.offset < b.offset + b.length
+                            && b.offset < a.offset + a.length
+                    })
                 })
             })
-        }) {
+        {
             return Err(ServiceError::ReplyBufferOverlap);
         }
         Ok(())
@@ -223,7 +231,9 @@ impl<'a> ServiceContext<'a> {
         fn fits(alias: &[Option<MemoryView>], pointer: &[Option<MemoryView>], want: usize) -> bool {
             let present = alias.len().max(pointer.len());
             let unused_empty = |list: &[Option<MemoryView>]| {
-                list.iter().skip(want).all(|v| v.as_ref().is_none_or(|v| v.len() == 0))
+                list.iter()
+                    .skip(want)
+                    .all(|v| v.as_ref().is_none_or(|v| v.len() == 0))
             };
             (alias.len() >= want || alias.is_empty())
                 && (pointer.len() >= want || pointer.is_empty())

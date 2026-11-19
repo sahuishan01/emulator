@@ -297,7 +297,10 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             // run report (an external kill would lose it).
             "--max-seconds" => {
                 i += 1;
-                let seconds = arguments.get(i).ok_or("--max-seconds requires a number")?.parse::<f64>()?;
+                let seconds = arguments
+                    .get(i)
+                    .ok_or("--max-seconds requires a number")?
+                    .parse::<f64>()?;
                 if !(seconds > 0.0) {
                     return Err("--max-seconds must be positive".into());
                 }
@@ -338,9 +341,12 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             }
             "--imports" => {
                 i += 1;
-                let spec = arguments.get(i).ok_or("--imports requires HEXADDR:SUBSTRING")?;
-                let (address, pattern) =
-                    spec.split_once(':').ok_or("--imports expects HEXADDR:SUBSTRING")?;
+                let spec = arguments
+                    .get(i)
+                    .ok_or("--imports requires HEXADDR:SUBSTRING")?;
+                let (address, pattern) = spec
+                    .split_once(':')
+                    .ok_or("--imports expects HEXADDR:SUBSTRING")?;
                 let address = u64::from_str_radix(address.trim_start_matches("0x"), 16)?;
                 imports.push((address, pattern.to_string()));
             }
@@ -479,7 +485,10 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     print_run_report(&session, &samples, elapsed);
     for &address in &symbols {
-        println!("symbol {address:#x}: {}", describe_symbol(session.memory(), address));
+        println!(
+            "symbol {address:#x}: {}",
+            describe_symbol(session.memory(), address)
+        );
     }
     for (address, pattern) in &imports {
         print_imports(session.memory(), *address, pattern);
@@ -495,12 +504,25 @@ fn run_nsp(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if !trace.is_empty() {
-        println!("traced PCs ({} hits recorded, cap 4096):", session.trace_log().len());
+        println!(
+            "traced PCs ({} hits recorded, cap 4096):",
+            session.trace_log().len()
+        );
         for r in session.trace_log() {
-            let regs: Vec<String> = r.x.iter().enumerate().filter(|(_, v)| **v != 0).map(|(n, v)| format!("x{n}={v:#x}")).collect();
+            let regs: Vec<String> =
+                r.x.iter()
+                    .enumerate()
+                    .filter(|(_, v)| **v != 0)
+                    .map(|(n, v)| format!("x{n}={v:#x}"))
+                    .collect();
             println!(
                 "  inst={} thread={} pc={:#x} lr={:#x} sp={:#x} {}",
-                r.instruction, r.thread, r.pc, r.lr, r.sp, regs.join(" ")
+                r.instruction,
+                r.thread,
+                r.pc,
+                r.lr,
+                r.sp,
+                regs.join(" ")
             );
             if !r.frames.is_empty() {
                 let frames: Vec<String> = r.frames.iter().map(|ret| format!("{ret:#x}")).collect();
@@ -634,8 +656,18 @@ fn guest_module(memory: &AddressSpace, address: u64) -> Option<GuestModule> {
         }
     }
     // The symbol table directly precedes the string table in NSO images.
-    let symbols = if strtab > symtab { ((strtab - symtab) / 24).min(1 << 20) } else { 0 };
-    Some(GuestModule { base, strtab, symtab, symbols, relocations })
+    let symbols = if strtab > symtab {
+        ((strtab - symtab) / 24).min(1 << 20)
+    } else {
+        0
+    };
+    Some(GuestModule {
+        base,
+        strtab,
+        symtab,
+        symbols,
+        relocations,
+    })
 }
 
 fn guest_string(memory: &AddressSpace, address: u64) -> String {
@@ -707,7 +739,9 @@ fn print_imports(memory: &AddressSpace, address: u64, pattern: &str) {
         if !name.contains(pattern) {
             continue;
         }
-        let stub = stubs.get(&slot).map_or_else(|| "none".to_string(), |pc| format!("{pc:#x}"));
+        let stub = stubs
+            .get(&slot)
+            .map_or_else(|| "none".to_string(), |pc| format!("{pc:#x}"));
         let target = memory.read_u64(slot).unwrap_or(0);
         println!("  slot={slot:#x} stub={stub} target={target:#x} {name}");
     }
@@ -717,7 +751,8 @@ fn nearest_export(memory: &AddressSpace, module: &GuestModule, address: u64) -> 
     let mut best: Option<(u64, u64)> = None;
     for index in 1..module.symbols {
         let entry = module.symtab + index * 24;
-        let (Ok(section), Ok(value)) = (memory.read_u16(entry + 6), memory.read_u64(entry + 8)) else {
+        let (Ok(section), Ok(value)) = (memory.read_u16(entry + 6), memory.read_u64(entry + 8))
+        else {
             break;
         };
         if section == 0 || value == 0 {
@@ -729,7 +764,11 @@ fn nearest_export(memory: &AddressSpace, module: &GuestModule, address: u64) -> 
         }
     }
     best.map(|(index, start)| {
-        format!("{}+{:#x}", guest_symbol_name(memory, module, index), address - start)
+        format!(
+            "{}+{:#x}",
+            guest_symbol_name(memory, module, index),
+            address - start
+        )
     })
 }
 
@@ -906,7 +945,10 @@ fn print_run_report(
         println!("nvdrv failures (device, ioctl, nv error: count):");
         for ((device, code, error), (count, first)) in failures {
             let words: Vec<String> = first.iter().map(|w| format!("{w:08x}")).collect();
-            println!("  {device} {code:#010x} error={error:#x}: {count} (first args: {})", words.join(" "));
+            println!(
+                "  {device} {code:#010x} error={error:#x}: {count} (first args: {})",
+                words.join(" ")
+            );
         }
     }
     let submit_errors = emulator_services::nv_submit_errors();

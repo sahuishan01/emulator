@@ -151,7 +151,11 @@ fn emit_with_projection(program: &Program, normalize: bool) -> Result<Vec<u32>, 
             }
             Op::FMin(a, c) | Op::FMax(a, c) => {
                 let id = b.result(
-                    if matches!(value.op, Op::FMin(..)) { 156 } else { 157 },
+                    if matches!(value.op, Op::FMin(..)) {
+                        156
+                    } else {
+                        157
+                    },
                     float,
                     &[ids[a], ids[c]],
                 );
@@ -183,9 +187,7 @@ fn emit_with_projection(program: &Program, normalize: bool) -> Result<Vec<u32>, 
                 instruction(&mut b.body, 224, &[u_id, u_id, sem_id]); // OpControlBarrier
                 u_id
             }
-            Op::ConstantBuffer { .. }
-            | Op::GlobalLoad { .. }
-            | Op::SharedLoad { .. } => {
+            Op::ConstantBuffer { .. } | Op::GlobalLoad { .. } | Op::SharedLoad { .. } => {
                 let zero = b.id();
                 instruction(&mut b.declarations, 43, &[uint, zero, 0]);
                 zero
@@ -238,13 +240,7 @@ fn emit_with_projection(program: &Program, normalize: bool) -> Result<Vec<u32>, 
         Stage::Fragment => 4,
         Stage::Compute => 5,
     };
-    let mut entry = vec![
-        execution_model,
-        main,
-        0x6e69616d,
-        0,
-        output,
-    ];
+    let mut entry = vec![execution_model, main, 0x6e69616d, 0, output];
     entry.extend(inputs);
     if let Some(varying) = varying {
         entry.push(varying);

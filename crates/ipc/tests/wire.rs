@@ -183,7 +183,10 @@ fn unsupported_alias_modes_excess_counts_and_control_buffers_are_rejected() {
         assert_eq!(parse_request(&bytes).unwrap().send_buffers.len(), 1);
     }
     bytes[16..20].copy_from_slice(&2_u32.to_le_bytes());
-    assert_eq!(parse_request(&bytes), Err(IpcError::UnsupportedBufferMode(2)));
+    assert_eq!(
+        parse_request(&bytes),
+        Err(IpcError::UnsupportedBufferMode(2))
+    );
     bytes[16..20].fill(0);
     bytes[..4].copy_from_slice(&0x0140_0004_u32.to_le_bytes());
     assert_eq!(parse_request(&bytes), Err(IpcError::BufferLimit));
@@ -254,7 +257,9 @@ fn copied_handle_limits_moves_and_control_transfers_remain_explicit_errors() {
 fn tipc(command: u16, pid: bool, data: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&u32::from(16 + command).to_le_bytes());
-    bytes.extend_from_slice(&((data.len() / 4) as u32 | if pid { 1 << 31 } else { 0 }).to_le_bytes());
+    bytes.extend_from_slice(
+        &((data.len() / 4) as u32 | if pid { 1 << 31 } else { 0 }).to_le_bytes(),
+    );
     if pid {
         bytes.extend_from_slice(&1_u32.to_le_bytes());
         bytes.extend_from_slice(&0x8877665544332211_u64.to_le_bytes());
@@ -297,19 +302,34 @@ fn tipc_replies_put_the_result_first_and_move_handles_before_it() {
     let plain = encode_tipc_reply(0xdead_0001, &7_u32.to_le_bytes(), &[]).unwrap();
     assert_eq!(&plain[..4], &[0; 4]);
     assert_eq!(u32::from_le_bytes(plain[4..8].try_into().unwrap()), 2);
-    assert_eq!(u32::from_le_bytes(plain[8..12].try_into().unwrap()), 0xdead_0001);
+    assert_eq!(
+        u32::from_le_bytes(plain[8..12].try_into().unwrap()),
+        0xdead_0001
+    );
     assert_eq!(u32::from_le_bytes(plain[12..16].try_into().unwrap()), 7);
     assert!(plain[16..].iter().all(|byte| *byte == 0));
 
     let moved = encode_tipc_reply(0, &[], &[0x1234]).unwrap();
-    assert_eq!(u32::from_le_bytes(moved[4..8].try_into().unwrap()), 1 | 1 << 31);
+    assert_eq!(
+        u32::from_le_bytes(moved[4..8].try_into().unwrap()),
+        1 | 1 << 31
+    );
     assert_eq!(u32::from_le_bytes(moved[8..12].try_into().unwrap()), 1 << 5);
-    assert_eq!(u32::from_le_bytes(moved[12..16].try_into().unwrap()), 0x1234);
+    assert_eq!(
+        u32::from_le_bytes(moved[12..16].try_into().unwrap()),
+        0x1234
+    );
     assert_eq!(u32::from_le_bytes(moved[16..20].try_into().unwrap()), 0);
     assert!(moved[20..].iter().all(|byte| *byte == 0));
 
-    assert_eq!(encode_tipc_reply(0, &[0; 3], &[]), Err(IpcError::UnalignedPayload));
-    assert_eq!(encode_tipc_reply(0, &[0; 0x100], &[]), Err(IpcError::TooLarge));
+    assert_eq!(
+        encode_tipc_reply(0, &[0; 3], &[]),
+        Err(IpcError::UnalignedPayload)
+    );
+    assert_eq!(
+        encode_tipc_reply(0, &[0; 0x100], &[]),
+        Err(IpcError::TooLarge)
+    );
     assert_eq!(encode_tipc_reply(0, &[], &[0; 16]), Err(IpcError::TooLarge));
 }
 

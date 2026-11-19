@@ -694,7 +694,11 @@ impl Cpu {
                     3 => {
                         let bits = width.bits();
                         let a = amount % bits;
-                        if a == 0 { operand } else { (operand >> a) | (operand << (bits - a)) }
+                        if a == 0 {
+                            operand
+                        } else {
+                            (operand >> a) | (operand << (bits - a))
+                        }
                     }
                     _ => unreachable!("validated shift"),
                 } & width.mask();
@@ -729,7 +733,11 @@ impl Cpu {
             } => {
                 let n = width.bits() as u32;
                 let src = self.read_zero(rn) & width.mask();
-                let dst = if opc == 1 { self.read_zero(rd) & width.mask() } else { 0 };
+                let dst = if opc == 1 {
+                    self.read_zero(rd) & width.mask()
+                } else {
+                    0
+                };
                 let (pos, len, val) = if imms >= immr {
                     let len = (imms - immr + 1) as u32;
                     (0, len, src >> immr)
@@ -750,7 +758,11 @@ impl Cpu {
                     // SBFM: sign extend from top bit of extracted field (bit len - 1 in result)
                     let sign_bit = len - 1;
                     if sign_bit < n && (result & (1u64 << sign_bit)) != 0 {
-                        let top_mask = if sign_bit >= 63 { 0 } else { (!0u64) << (sign_bit + 1) };
+                        let top_mask = if sign_bit >= 63 {
+                            0
+                        } else {
+                            (!0u64) << (sign_bit + 1)
+                        };
                         result |= top_mask & width.mask();
                     }
                 }
@@ -935,7 +947,9 @@ impl Cpu {
                     // Succeeds only with a matching reservation whose value no
                     // other thread changed since the load-exclusive.
                     let held = self.exclusive.take().is_some_and(|r| {
-                        r.address == address && r.bytes == 1 << size && r.value == u128::from(current)
+                        r.address == address
+                            && r.bytes == 1 << size
+                            && r.value == u128::from(current)
                     });
                     if held {
                         match size {
@@ -1376,7 +1390,8 @@ impl Cpu {
                 } else {
                     base.wrapping_add_signed(offset)
                 };
-                let second_address = address.wrapping_add(if sign_extend { 4 } else { width.bytes() });
+                let second_address =
+                    address.wrapping_add(if sign_extend { 4 } else { width.bytes() });
                 if load {
                     let (v1, v2) = if sign_extend {
                         (
@@ -1389,10 +1404,9 @@ impl Cpu {
                                 memory.read_u32(address)? as u64,
                                 memory.read_u32(second_address)? as u64,
                             ),
-                            Width::X64 => (
-                                memory.read_u64(address)?,
-                                memory.read_u64(second_address)?,
-                            ),
+                            Width::X64 => {
+                                (memory.read_u64(address)?, memory.read_u64(second_address)?)
+                            }
                         }
                     };
                     self.write_zero(rt1, v1);
@@ -1420,7 +1434,13 @@ impl Cpu {
             Instruction::SupervisorCall { immediate } => {
                 event = StepEvent::SupervisorCall { immediate }
             }
-            Instruction::FpData2 { double, rd, rn, rm, op } => {
+            Instruction::FpData2 {
+                double,
+                rd,
+                rn,
+                rm,
+                op,
+            } => {
                 if double {
                     let a = self.read_v_f64(rn);
                     let b = self.read_v_f64(rm);
@@ -1478,34 +1498,95 @@ impl Cpu {
                     }
                 }
             }
-            Instruction::FpCompare { double, rn, rm, compare_zero } => {
+            Instruction::FpCompare {
+                double,
+                rn,
+                rm,
+                compare_zero,
+            } => {
                 if double {
                     let a = self.read_v_f64(rn);
-                    let b = if compare_zero { 0.0 } else { self.read_v_f64(rm) };
-                    if a.is_nan() || b.is_nan() {
-                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: true };
-                    } else if a == b {
-                        self.nzcv = Nzcv { negative: false, zero: true, carry: true, overflow: false };
-                    } else if a < b {
-                        self.nzcv = Nzcv { negative: true, zero: false, carry: false, overflow: false };
+                    let b = if compare_zero {
+                        0.0
                     } else {
-                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: false };
+                        self.read_v_f64(rm)
+                    };
+                    if a.is_nan() || b.is_nan() {
+                        self.nzcv = Nzcv {
+                            negative: false,
+                            zero: false,
+                            carry: true,
+                            overflow: true,
+                        };
+                    } else if a == b {
+                        self.nzcv = Nzcv {
+                            negative: false,
+                            zero: true,
+                            carry: true,
+                            overflow: false,
+                        };
+                    } else if a < b {
+                        self.nzcv = Nzcv {
+                            negative: true,
+                            zero: false,
+                            carry: false,
+                            overflow: false,
+                        };
+                    } else {
+                        self.nzcv = Nzcv {
+                            negative: false,
+                            zero: false,
+                            carry: true,
+                            overflow: false,
+                        };
                     }
                 } else {
                     let a = self.read_v_f32(rn);
-                    let b = if compare_zero { 0.0 } else { self.read_v_f32(rm) };
-                    if a.is_nan() || b.is_nan() {
-                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: true };
-                    } else if a == b {
-                        self.nzcv = Nzcv { negative: false, zero: true, carry: true, overflow: false };
-                    } else if a < b {
-                        self.nzcv = Nzcv { negative: true, zero: false, carry: false, overflow: false };
+                    let b = if compare_zero {
+                        0.0
                     } else {
-                        self.nzcv = Nzcv { negative: false, zero: false, carry: true, overflow: false };
+                        self.read_v_f32(rm)
+                    };
+                    if a.is_nan() || b.is_nan() {
+                        self.nzcv = Nzcv {
+                            negative: false,
+                            zero: false,
+                            carry: true,
+                            overflow: true,
+                        };
+                    } else if a == b {
+                        self.nzcv = Nzcv {
+                            negative: false,
+                            zero: true,
+                            carry: true,
+                            overflow: false,
+                        };
+                    } else if a < b {
+                        self.nzcv = Nzcv {
+                            negative: true,
+                            zero: false,
+                            carry: false,
+                            overflow: false,
+                        };
+                    } else {
+                        self.nzcv = Nzcv {
+                            negative: false,
+                            zero: false,
+                            carry: true,
+                            overflow: false,
+                        };
                     }
                 }
             }
-            Instruction::FpMultiplyAdd { double, rd, rn, rm, ra, sub, neg } => {
+            Instruction::FpMultiplyAdd {
+                double,
+                rd,
+                rn,
+                rm,
+                ra,
+                sub,
+                neg,
+            } => {
                 if double {
                     let a = self.read_v_f64(ra);
                     let n = self.read_v_f64(rn);
@@ -1660,9 +1741,22 @@ impl Cpu {
                     }
                 }
             }
-            Instruction::FpLoadStorePair { size, rt1, rt2, rn, offset, load, pre_index, post_index } => {
+            Instruction::FpLoadStorePair {
+                size,
+                rt1,
+                rt2,
+                rn,
+                offset,
+                load,
+                pre_index,
+                post_index,
+            } => {
                 let base = self.read_sp(rn);
-                let address = if post_index { base } else { base.wrapping_add_signed(offset) };
+                let address = if post_index {
+                    base
+                } else {
+                    base.wrapping_add_signed(offset)
+                };
                 let elem_bytes: u64 = match size {
                     2 => 4,
                     3 => 8,
@@ -1873,8 +1967,7 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
     if word & 0x7fa0_0000 == 0x1380_0000 {
         let n_bit = (word >> 22) & 1;
         let lsb = ((word >> 10) & 63) as u8;
-        if (width == Width::W32 && (n_bit != 0 || lsb >= 32))
-            || (width == Width::X64 && n_bit == 0)
+        if (width == Width::W32 && (n_bit != 0 || lsb >= 32)) || (width == Width::X64 && n_bit == 0)
         {
             return Err(ExecutionError::ReservedEncoding { pc, word });
         }
@@ -2043,12 +2136,7 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
     if word & 0x7fff_0000 == 0x5ac0_0000 {
         let op = ((word >> 10) & 0x3f) as u8;
         if op <= 5 && !(width == Width::W32 && op == 3) {
-            return Ok(Instruction::DataProcessing1 {
-                width,
-                rd,
-                rn,
-                op,
-            });
+            return Ok(Instruction::DataProcessing1 { width, rd, rn, op });
         }
     }
     // Multiply: MADD, MSUB, MUL, MNEG, SMADDL, SMSUBL, UMADDL, UMSUBL, SMULH, UMULH
@@ -2068,10 +2156,50 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             });
         } else if width == Width::X64 {
             match op31 {
-                1 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub, signed: true, high: false }),
-                2 if !sub && ra == 31 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub: false, signed: true, high: true }),
-                5 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub, signed: false, high: false }),
-                6 if !sub && ra == 31 => return Ok(Instruction::MultiplyWide { rd, rn, rm, ra, sub: false, signed: false, high: true }),
+                1 => {
+                    return Ok(Instruction::MultiplyWide {
+                        rd,
+                        rn,
+                        rm,
+                        ra,
+                        sub,
+                        signed: true,
+                        high: false,
+                    })
+                }
+                2 if !sub && ra == 31 => {
+                    return Ok(Instruction::MultiplyWide {
+                        rd,
+                        rn,
+                        rm,
+                        ra,
+                        sub: false,
+                        signed: true,
+                        high: true,
+                    })
+                }
+                5 => {
+                    return Ok(Instruction::MultiplyWide {
+                        rd,
+                        rn,
+                        rm,
+                        ra,
+                        sub,
+                        signed: false,
+                        high: false,
+                    })
+                }
+                6 if !sub && ra == 31 => {
+                    return Ok(Instruction::MultiplyWide {
+                        rd,
+                        rn,
+                        rm,
+                        ra,
+                        sub: false,
+                        signed: false,
+                        high: true,
+                    })
+                }
                 _ => {}
             }
         }
@@ -2327,12 +2455,7 @@ fn decode(pc: u64, word: u32) -> Result<Instruction, ExecutionError> {
             let rn = ((word >> 5) & 31) as u8;
             let rd = (word & 31) as u8;
             if op <= 5 {
-                return Ok(Instruction::FpData1 {
-                    double,
-                    rd,
-                    rn,
-                    op,
-                });
+                return Ok(Instruction::FpData1 { double, rd, rn, op });
             }
         }
     }
@@ -2523,7 +2646,11 @@ fn decode_bit_masks(n: bool, imms: u8, immr: u8, is_64: bool) -> Option<u64> {
     } else {
         let es = esize as u32;
         let r32 = r as u32;
-        let mask = if esize == 64 { u64::MAX } else { (1u64 << es) - 1 };
+        let mask = if esize == 64 {
+            u64::MAX
+        } else {
+            (1u64 << es) - 1
+        };
         ((welem >> r32) | (welem << (es - r32))) & mask
     };
     let mut mask = 0u64;
@@ -2588,8 +2715,16 @@ pub fn disassemble(pc: u64, word: u32) -> String {
         Instruction::Nop => "nop".to_string(),
         Instruction::ClearExclusive => "clrex".to_string(),
         Instruction::ReadThreadLocal { rd } => format!("mrs x{rd}, tpidrro_el0"),
-        Instruction::Movz { width, rd, value } => format!("movz {}{rd}, {value:#x}", reg_prefix(width)),
-        Instruction::MoveWide { width, rd, value, operation, .. } => {
+        Instruction::Movz { width, rd, value } => {
+            format!("movz {}{rd}, {value:#x}", reg_prefix(width))
+        }
+        Instruction::MoveWide {
+            width,
+            rd,
+            value,
+            operation,
+            ..
+        } => {
             let name = match operation {
                 0 => "movn",
                 2 => "movz",
@@ -2598,7 +2733,11 @@ pub fn disassemble(pc: u64, word: u32) -> String {
             };
             format!("{name} {}{rd}, {value:#x}", reg_prefix(width))
         }
-        Instruction::PcRelative { rd, displacement, page } => {
+        Instruction::PcRelative {
+            rd,
+            displacement,
+            page,
+        } => {
             if page {
                 let target = (pc & !0xfff).wrapping_add_signed(displacement);
                 format!("adrp x{rd}, {target:#x}")
@@ -2607,34 +2746,100 @@ pub fn disassemble(pc: u64, word: u32) -> String {
                 format!("adr x{rd}, {target:#x}")
             }
         }
-        Instruction::AddSub { width, rd, rn, immediate, subtract, flags } => {
+        Instruction::AddSub {
+            width,
+            rd,
+            rn,
+            immediate,
+            subtract,
+            flags,
+        } => {
             let p = reg_prefix(width);
             if flags && rd == 31 {
                 format!("cmp {p}{rn}, #{immediate}")
             } else {
-                let op = if subtract { if flags { "subs" } else { "sub" } } else { if flags { "adds" } else { "add" } };
+                let op = if subtract {
+                    if flags {
+                        "subs"
+                    } else {
+                        "sub"
+                    }
+                } else {
+                    if flags {
+                        "adds"
+                    } else {
+                        "add"
+                    }
+                };
                 format!("{op} {p}{rd}, {p}{rn}, #{immediate}")
             }
         }
-        Instruction::AddSubRegister { width, rd, rn, rm, subtract, flags, .. } => {
+        Instruction::AddSubRegister {
+            width,
+            rd,
+            rn,
+            rm,
+            subtract,
+            flags,
+            ..
+        } => {
             let p = reg_prefix(width);
             if flags && rd == 31 {
                 format!("cmp {p}{rn}, {p}{rm}")
             } else {
-                let op = if subtract { if flags { "subs" } else { "sub" } } else { if flags { "adds" } else { "add" } };
+                let op = if subtract {
+                    if flags {
+                        "subs"
+                    } else {
+                        "sub"
+                    }
+                } else {
+                    if flags {
+                        "adds"
+                    } else {
+                        "add"
+                    }
+                };
                 format!("{op} {p}{rd}, {p}{rn}, {p}{rm}")
             }
         }
-        Instruction::AddSubExtended { width, rd, rn, rm, subtract, flags, .. } => {
+        Instruction::AddSubExtended {
+            width,
+            rd,
+            rn,
+            rm,
+            subtract,
+            flags,
+            ..
+        } => {
             let p = reg_prefix(width);
             if flags && rd == 31 {
                 format!("cmp {p}{rn}, {p}{rm}")
             } else {
-                let op = if subtract { if flags { "subs" } else { "sub" } } else { if flags { "adds" } else { "add" } };
+                let op = if subtract {
+                    if flags {
+                        "subs"
+                    } else {
+                        "sub"
+                    }
+                } else {
+                    if flags {
+                        "adds"
+                    } else {
+                        "add"
+                    }
+                };
                 format!("{op} {p}{rd}, {p}{rn}, {p}{rm}")
             }
         }
-        Instruction::LogicalRegister { width, rd, rn, rm, op, .. } => {
+        Instruction::LogicalRegister {
+            width,
+            rd,
+            rn,
+            rm,
+            op,
+            ..
+        } => {
             let p = reg_prefix(width);
             let name = match op {
                 0 => "and",
@@ -2653,7 +2858,14 @@ pub fn disassemble(pc: u64, word: u32) -> String {
                 format!("{name} {p}{rd}, {p}{rn}, {p}{rm}")
             }
         }
-        Instruction::Bitfield { width, rd, rn, immr, imms, opc } => {
+        Instruction::Bitfield {
+            width,
+            rd,
+            rn,
+            immr,
+            imms,
+            opc,
+        } => {
             let p = reg_prefix(width);
             let name = match opc {
                 0 => "sbfm",
@@ -2663,22 +2875,61 @@ pub fn disassemble(pc: u64, word: u32) -> String {
             };
             format!("{name} {p}{rd}, {p}{rn}, #{immr}, #{imms}")
         }
-        Instruction::Extract { width, rd, rn, rm, lsb } => {
+        Instruction::Extract {
+            width,
+            rd,
+            rn,
+            rm,
+            lsb,
+        } => {
             let p = reg_prefix(width);
             format!("extr {p}{rd}, {p}{rn}, {p}{rm}, #{lsb}")
         }
-        Instruction::AddSubCarry { width, rd, rn, rm, subtract, flags } => {
+        Instruction::AddSubCarry {
+            width,
+            rd,
+            rn,
+            rm,
+            subtract,
+            flags,
+        } => {
             let p = reg_prefix(width);
-            let name = if subtract { if flags { "sbcs" } else { "sbc" } } else { if flags { "adcs" } else { "adc" } };
+            let name = if subtract {
+                if flags {
+                    "sbcs"
+                } else {
+                    "sbc"
+                }
+            } else {
+                if flags {
+                    "adcs"
+                } else {
+                    "adc"
+                }
+            };
             format!("{name} {p}{rd}, {p}{rn}, {p}{rm}")
         }
-        Instruction::ConditionalCompare { width, rn, rm_or_imm, is_imm, cond, def_nzcv, subtract } => {
+        Instruction::ConditionalCompare {
+            width,
+            rn,
+            rm_or_imm,
+            is_imm,
+            cond,
+            def_nzcv,
+            subtract,
+        } => {
             let p = reg_prefix(width);
             let name = if subtract { "ccmp" } else { "ccmn" };
             if is_imm {
-                format!("{name} {p}{rn}, #{rm_or_imm}, #{def_nzcv}, {}", cond_name(cond))
+                format!(
+                    "{name} {p}{rn}, #{rm_or_imm}, #{def_nzcv}, {}",
+                    cond_name(cond)
+                )
             } else {
-                format!("{name} {p}{rn}, {p}{rm_or_imm}, #{def_nzcv}, {}", cond_name(cond))
+                format!(
+                    "{name} {p}{rn}, {p}{rm_or_imm}, #{def_nzcv}, {}",
+                    cond_name(cond)
+                )
             }
         }
         Instruction::DataProcessing1 { width, rd, rn, op } => {
@@ -2694,7 +2945,14 @@ pub fn disassemble(pc: u64, word: u32) -> String {
             };
             format!("{name} {p}{rd}, {p}{rn}")
         }
-        Instruction::ExclusivePair { wide, rt, rt2, rn, rs, load } => {
+        Instruction::ExclusivePair {
+            wide,
+            rt,
+            rt2,
+            rn,
+            rs,
+            load,
+        } => {
             let p = if wide { "x" } else { "w" };
             if load {
                 format!("ldaxp {p}{rt}, {p}{rt2}, [x{rn}]")
@@ -2712,19 +2970,46 @@ pub fn disassemble(pc: u64, word: u32) -> String {
         Instruction::BranchRegister { rn, link } => {
             format!("{} x{rn}", if link { "blr" } else { "br" })
         }
-        Instruction::ConditionalBranch { displacement, condition } => {
+        Instruction::ConditionalBranch {
+            displacement,
+            condition,
+        } => {
             let target = pc.wrapping_add_signed(displacement);
             format!("b.{} {target:#x}", cond_name(condition))
         }
-        Instruction::CompareBranch { width, rt, displacement, nonzero } => {
+        Instruction::CompareBranch {
+            width,
+            rt,
+            displacement,
+            nonzero,
+        } => {
             let target = pc.wrapping_add_signed(displacement);
-            format!("{} {}{rt}, {target:#x}", if nonzero { "cbnz" } else { "cbz" }, reg_prefix(width))
+            format!(
+                "{} {}{rt}, {target:#x}",
+                if nonzero { "cbnz" } else { "cbz" },
+                reg_prefix(width)
+            )
         }
-        Instruction::TestBitBranch { rt, bit_pos, displacement, nonzero } => {
+        Instruction::TestBitBranch {
+            rt,
+            bit_pos,
+            displacement,
+            nonzero,
+        } => {
             let target = pc.wrapping_add_signed(displacement);
-            format!("{} x{rt}, #{bit_pos}, {target:#x}", if nonzero { "tbnz" } else { "tbz" })
+            format!(
+                "{} x{rt}, #{bit_pos}, {target:#x}",
+                if nonzero { "tbnz" } else { "tbz" }
+            )
         }
-        Instruction::ConditionalSelect { width, rd, rn, rm, cond, op } => {
+        Instruction::ConditionalSelect {
+            width,
+            rd,
+            rn,
+            rm,
+            cond,
+            op,
+        } => {
             let p = reg_prefix(width);
             let name = match op {
                 0 => "csel",
@@ -2735,18 +3020,37 @@ pub fn disassemble(pc: u64, word: u32) -> String {
             };
             format!("{name} {p}{rd}, {p}{rn}, {p}{rm}, {}", cond_name(cond))
         }
-        Instruction::Multiply { width, rd, rn, rm, ra, sub } => {
+        Instruction::Multiply {
+            width,
+            rd,
+            rn,
+            rm,
+            ra,
+            sub,
+        } => {
             let p = reg_prefix(width);
             if ra == 31 {
-                format!("{} {p}{rd}, {p}{rn}, {p}{rm}", if sub { "mneg" } else { "mul" })
+                format!(
+                    "{} {p}{rd}, {p}{rn}, {p}{rm}",
+                    if sub { "mneg" } else { "mul" }
+                )
             } else {
-                format!("{} {p}{rd}, {p}{rn}, {p}{rm}, {p}{ra}", if sub { "msub" } else { "madd" })
+                format!(
+                    "{} {p}{rd}, {p}{rn}, {p}{rm}, {p}{ra}",
+                    if sub { "msub" } else { "madd" }
+                )
             }
         }
         Instruction::MultiplyWide { rd, rn, rm, .. } => {
             format!("smull x{rd}, w{rn}, w{rm}")
         }
-        Instruction::DataProcessing2 { width, rd, rn, rm, op } => {
+        Instruction::DataProcessing2 {
+            width,
+            rd,
+            rn,
+            rm,
+            op,
+        } => {
             let p = reg_prefix(width);
             let name = match op {
                 2 => "udiv",
@@ -2759,7 +3063,13 @@ pub fn disassemble(pc: u64, word: u32) -> String {
             };
             format!("{name} {p}{rd}, {p}{rn}, {p}{rm}")
         }
-        Instruction::LogicalImmediate { width, rd, rn, imm, op } => {
+        Instruction::LogicalImmediate {
+            width,
+            rd,
+            rn,
+            imm,
+            op,
+        } => {
             let p = reg_prefix(width);
             let name = match op {
                 0 => "and",
@@ -2777,7 +3087,16 @@ pub fn disassemble(pc: u64, word: u32) -> String {
                 format!("ret x{rn}")
             }
         }
-        Instruction::LoadStore { size, rt, rn, offset, load, pre_index, post_index, .. } => {
+        Instruction::LoadStore {
+            size,
+            rt,
+            rn,
+            offset,
+            load,
+            pre_index,
+            post_index,
+            ..
+        } => {
             let p = if size == 3 { 'x' } else { 'w' };
             let op = if load { "ldr" } else { "str" };
             if pre_index {
@@ -2790,12 +3109,29 @@ pub fn disassemble(pc: u64, word: u32) -> String {
                 format!("{op} {p}{rt}, [x{rn}, #{offset}]")
             }
         }
-        Instruction::LoadStoreRegister { size, rt, rn, rm, load, .. } => {
+        Instruction::LoadStoreRegister {
+            size,
+            rt,
+            rn,
+            rm,
+            load,
+            ..
+        } => {
             let p = if size == 3 { 'x' } else { 'w' };
             let op = if load { "ldr" } else { "str" };
             format!("{op} {p}{rt}, [x{rn}, x{rm}]")
         }
-        Instruction::LoadStorePair { width, rt1, rt2, rn, offset, load, pre_index, post_index, .. } => {
+        Instruction::LoadStorePair {
+            width,
+            rt1,
+            rt2,
+            rn,
+            offset,
+            load,
+            pre_index,
+            post_index,
+            ..
+        } => {
             let p = reg_prefix(width);
             let op = if load { "ldp" } else { "stp" };
             if pre_index {
@@ -2812,15 +3148,38 @@ pub fn disassemble(pc: u64, word: u32) -> String {
         Instruction::FpData1 { rd, rn, .. } => format!("fmov d{rd}, d{rn}"),
         Instruction::FpData2 { rd, rn, rm, .. } => format!("fadd d{rd}, d{rn}, d{rm}"),
         Instruction::FpCompare { rn, rm, .. } => format!("fcmp d{rn}, d{rm}"),
-        Instruction::FpMultiplyAdd { rd, rn, rm, ra, .. } => format!("fmadd d{rd}, d{rn}, d{rm}, d{ra}"),
-        Instruction::FpLoadStore { rt, rn, offset, load, .. } => {
-            format!("{} q{rt}, [x{rn}, #{offset}]", if load { "ldr" } else { "str" })
+        Instruction::FpMultiplyAdd { rd, rn, rm, ra, .. } => {
+            format!("fmadd d{rd}, d{rn}, d{rm}, d{ra}")
         }
-        Instruction::FpLoadStoreRegister { rt, rn, rm, load, .. } => {
+        Instruction::FpLoadStore {
+            rt,
+            rn,
+            offset,
+            load,
+            ..
+        } => {
+            format!(
+                "{} q{rt}, [x{rn}, #{offset}]",
+                if load { "ldr" } else { "str" }
+            )
+        }
+        Instruction::FpLoadStoreRegister {
+            rt, rn, rm, load, ..
+        } => {
             format!("{} q{rt}, [x{rn}, x{rm}]", if load { "ldr" } else { "str" })
         }
-        Instruction::FpLoadStorePair { rt1, rt2, rn, offset, load, .. } => {
-            format!("{} d{rt1}, d{rt2}, [x{rn}, #{offset}]", if load { "ldp" } else { "stp" })
+        Instruction::FpLoadStorePair {
+            rt1,
+            rt2,
+            rn,
+            offset,
+            load,
+            ..
+        } => {
+            format!(
+                "{} d{rt1}, d{rt2}, [x{rn}, #{offset}]",
+                if load { "ldp" } else { "stp" }
+            )
         }
     }
 }

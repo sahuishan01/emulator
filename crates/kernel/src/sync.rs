@@ -139,9 +139,7 @@ impl FutexArbitrator {
 
     pub fn condvar_waiter_count(&mut self, key_addr: u64) -> usize {
         prune(&mut self.condvar_queues, key_addr);
-        self.condvar_queues
-            .get(&key_addr)
-            .map_or(0, |q| q.len())
+        self.condvar_queues.get(&key_addr).map_or(0, |q| q.len())
     }
 
     /// Queues the current thread on an address arbiter (svcWaitForAddress).
@@ -149,13 +147,16 @@ impl FutexArbitrator {
         let ticket = self.next_ticket;
         self.next_ticket = self.next_ticket.wrapping_add(1);
         let signal = Rc::new(Cell::new(false));
-        self.address_queues.entry(addr).or_default().push_back(Waiter {
-            thread_index,
-            tag: 0,
-            ticket,
-            signal: Rc::clone(&signal),
-            mutex_addr: addr,
-        });
+        self.address_queues
+            .entry(addr)
+            .or_default()
+            .push_back(Waiter {
+                thread_index,
+                tag: 0,
+                ticket,
+                signal: Rc::clone(&signal),
+                mutex_addr: addr,
+            });
         signal
     }
 

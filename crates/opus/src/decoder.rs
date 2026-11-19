@@ -93,7 +93,12 @@ impl Decoder {
     /// Decode a packet (or conceal a lost one with `None`) into interleaved
     /// 16-bit PCM. `frame_size` is the capacity of `pcm` per channel. Returns
     /// the number of samples per channel.
-    pub fn decode(&mut self, packet: Option<&[u8]>, pcm: &mut [i16], frame_size: usize) -> Result<usize, Error> {
+    pub fn decode(
+        &mut self,
+        packet: Option<&[u8]>,
+        pcm: &mut [i16],
+        frame_size: usize,
+    ) -> Result<usize, Error> {
         let n = frame_size.min(pcm.len() / self.channels);
         let mut buf = std::mem::take(&mut self.pcm);
         buf.resize(n * self.channels, 0.0);
@@ -110,7 +115,12 @@ impl Decoder {
     /// Recover the previous (lost) frame from in-band FEC data in `packet`,
     /// concealing whatever FEC cannot cover. `frame_size` must be a multiple
     /// of 2.5 ms.
-    pub fn decode_fec(&mut self, packet: &[u8], pcm: &mut [i16], frame_size: usize) -> Result<usize, Error> {
+    pub fn decode_fec(
+        &mut self,
+        packet: &[u8],
+        pcm: &mut [i16],
+        frame_size: usize,
+    ) -> Result<usize, Error> {
         let n = frame_size.min(pcm.len() / self.channels);
         if n % (self.rate as usize / 400) != 0 {
             return Err(Error::BadArgument);
@@ -128,7 +138,12 @@ impl Decoder {
     }
 
     /// Float output variant (full scale 1.0, no soft clipping).
-    pub fn decode_float(&mut self, packet: Option<&[u8]>, pcm: &mut [f32], frame_size: usize) -> Result<usize, Error> {
+    pub fn decode_float(
+        &mut self,
+        packet: Option<&[u8]>,
+        pcm: &mut [f32],
+        frame_size: usize,
+    ) -> Result<usize, Error> {
         let n = frame_size.min(pcm.len() / self.channels);
         self.decode_native(packet, &mut pcm[..n * self.channels], n, false, false)
     }
@@ -148,7 +163,12 @@ impl Decoder {
         }
         let packet = Packet::parse(data, self_delimited)?;
         let samples = self.decode_parsed(data, &packet, pcm, frame_size, false)?;
-        soft_clip_pcm(&mut pcm[..samples * self.channels], samples, self.channels, &mut self.softclip_mem);
+        soft_clip_pcm(
+            &mut pcm[..samples * self.channels],
+            samples,
+            self.channels,
+            &mut self.softclip_mem,
+        );
         Ok((samples, packet.consumed))
     }
 
@@ -167,7 +187,12 @@ impl Decoder {
             }
             let mut count = 0;
             while count < frame_size {
-                let ret = self.decode_frame(None, &mut pcm[count * self.channels..], frame_size - count, false)?;
+                let ret = self.decode_frame(
+                    None,
+                    &mut pcm[count * self.channels..],
+                    frame_size - count,
+                    false,
+                )?;
                 count += ret;
             }
             self.last_packet_duration = count;
@@ -180,7 +205,12 @@ impl Decoder {
             return Ok(samples);
         }
         if soft_clip {
-            soft_clip_pcm(&mut pcm[..samples * self.channels], samples, self.channels, &mut self.softclip_mem);
+            soft_clip_pcm(
+                &mut pcm[..samples * self.channels],
+                samples,
+                self.channels,
+                &mut self.softclip_mem,
+            );
         } else {
             self.softclip_mem = [0.0; 2];
         }
@@ -198,12 +228,17 @@ impl Decoder {
         let toc: Toc = packet.toc;
         let packet_frame_size = toc.frame_size(self.rate);
         if fec {
-            if frame_size < packet_frame_size || toc.mode == Mode::CeltOnly || self.mode == Some(Mode::CeltOnly) {
+            if frame_size < packet_frame_size
+                || toc.mode == Mode::CeltOnly
+                || self.mode == Some(Mode::CeltOnly)
+            {
                 return self.decode_native(None, pcm, frame_size, false, false);
             }
             let duration_copy = self.last_packet_duration;
             if frame_size > packet_frame_size {
-                if let Err(e) = self.decode_native(None, pcm, frame_size - packet_frame_size, false, false) {
+                if let Err(e) =
+                    self.decode_native(None, pcm, frame_size - packet_frame_size, false, false)
+                {
                     self.last_packet_duration = duration_copy;
                     return Err(e);
                 }
@@ -228,7 +263,12 @@ impl Decoder {
         let mut nb = 0;
         for range in packet.frames.iter() {
             let frame = &data[range];
-            let ret = self.decode_frame(Some(frame), &mut pcm[nb * self.channels..], frame_size - nb, false)?;
+            let ret = self.decode_frame(
+                Some(frame),
+                &mut pcm[nb * self.channels..],
+                frame_size - nb,
+                false,
+            )?;
             nb += ret;
         }
         self.last_packet_duration = nb;
@@ -237,7 +277,13 @@ impl Decoder {
 
     /// One Opus frame (`opus_decode_frame`). `data` of length <= 1 means a
     /// lost frame.
-    fn decode_frame(&mut self, data: Option<&[u8]>, pcm: &mut [f32], frame_size: usize, decode_fec: bool) -> Result<usize, Error> {
+    fn decode_frame(
+        &mut self,
+        data: Option<&[u8]>,
+        pcm: &mut [f32],
+        frame_size: usize,
+        decode_fec: bool,
+    ) -> Result<usize, Error> {
         let fs = self.rate as usize;
         let ch = self.channels;
         let f20 = fs / 50;
@@ -266,7 +312,11 @@ impl Decoder {
             bandwidth = self.bandwidth;
         } else {
             audiosize = frame_size;
-            let plc_mode = if self.prev_redundancy { Some(Mode::CeltOnly) } else { self.prev_mode };
+            let plc_mode = if self.prev_redundancy {
+                Some(Mode::CeltOnly)
+            } else {
+                self.prev_mode
+            };
             bandwidth = None;
             let Some(m) = plc_mode else {
                 pcm[..audiosize * ch].fill(0.0);
@@ -276,7 +326,8 @@ impl Decoder {
             if audiosize > f20 {
                 let mut done = 0;
                 while audiosize > 0 {
-                    let ret = self.decode_frame(None, &mut pcm[done * ch..], audiosize.min(f20), false)?;
+                    let ret =
+                        self.decode_frame(None, &mut pcm[done * ch..], audiosize.min(f20), false)?;
                     done += ret;
                     audiosize -= ret;
                 }
@@ -295,12 +346,19 @@ impl Decoder {
         let mut pcm_transition = [0f32; 480];
         if data.is_some()
             && self.prev_mode.is_some()
-            && ((mode == Mode::CeltOnly && self.prev_mode != Some(Mode::CeltOnly) && !self.prev_redundancy)
+            && ((mode == Mode::CeltOnly
+                && self.prev_mode != Some(Mode::CeltOnly)
+                && !self.prev_redundancy)
                 || (mode != Mode::CeltOnly && self.prev_mode == Some(Mode::CeltOnly)))
         {
             transition = true;
             if mode == Mode::CeltOnly {
-                self.decode_frame(None, &mut pcm_transition[..f5 * ch], f5.min(audiosize), false)?;
+                self.decode_frame(
+                    None,
+                    &mut pcm_transition[..f5 * ch],
+                    f5.min(audiosize),
+                    false,
+                )?;
             }
         }
         if audiosize > frame_size {
@@ -332,12 +390,19 @@ impl Decoder {
                 internal_rate,
                 payload_ms,
             };
-            let lost_flag = if data.is_none() { 1 } else { 2 * u8::from(decode_fec) };
+            let lost_flag = if data.is_none() {
+                1
+            } else {
+                2 * u8::from(decode_fec)
+            };
             let mut decoded = 0;
             loop {
                 let first = decoded == 0;
                 let out = &mut pcm_silk[decoded * ch..];
-                let n = match self.silk.decode(&ctl, lost_flag, first, range_dec.as_mut(), out) {
+                let n = match self
+                    .silk
+                    .decode(&ctl, lost_flag, first, range_dec.as_mut(), out)
+                {
                     Ok(n) => n,
                     Err(e) => {
                         if lost_flag != 0 {
@@ -364,7 +429,11 @@ impl Decoder {
         if !decode_fec && mode != Mode::CeltOnly {
             if let Some(dec) = range_dec.as_mut() {
                 if dec.tell() + 17 + 20 * i32::from(mode == Mode::Hybrid) <= 8 * len as i32 {
-                    redundancy = if mode == Mode::Hybrid { dec.bit_logp(12) } else { true };
+                    redundancy = if mode == Mode::Hybrid {
+                        dec.bit_logp(12)
+                    } else {
+                        true
+                    };
                     if redundancy {
                         celt_to_silk = dec.bit_logp(1);
                         redundancy_bytes = if mode == Mode::Hybrid {
@@ -392,7 +461,12 @@ impl Decoder {
             transition = false;
         }
         if transition && mode != Mode::CeltOnly {
-            if let Err(e) = self.decode_frame(None, &mut pcm_transition[..f5 * ch], f5.min(audiosize), false) {
+            if let Err(e) = self.decode_frame(
+                None,
+                &mut pcm_transition[..f5 * ch],
+                f5.min(audiosize),
+                false,
+            ) {
                 self.silk_pcm = pcm_silk;
                 return Err(e);
             }
@@ -408,7 +482,8 @@ impl Decoder {
         if redundancy && celt_to_silk {
             self.celt.set_start_band(0);
             let red = &data_bytes[len..len + redundancy_bytes];
-            self.celt.decode(Some(red), None, &mut redundant_audio[..f5 * ch], f5)?;
+            self.celt
+                .decode(Some(red), None, &mut redundant_audio[..f5 * ch], f5)?;
             redundant_rng = self.celt.final_range();
         }
         self.celt.set_start_band(start_band);
@@ -418,14 +493,22 @@ impl Decoder {
             if Some(mode) != self.prev_mode && self.prev_mode.is_some() && !self.prev_redundancy {
                 self.celt.reset();
             }
-            let celt_data = if decode_fec { None } else { data.map(|d| &d[..len]) };
-            self.celt.decode(celt_data, range_dec.as_mut(), pcm, celt_frame_size)?;
+            let celt_data = if decode_fec {
+                None
+            } else {
+                data.map(|d| &d[..len])
+            };
+            self.celt
+                .decode(celt_data, range_dec.as_mut(), pcm, celt_frame_size)?;
         } else {
             pcm[..frame_size * ch].fill(0.0);
-            if self.prev_mode == Some(Mode::Hybrid) && !(redundancy && celt_to_silk && self.prev_redundancy) {
+            if self.prev_mode == Some(Mode::Hybrid)
+                && !(redundancy && celt_to_silk && self.prev_redundancy)
+            {
                 self.celt.set_start_band(0);
                 let silence = [0xffu8, 0xff];
-                self.celt.decode(Some(&silence), None, &mut pcm[..f2_5 * ch], f2_5)?;
+                self.celt
+                    .decode(Some(&silence), None, &mut pcm[..f2_5 * ch], f2_5)?;
             }
         }
         if mode != Mode::CeltOnly {
@@ -439,25 +522,53 @@ impl Decoder {
             self.celt.reset();
             self.celt.set_start_band(0);
             let red = &data_bytes[len..len + redundancy_bytes];
-            self.celt.decode(Some(red), None, &mut redundant_audio[..f5 * ch], f5)?;
+            self.celt
+                .decode(Some(red), None, &mut redundant_audio[..f5 * ch], f5)?;
             redundant_rng = self.celt.final_range();
             let at = ch * (frame_size - f2_5);
             let mut tail = [0f32; 240];
             tail[..f2_5 * ch].copy_from_slice(&pcm[at..at + f2_5 * ch]);
-            smooth_fade(&tail, &redundant_audio[ch * f2_5..], &mut pcm[at..], f2_5, ch, window, self.rate);
+            smooth_fade(
+                &tail,
+                &redundant_audio[ch * f2_5..],
+                &mut pcm[at..],
+                f2_5,
+                ch,
+                window,
+                self.rate,
+            );
         }
-        if redundancy && celt_to_silk && (self.prev_mode != Some(Mode::SilkOnly) || self.prev_redundancy) {
+        if redundancy
+            && celt_to_silk
+            && (self.prev_mode != Some(Mode::SilkOnly) || self.prev_redundancy)
+        {
             pcm[..f2_5 * ch].copy_from_slice(&redundant_audio[..f2_5 * ch]);
             let mut cur = [0f32; 240];
             cur[..f2_5 * ch].copy_from_slice(&pcm[ch * f2_5..ch * 2 * f2_5]);
-            smooth_fade(&redundant_audio[ch * f2_5..], &cur, &mut pcm[ch * f2_5..], f2_5, ch, window, self.rate);
+            smooth_fade(
+                &redundant_audio[ch * f2_5..],
+                &cur,
+                &mut pcm[ch * f2_5..],
+                f2_5,
+                ch,
+                window,
+                self.rate,
+            );
         }
         if transition {
             if audiosize >= f5 {
                 pcm[..ch * f2_5].copy_from_slice(&pcm_transition[..ch * f2_5]);
                 let mut cur = [0f32; 240];
                 cur[..f2_5 * ch].copy_from_slice(&pcm[ch * f2_5..ch * 2 * f2_5]);
-                smooth_fade(&pcm_transition[ch * f2_5..], &cur, &mut pcm[ch * f2_5..], f2_5, ch, window, self.rate);
+                smooth_fade(
+                    &pcm_transition[ch * f2_5..],
+                    &cur,
+                    &mut pcm[ch * f2_5..],
+                    f2_5,
+                    ch,
+                    window,
+                    self.rate,
+                );
             } else {
                 let mut cur = [0f32; 240];
                 cur[..f2_5 * ch].copy_from_slice(&pcm[..ch * f2_5]);
@@ -475,7 +586,15 @@ impl Decoder {
     }
 }
 
-fn smooth_fade(in1: &[f32], in2: &[f32], out: &mut [f32], overlap: usize, channels: usize, window: &[f32], rate: u32) {
+fn smooth_fade(
+    in1: &[f32],
+    in2: &[f32],
+    out: &mut [f32],
+    overlap: usize,
+    channels: usize,
+    window: &[f32],
+    rate: u32,
+) {
     let inc = (48_000 / rate) as usize;
     for c in 0..channels {
         for i in 0..overlap {

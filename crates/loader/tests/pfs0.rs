@@ -53,9 +53,18 @@ fn test_pfs0_parse_and_extract() {
     assert_eq!(archive.files()[1].name, "main.npdm");
     assert_eq!(archive.files()[2].name, "subsdk0.nso");
 
-    assert_eq!(archive.get_file("main.nso"), Some(b"dummy nso payload 1".as_slice()));
-    assert_eq!(archive.get_file("main.npdm"), Some(b"dummy npdm payload".as_slice()));
-    assert_eq!(archive.get_file("subsdk0.nso"), Some(b"dummy subsdk0 payload 2".as_slice()));
+    assert_eq!(
+        archive.get_file("main.nso"),
+        Some(b"dummy nso payload 1".as_slice())
+    );
+    assert_eq!(
+        archive.get_file("main.npdm"),
+        Some(b"dummy npdm payload".as_slice())
+    );
+    assert_eq!(
+        archive.get_file("subsdk0.nso"),
+        Some(b"dummy subsdk0 payload 2".as_slice())
+    );
     assert_eq!(archive.get_file("nonexistent.nso"), None);
 }
 

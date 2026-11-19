@@ -203,7 +203,9 @@ impl SilkDecoder {
             if lost_flag == 0 || (lost_flag == 2 && self.ch[0].lbrr_flags[fd]) {
                 let d = dec.as_deref_mut().ok_or(Error::InternalError)?;
                 ms_pred_q13 = stereo_decode_pred(d);
-                if (lost_flag == 0 && !self.ch[1].vad_flags[fd]) || (lost_flag == 2 && !self.ch[1].lbrr_flags[fd]) {
+                if (lost_flag == 0 && !self.ch[1].vad_flags[fd])
+                    || (lost_flag == 2 && !self.ch[1].lbrr_flags[fd])
+                {
                     decode_only_middle = d.icdf(&STEREO_ONLY_CODE_MID_ICDF, 8) != 0;
                 } else {
                     decode_only_middle = false;
@@ -225,7 +227,9 @@ impl SilkDecoder {
             !decode_only_middle
         } else {
             !self.prev_decode_only_middle
-                || (nci == 2 && lost_flag == 2 && self.ch[1].lbrr_flags[self.ch[1].n_frames_decoded])
+                || (nci == 2
+                    && lost_flag == 2
+                    && self.ch[1].lbrr_flags[self.ch[1].n_frames_decoded])
         };
         let mut n_out_dec = 0;
         for n in 0..nci {
@@ -245,7 +249,8 @@ impl SilkDecoder {
                     CODE_CONDITIONALLY
                 };
                 let tmp = &mut self.tmp[n];
-                n_out_dec = self.ch[n].decode_frame(dec.as_deref_mut(), &mut tmp[2..], lost_flag, cond);
+                n_out_dec =
+                    self.ch[n].decode_frame(dec.as_deref_mut(), &mut tmp[2..], lost_flag, cond);
             } else {
                 let len = n_out_dec;
                 self.tmp[n][2..2 + len].fill(0);
@@ -255,11 +260,20 @@ impl SilkDecoder {
         let fs_khz = self.ch[0].fs_khz;
         if nca == 2 && nci == 2 {
             let (a, b) = self.tmp.split_at_mut(1);
-            stereo_ms_to_lr(&mut self.stereo, &mut a[0], &mut b[0], &ms_pred_q13, fs_khz, n_out_dec);
+            stereo_ms_to_lr(
+                &mut self.stereo,
+                &mut a[0],
+                &mut b[0],
+                &ms_pred_q13,
+                fs_khz,
+                n_out_dec,
+            );
         } else {
             let t = &mut self.tmp[0];
             t[..2].copy_from_slice(&self.stereo.s_mid);
-            self.stereo.s_mid.copy_from_slice(&t[n_out_dec..n_out_dec + 2]);
+            self.stereo
+                .s_mid
+                .copy_from_slice(&t[n_out_dec..n_out_dec + 2]);
         }
         let n_out = n_out_dec * ctl.api_rate as usize / (fs_khz * 1000);
         if out.len() < n_out * nca {
@@ -302,11 +316,20 @@ impl SilkDecoder {
     }
 }
 
-fn stereo_ms_to_lr(st: &mut StereoState, x1: &mut [i16], x2: &mut [i16], pred_q13: &[i32; 2], fs_khz: usize, frame_length: usize) {
+fn stereo_ms_to_lr(
+    st: &mut StereoState,
+    x1: &mut [i16],
+    x2: &mut [i16],
+    pred_q13: &[i32; 2],
+    fs_khz: usize,
+    frame_length: usize,
+) {
     x1[..2].copy_from_slice(&st.s_mid);
     x2[..2].copy_from_slice(&st.s_side);
-    st.s_mid.copy_from_slice(&x1[frame_length..frame_length + 2]);
-    st.s_side.copy_from_slice(&x2[frame_length..frame_length + 2]);
+    st.s_mid
+        .copy_from_slice(&x1[frame_length..frame_length + 2]);
+    st.s_side
+        .copy_from_slice(&x2[frame_length..frame_length + 2]);
     let mut pred0 = st.pred_prev_q13[0];
     let mut pred1 = st.pred_prev_q13[1];
     let interp = 8 * fs_khz;
@@ -314,7 +337,8 @@ fn stereo_ms_to_lr(st: &mut StereoState, x1: &mut [i16], x2: &mut [i16], pred_q1
     let delta0 = rshift_round(smulbb(pred_q13[0] - st.pred_prev_q13[0], denom_q16), 16);
     let delta1 = rshift_round(smulbb(pred_q13[1] - st.pred_prev_q13[1], denom_q16), 16);
     let mix = |x1: &[i16], x2: &[i16], n: usize, p0: i32, p1: i32| -> i16 {
-        let mut sum = ((i32::from(x1[n]) + i32::from(x1[n + 2])) + (i32::from(x1[n + 1]) << 1)) << 9;
+        let mut sum =
+            ((i32::from(x1[n]) + i32::from(x1[n + 2])) + (i32::from(x1[n + 1]) << 1)) << 9;
         sum = smlawb(i32::from(x2[n + 1]) << 8, sum, p0);
         sum = smlawb(sum, i32::from(x1[n + 1]) << 11, p1);
         sat16(rshift_round(sum, 8)) as i16

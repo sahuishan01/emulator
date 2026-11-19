@@ -47,10 +47,7 @@ impl Ticket {
         let data = &bytes[data_offset..];
 
         // 0x000..0x040: Issuer string (null-terminated UTF-8)
-        let issuer_end = data[..0x40]
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(0x40);
+        let issuer_end = data[..0x40].iter().position(|&b| b == 0).unwrap_or(0x40);
         let issuer = std::str::from_utf8(&data[..issuer_end])
             .unwrap_or("")
             .to_string();
@@ -109,11 +106,9 @@ impl Ticket {
             ));
         }
 
-        let titlekek = keys
-            .title_kek(revision)
-            .ok_or(LoadError::Invalid(
-                "titlekek for ticket master key revision is missing from key file",
-            ))?;
+        let titlekek = keys.title_kek(revision).ok_or(LoadError::Invalid(
+            "titlekek for ticket master key revision is missing from key file",
+        ))?;
 
         let mut title_key = [0u8; 16];
         title_key.copy_from_slice(&self.title_key_block[..16]);

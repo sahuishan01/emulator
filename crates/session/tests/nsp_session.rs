@@ -177,9 +177,7 @@ fn test_session_from_nsp_full_decryption_and_execution() {
         exefs_payload.push(0);
     }
 
-    let romfs_raw = build_romfs_image(&[
-        ("pokemon.txt", b"Gotta Catch Em All!"),
-    ]);
+    let romfs_raw = build_romfs_image(&[("pokemon.txt", b"Gotta Catch Em All!")]);
     let mut romfs_payload = romfs_raw;
     while romfs_payload.len() % 512 != 0 {
         romfs_payload.push(0);
@@ -280,7 +278,8 @@ fn test_session_from_nsp_full_decryption_and_execution() {
     meta_main_header[0x205] = 1; // Meta
     meta_main_header[0x208..0x210].copy_from_slice(&meta_total_size.to_le_bytes());
     meta_main_header[0x240..0x244].copy_from_slice(&((0xC00 / 0x200) as u32).to_le_bytes());
-    meta_main_header[0x244..0x248].copy_from_slice(&((meta_total_size / 0x200) as u32).to_le_bytes());
+    meta_main_header[0x244..0x248]
+        .copy_from_slice(&((meta_total_size / 0x200) as u32).to_le_bytes());
 
     let mut meta_fs_0 = vec![0u8; NCA_FS_HEADER_SIZE];
     meta_fs_0[0..2].copy_from_slice(&2u16.to_le_bytes());
@@ -321,7 +320,10 @@ fn test_session_from_nsp_full_decryption_and_execution() {
     // Verify NspArchive directly
     let nsp = NspArchive::parse(&nsp_bytes).expect("NSP must parse");
     assert_eq!(nsp.parse_tickets().len(), 1);
-    let cnmt = nsp.parse_cnmt(&keys).expect("CNMT must parse").expect("CNMT must exist");
+    let cnmt = nsp
+        .parse_cnmt(&keys)
+        .expect("CNMT must parse")
+        .expect("CNMT must exist");
     assert_eq!(cnmt.title_id, 0x0100_0000_0000_1000);
     assert_eq!(cnmt.contents.len(), 1);
 

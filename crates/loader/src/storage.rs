@@ -4,7 +4,9 @@
 //! [`SectionStorage`] keeps a shared handle to the container bytes and decrypts
 //! exactly the requested range with AES-CTR on every read.
 
-use crate::nca::{make_section_ctr, NcaDecryptedHeader, NcaEncryptionType, NcaFsHeader, NcaFsType, NcaHashType};
+use crate::nca::{
+    make_section_ctr, NcaDecryptedHeader, NcaEncryptionType, NcaFsHeader, NcaFsType, NcaHashType,
+};
 use crate::romfs::RomFsArchive;
 use crate::LoadError;
 use emulator_crypto::aes128::aes128_ctr_xor;
@@ -32,7 +34,8 @@ impl ReadOnlyStorage for RomFsArchive {
     }
 
     fn read(&self, offset: u64, output: &mut [u8]) -> Result<(), LoadError> {
-        let start = usize::try_from(offset).map_err(|_| LoadError::Invalid("storage read out of range"))?;
+        let start =
+            usize::try_from(offset).map_err(|_| LoadError::Invalid("storage read out of range"))?;
         let bytes = start
             .checked_add(output.len())
             .and_then(|end| self.image().get(start..end))
@@ -74,7 +77,9 @@ impl ReadOnlyStorage for SectionStorage {
 
     fn read(&self, offset: u64, output: &mut [u8]) -> Result<(), LoadError> {
         let out_of_range = LoadError::Invalid("storage read out of range");
-        let end = offset.checked_add(output.len() as u64).ok_or(out_of_range.clone())?;
+        let end = offset
+            .checked_add(output.len() as u64)
+            .ok_or(out_of_range.clone())?;
         if end > self.length {
             return Err(out_of_range);
         }
@@ -148,7 +153,10 @@ impl NcaDecryptedHeader {
             if fs_header.fs_type != NcaFsType::RomFs {
                 continue;
             }
-            if nca_offset.checked_add(section.end).is_none_or(|end| end > container.len() as u64) {
+            if nca_offset
+                .checked_add(section.end)
+                .is_none_or(|end| end > container.len() as u64)
+            {
                 return Err(LoadError::Invalid("NCA3 archive is shorter than section"));
             }
             let section_length = section.end - section.start;
@@ -156,24 +164,39 @@ impl NcaDecryptedHeader {
                 let from = (nca_offset + (nca_position & !15)) as usize;
                 let mut block: [u8; 32] = container.get(from..from + 32)?.try_into().ok()?;
                 if let Some(key) = cipher {
-                    aes128_ctr_xor(key, make_section_ctr(&fs_header.section_ctr, nca_position & !15), &mut block)
-                        .ok()?;
+                    aes128_ctr_xor(
+                        key,
+                        make_section_ctr(&fs_header.section_ctr, nca_position & !15),
+                        &mut block,
+                    )
+                    .ok()?;
                 }
                 let skip = (nca_position & 15) as usize;
                 Some(block[skip..skip + 8] == ROMFS_HEADER_SIZE.to_le_bytes())
             };
             let plain = fs_header.encryption_type == NcaEncryptionType::None
-                || (!self.metadata.has_rights_id() && self.metadata.encrypted_key_area.iter().all(|k| *k == [0; 16]));
+                || (!self.metadata.has_rights_id()
+                    && self
+                        .metadata
+                        .encrypted_key_area
+                        .iter()
+                        .all(|k| *k == [0; 16]));
             let keys_to_try: Vec<Option<[u8; 16]>> = if plain {
                 vec![None]
             } else {
-                let mut list: Vec<Option<[u8; 16]>> =
-                    self.candidate_section_keys(index, keys).into_iter().map(Some).collect();
+                let mut list: Vec<Option<[u8; 16]>> = self
+                    .candidate_section_keys(index, keys)
+                    .into_iter()
+                    .map(Some)
+                    .collect();
                 list.push(None); // sections stored decrypted in place
                 list
             };
             for (offset, size) in romfs_candidates(&fs_header, section_length) {
-                if offset.checked_add(size).is_none_or(|end| end > section_length) {
+                if offset
+                    .checked_add(size)
+                    .is_none_or(|end| end > section_length)
+                {
                     continue;
                 }
                 for key in &keys_to_try {
@@ -192,7 +215,9 @@ impl NcaDecryptedHeader {
                 "NCA3 RomFS: no key or IVFC level yields a RomFS header",
             ));
         }
-        Err(LoadError::Invalid("NCA3 archive does not contain a RomFS section"))
+        Err(LoadError::Invalid(
+            "NCA3 archive does not contain a RomFS section",
+        ))
     }
 }
 
@@ -223,12 +248,26 @@ mod tests {
     #[test]
     fn encrypted_reads_match_plaintext_at_any_alignment() {
         let (storage, plain) = storage(Some(([0x42; 16], [1, 2, 3, 4, 5, 6, 7, 8])));
-        for (offset, length) in [(0, 16), (3, 29), (15, 1), (16, 0x100), (0x1f0, 0x10), (5, 0x1fb)] {
+        for (offset, length) in [
+            (0, 16),
+            (3, 29),
+            (15, 1),
+            (16, 0x100),
+            (0x1f0, 0x10),
+            (5, 0x1fb),
+        ] {
             let mut out = vec![0; length];
             storage.read(offset as u64, &mut out).unwrap();
-            assert_eq!(out, plain[offset..offset + length], "offset {offset} len {length}");
+            assert_eq!(
+                out,
+                plain[offset..offset + length],
+                "offset {offset} len {length}"
+            );
         }
-        assert!(!format!("{storage:?}").contains("66"), "debug output must not leak the key");
+        assert!(
+            !format!("{storage:?}").contains("66"),
+            "debug output must not leak the key"
+        );
     }
 
     #[test]
@@ -239,7 +278,10 @@ mod tests {
         assert_eq!(out, plain[0x11..0x1a]);
         let mut sentinel = vec![0x5a; 4];
         assert!(storage.read(0x1fd, &mut sentinel).is_err());
-        assert_eq!(sentinel, [0x5a; 4], "failed reads leave the output untouched");
+        assert_eq!(
+            sentinel, [0x5a; 4],
+            "failed reads leave the output untouched"
+        );
         assert!(storage.read(u64::MAX, &mut sentinel).is_err());
         assert!(storage.read(0x200, &mut []).is_ok());
     }

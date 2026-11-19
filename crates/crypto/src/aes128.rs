@@ -136,10 +136,7 @@ pub fn aes128_ctr_xor(
 }
 
 /// Decrypt one or more 16-byte blocks using AES-128 in ECB mode.
-pub fn aes128_ecb_decrypt(
-    key: &[u8; 16],
-    data: &mut [u8],
-) -> Result<(), CryptoError> {
+pub fn aes128_ecb_decrypt(key: &[u8; 16], data: &mut [u8]) -> Result<(), CryptoError> {
     if data.is_empty() || data.len() % 16 != 0 {
         return Err(CryptoError::EcbInputMustContainWholeBlocks);
     }
@@ -152,10 +149,7 @@ pub fn aes128_ecb_decrypt(
 }
 
 /// Encrypt one or more 16-byte blocks using AES-128 in ECB mode.
-pub fn aes128_ecb_encrypt(
-    key: &[u8; 16],
-    data: &mut [u8],
-) -> Result<(), CryptoError> {
+pub fn aes128_ecb_encrypt(key: &[u8; 16], data: &mut [u8]) -> Result<(), CryptoError> {
     if data.is_empty() || data.len() % 16 != 0 {
         return Err(CryptoError::EcbInputMustContainWholeBlocks);
     }

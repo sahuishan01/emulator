@@ -20,7 +20,8 @@ fn decode(bits: &[u8], rate: u32, channels: usize) -> (Vec<i16>, usize) {
         pos += len;
         let lost = len == 0;
         let n = if lost {
-            dec.decode(None, &mut pcm, dec.last_packet_duration()).unwrap()
+            dec.decode(None, &mut pcm, dec.last_packet_duration())
+                .unwrap()
         } else {
             dec.decode(Some(packet), &mut pcm, max).unwrap()
         };
@@ -42,7 +43,10 @@ fn rfc8251_vectors() {
     for i in 1..=12 {
         let bits = std::fs::read(format!("{dir}/testvector{i:02}.bit")).unwrap();
         let reference = std::fs::read(format!("{dir}/testvector{i:02}.dec")).unwrap();
-        let reference: Vec<i16> = reference.chunks(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+        let reference: Vec<i16> = reference
+            .chunks(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect();
         let (out, mismatches) = decode(&bits, 48_000, 2);
         assert_eq!(mismatches, 0, "vector {i}: final range mismatches");
         assert_eq!(out.len(), reference.len(), "vector {i}: length");

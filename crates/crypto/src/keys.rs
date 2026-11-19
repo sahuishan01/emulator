@@ -181,8 +181,14 @@ impl KeyFile {
             let mut decoded = Vec::with_capacity(val.len() / 2);
             let mut valid = true;
             for pair in val.as_bytes().chunks_exact(2) {
-                let Some(high) = hex_nibble(pair[0]) else { valid = false; break; };
-                let Some(low) = hex_nibble(pair[1]) else { valid = false; break; };
+                let Some(high) = hex_nibble(pair[0]) else {
+                    valid = false;
+                    break;
+                };
+                let Some(low) = hex_nibble(pair[1]) else {
+                    valid = false;
+                    break;
+                };
                 decoded.push((high << 4) | low);
             }
             if valid {
@@ -190,7 +196,9 @@ impl KeyFile {
             }
         }
         if !entries.contains_key("header_key") {
-            if let (Some(kek_bytes), Some(src_bytes)) = (entries.get("header_kek"), entries.get("header_key_source")) {
+            if let (Some(kek_bytes), Some(src_bytes)) =
+                (entries.get("header_kek"), entries.get("header_key_source"))
+            {
                 if kek_bytes.0.len() == 16 && src_bytes.0.len() == 32 {
                     let mut key_data = src_bytes.0.clone();
                     let kek: &[u8; 16] = kek_bytes.0.as_slice().try_into().unwrap();
@@ -210,7 +218,9 @@ impl KeyFile {
                     if !entries.contains_key(&name) {
                         let mk_name_02 = format!("master_key_{rev:02x}");
                         let mk_name_d = format!("master_key_{rev}");
-                        if let Some(mk_bytes) = entries.get(&mk_name_02).or_else(|| entries.get(&mk_name_d)) {
+                        if let Some(mk_bytes) =
+                            entries.get(&mk_name_02).or_else(|| entries.get(&mk_name_d))
+                        {
                             if mk_bytes.0.len() == 16 {
                                 let mk: &[u8; 16] = mk_bytes.0.as_slice().try_into().unwrap();
                                 let mut derived = src;
@@ -225,13 +235,45 @@ impl KeyFile {
         }
 
         // 3. Derive key_area_keys from master_key_XX and key_area_key_*_source
-        let kek_seed_opt = entries.get("aes_kek_generation_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
-        let key_seed_opt = entries.get("aes_key_generation_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
+        let kek_seed_opt = entries.get("aes_kek_generation_source").and_then(|b| {
+            if b.0.len() == 16 {
+                Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap())
+            } else {
+                None
+            }
+        });
+        let key_seed_opt = entries.get("aes_key_generation_source").and_then(|b| {
+            if b.0.len() == 16 {
+                Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap())
+            } else {
+                None
+            }
+        });
 
         if let (Some(kek_seed), Some(key_seed)) = (kek_seed_opt, key_seed_opt) {
-            let app_src = entries.get("key_area_key_application_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
-            let ocean_src = entries.get("key_area_key_ocean_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
-            let sys_src = entries.get("key_area_key_system_source").and_then(|b| if b.0.len() == 16 { Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap()) } else { None });
+            let app_src = entries
+                .get("key_area_key_application_source")
+                .and_then(|b| {
+                    if b.0.len() == 16 {
+                        Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap())
+                    } else {
+                        None
+                    }
+                });
+            let ocean_src = entries.get("key_area_key_ocean_source").and_then(|b| {
+                if b.0.len() == 16 {
+                    Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap())
+                } else {
+                    None
+                }
+            });
+            let sys_src = entries.get("key_area_key_system_source").and_then(|b| {
+                if b.0.len() == 16 {
+                    Some(<[u8; 16]>::try_from(b.0.as_slice()).unwrap())
+                } else {
+                    None
+                }
+            });
 
             let sources = [
                 ("application", app_src),
@@ -245,15 +287,19 @@ impl KeyFile {
                         if !entries.contains_key(&kak_name) {
                             let mk_name_02 = format!("master_key_{rev:02x}");
                             let mk_name_d = format!("master_key_{rev}");
-                            if let Some(mk_bytes) = entries.get(&mk_name_02).or_else(|| entries.get(&mk_name_d)) {
+                            if let Some(mk_bytes) =
+                                entries.get(&mk_name_02).or_else(|| entries.get(&mk_name_d))
+                            {
                                 if mk_bytes.0.len() == 16 {
                                     let mk: &[u8; 16] = mk_bytes.0.as_slice().try_into().unwrap();
                                     let mut kek = kek_seed;
                                     let mut src_kek = src;
                                     let mut dst = key_seed;
                                     if crate::aes128::aes128_ecb_decrypt(mk, &mut kek).is_ok()
-                                        && crate::aes128::aes128_ecb_decrypt(&kek, &mut src_kek).is_ok()
-                                        && crate::aes128::aes128_ecb_decrypt(&src_kek, &mut dst).is_ok()
+                                        && crate::aes128::aes128_ecb_decrypt(&kek, &mut src_kek)
+                                            .is_ok()
+                                        && crate::aes128::aes128_ecb_decrypt(&src_kek, &mut dst)
+                                            .is_ok()
                                     {
                                         entries.insert(kak_name, SecretKey(dst.to_vec()));
                                     }
@@ -297,8 +343,7 @@ impl KeyFile {
         let id = encode_hex(rights_id);
         self.entries
             .insert(format!("titlekey_{id}"), SecretKey(title_key.to_vec()));
-        self.entries
-            .insert(id, SecretKey(title_key.to_vec()));
+        self.entries.insert(id, SecretKey(title_key.to_vec()));
     }
 
     /// Register the raw, potentially encrypted title key block directly from a ticket.
@@ -310,8 +355,7 @@ impl KeyFile {
     /// Merge all entries from another KeyFile into this one.
     pub fn merge(&mut self, other: &KeyFile) {
         for (name, key) in &other.entries {
-            self.entries
-                .insert(name.clone(), SecretKey(key.0.clone()));
+            self.entries.insert(name.clone(), SecretKey(key.0.clone()));
         }
     }
 
@@ -321,7 +365,9 @@ impl KeyFile {
     }
 
     /// Load and parse a key file from disk.
-    pub fn load_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load_file<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let data = std::fs::read(path)?;
         let key_file = Self::parse(&data)?;
         Ok(key_file)
@@ -374,7 +420,10 @@ impl KeyFile {
     /// with lower 8 bytes zeroed, or the 16-hex-digit title ID prefix.
     pub fn title_key(&self, rights_id: &[u8; 16]) -> Option<&[u8; 16]> {
         let id = encode_hex(rights_id);
-        if let Some(key) = self.get(&format!("titlekey_{id}")).or_else(|| self.get(&id)) {
+        if let Some(key) = self
+            .get(&format!("titlekey_{id}"))
+            .or_else(|| self.get(&id))
+        {
             if let Ok(k) = key.try_into() {
                 return Some(k);
             }
@@ -382,13 +431,19 @@ impl KeyFile {
         let mut masked = *rights_id;
         masked[8..16].fill(0);
         let masked_id = encode_hex(&masked);
-        if let Some(key) = self.get(&format!("titlekey_{masked_id}")).or_else(|| self.get(&masked_id)) {
+        if let Some(key) = self
+            .get(&format!("titlekey_{masked_id}"))
+            .or_else(|| self.get(&masked_id))
+        {
             if let Ok(k) = key.try_into() {
                 return Some(k);
             }
         }
         let title_id_hex = &id[..16];
-        if let Some(key) = self.get(&format!("titlekey_{title_id_hex}")).or_else(|| self.get(title_id_hex)) {
+        if let Some(key) = self
+            .get(&format!("titlekey_{title_id_hex}"))
+            .or_else(|| self.get(title_id_hex))
+        {
             if let Ok(k) = key.try_into() {
                 return Some(k);
             }

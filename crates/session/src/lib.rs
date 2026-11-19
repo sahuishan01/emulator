@@ -444,7 +444,8 @@ impl Session {
         let mut frames = Vec::new();
         let mut fp = self.cpu.x[29];
         while frames.len() < 12 && fp != 0 && fp % 16 == 0 {
-            let (Ok(next), Ok(ret)) = (self.memory.read_u64(fp), self.memory.read_u64(fp + 8)) else {
+            let (Ok(next), Ok(ret)) = (self.memory.read_u64(fp), self.memory.read_u64(fp + 8))
+            else {
                 break;
             };
             frames.push(ret);

@@ -72,7 +72,13 @@ fn haar1(x: &mut [f32], n0: usize, stride: usize) {
     }
 }
 
-fn deinterleave_hadamard(tmp: &mut [f32; MAX_BAND], x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
+fn deinterleave_hadamard(
+    tmp: &mut [f32; MAX_BAND],
+    x: &mut [f32],
+    n0: usize,
+    stride: usize,
+    hadamard: bool,
+) {
     let n = n0 * stride;
     if hadamard {
         let ordery = &ORDERY_TABLE[stride - 2..];
@@ -91,7 +97,13 @@ fn deinterleave_hadamard(tmp: &mut [f32; MAX_BAND], x: &mut [f32], n0: usize, st
     x[..n].copy_from_slice(&tmp[..n]);
 }
 
-fn interleave_hadamard(tmp: &mut [f32; MAX_BAND], x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
+fn interleave_hadamard(
+    tmp: &mut [f32; MAX_BAND],
+    x: &mut [f32],
+    n0: usize,
+    stride: usize,
+    hadamard: bool,
+) {
     let n = n0 * stride;
     if hadamard {
         let ordery = &ORDERY_TABLE[stride - 2..];
@@ -257,7 +269,12 @@ impl BandCtx<'_, '_> {
         }
     }
 
-    fn quant_band_n1(&mut self, x: &mut [f32], y: Option<&mut [f32]>, lowband_out: Option<&mut [f32]>) -> u32 {
+    fn quant_band_n1(
+        &mut self,
+        x: &mut [f32],
+        y: Option<&mut [f32]>,
+        lowband_out: Option<&mut [f32]>,
+    ) -> u32 {
         let decode_sign = |ctx: &mut Self, v: &mut f32| {
             let mut sign = 0;
             if ctx.remaining_bits >= 1 << BITRES {
@@ -322,11 +339,27 @@ impl BandCtx<'_, '_> {
                 if rebalance > 3 << BITRES && itheta != 0 {
                     sbits += rebalance - (3 << BITRES);
                 }
-                cm |= self.quant_partition(ys, n, sbits, bb, next_lowband2, lm, gain * side, fill >> bb)
-                    << (b0 >> 1);
+                cm |= self.quant_partition(
+                    ys,
+                    n,
+                    sbits,
+                    bb,
+                    next_lowband2,
+                    lm,
+                    gain * side,
+                    fill >> bb,
+                ) << (b0 >> 1);
             } else {
-                cm = self.quant_partition(ys, n, sbits, bb, next_lowband2, lm, gain * side, fill >> bb)
-                    << (b0 >> 1);
+                cm = self.quant_partition(
+                    ys,
+                    n,
+                    sbits,
+                    bb,
+                    next_lowband2,
+                    lm,
+                    gain * side,
+                    fill >> bb,
+                ) << (b0 >> 1);
                 rebalance = sbits - (rebalance - self.remaining_bits);
                 if rebalance > 3 << BITRES && itheta != 16384 {
                     mbits += rebalance - (3 << BITRES);
@@ -346,7 +379,16 @@ impl BandCtx<'_, '_> {
         }
         if q != 0 {
             let k = get_pulses(q) as usize;
-            return alg_unquant(x, n, k, self.spread, bb as usize, self.dec, gain, &mut self.iy);
+            return alg_unquant(
+                x,
+                n,
+                k,
+                self.spread,
+                bb as usize,
+                self.dec,
+                gain,
+                &mut self.iy,
+            );
         }
         let cm_mask = ((1u64 << bb) - 1) as u32;
         fill &= cm_mask;
@@ -366,7 +408,11 @@ impl BandCtx<'_, '_> {
             Some(lb) => {
                 for (v, &l) in x[..n].iter_mut().zip(lb) {
                     self.seed = lcg_rand(self.seed);
-                    let tmp = if self.seed & 0x8000 != 0 { 1.0 / 256.0 } else { -1.0 / 256.0 };
+                    let tmp = if self.seed & 0x8000 != 0 {
+                        1.0 / 256.0
+                    } else {
+                        -1.0 / 256.0
+                    };
                     *v = l + tmp;
                 }
                 cm = fill;
@@ -430,12 +476,24 @@ impl BandCtx<'_, '_> {
         let n_b0 = n_b;
         if b0 > 1 {
             if let Some(l) = lb.as_deref_mut() {
-                deinterleave_hadamard(&mut self.tmp, l, n_b >> recombine, (b0 as usize) << recombine, long_blocks);
+                deinterleave_hadamard(
+                    &mut self.tmp,
+                    l,
+                    n_b >> recombine,
+                    (b0 as usize) << recombine,
+                    long_blocks,
+                );
             }
         }
         let mut cm = self.quant_partition(x, n, b, bb, lb.as_deref(), lm, gain, fill);
         if b0 > 1 {
-            interleave_hadamard(&mut self.tmp, x, n_b >> recombine, (b0 as usize) << recombine, long_blocks);
+            interleave_hadamard(
+                &mut self.tmp,
+                x,
+                n_b >> recombine,
+                (b0 as usize) << recombine,
+                long_blocks,
+            );
         }
         n_b = n_b0;
         bb = b0;
@@ -446,8 +504,8 @@ impl BandCtx<'_, '_> {
             haar1(x, n_b, bb as usize);
         }
         const BIT_DEINTERLEAVE: [u8; 16] = [
-            0x00, 0x03, 0x0C, 0x0F, 0x30, 0x33, 0x3C, 0x3F, 0xC0, 0xC3, 0xCC, 0xCF, 0xF0, 0xF3, 0xFC,
-            0xFF,
+            0x00, 0x03, 0x0C, 0x0F, 0x30, 0x33, 0x3C, 0x3F, 0xC0, 0xC3, 0xCC, 0xCF, 0xF0, 0xF3,
+            0xFC, 0xFF,
         ];
         for k in 0..recombine {
             cm = u32::from(BIT_DEINTERLEAVE[cm as usize & 0xf]);
@@ -500,8 +558,23 @@ impl BandCtx<'_, '_> {
                 sign = self.dec.bits(1) as i32;
             }
             let sign = (1 - 2 * sign) as f32;
-            let (x2, y2) = if swap { (&mut *y, &mut *x) } else { (&mut *x, &mut *y) };
-            cm = self.quant_band(x2, n, mbits, bb, lowband, lm, lowband_out, 1.0, orig_fill, scratch);
+            let (x2, y2) = if swap {
+                (&mut *y, &mut *x)
+            } else {
+                (&mut *x, &mut *y)
+            };
+            cm = self.quant_band(
+                x2,
+                n,
+                mbits,
+                bb,
+                lowband,
+                lm,
+                lowband_out,
+                1.0,
+                orig_fill,
+                scratch,
+            );
             y2[0] = -sign * x2[1];
             y2[1] = sign * x2[0];
             x[0] *= mid;
@@ -520,7 +593,18 @@ impl BandCtx<'_, '_> {
             self.remaining_bits -= s.qalloc;
             let mut rebalance = self.remaining_bits;
             if mbits >= sbits {
-                cm = self.quant_band(x, n, mbits, bb, lowband, lm, lowband_out, 1.0, fill, scratch);
+                cm = self.quant_band(
+                    x,
+                    n,
+                    mbits,
+                    bb,
+                    lowband,
+                    lm,
+                    lowband_out,
+                    1.0,
+                    fill,
+                    scratch,
+                );
                 rebalance = mbits - (rebalance - self.remaining_bits);
                 if rebalance > 3 << BITRES && itheta != 0 {
                     sbits += rebalance - (3 << BITRES);
@@ -532,7 +616,18 @@ impl BandCtx<'_, '_> {
                 if rebalance > 3 << BITRES && itheta != 16384 {
                     mbits += rebalance - (3 << BITRES);
                 }
-                cm |= self.quant_band(x, n, mbits, bb, lowband, lm, lowband_out, 1.0, fill, scratch);
+                cm |= self.quant_band(
+                    x,
+                    n,
+                    mbits,
+                    bb,
+                    lowband,
+                    lm,
+                    lowband_out,
+                    1.0,
+                    fill,
+                    scratch,
+                );
             }
             stereo_merge(&mut x[..n], &mut y[..n], mid);
         }
@@ -661,7 +756,8 @@ pub fn quant_all_bands(
         let mut effective_lowband: Option<usize> = None;
         let (mut x_cm, mut y_cm);
         if lowband_offset != 0 && (p.spread != 3 || bb > 1 || ctx.tf_change < 0) {
-            let el = (eb(lowband_offset) as isize - norm_offset as isize - n as isize).max(0) as usize;
+            let el =
+                (eb(lowband_offset) as isize - norm_offset as isize - n as isize).max(0) as usize;
             effective_lowband = Some(el);
             let mut fold_start = lowband_offset;
             loop {
@@ -718,7 +814,11 @@ pub fn quant_all_bands(
                 bb,
                 lowband,
                 p.lm as i32,
-                if last { None } else { Some(&mut norm[out_at..out_at + n]) },
+                if last {
+                    None
+                } else {
+                    Some(&mut norm[out_at..out_at + n])
+                },
                 1.0,
                 x_cm,
                 &mut scratch,
@@ -730,18 +830,48 @@ pub fn quant_all_bands(
                 bb,
                 lowband2,
                 p.lm as i32,
-                if last { None } else { Some(&mut norm2[out_at..out_at + n]) },
+                if last {
+                    None
+                } else {
+                    Some(&mut norm2[out_at..out_at + n])
+                },
                 1.0,
                 y_cm,
                 &mut scratch,
             );
         } else {
-            let out = if last { None } else { Some(&mut norm[out_at..out_at + n]) };
+            let out = if last {
+                None
+            } else {
+                Some(&mut norm[out_at..out_at + n])
+            };
             if let Some(y_all) = y_.as_deref_mut() {
                 let yr = &mut y_all[eb(i)..eb(i) + n];
-                x_cm = ctx.quant_band_stereo(xr, yr, n, b, bb, lowband, p.lm as i32, out, x_cm | y_cm, &mut scratch);
+                x_cm = ctx.quant_band_stereo(
+                    xr,
+                    yr,
+                    n,
+                    b,
+                    bb,
+                    lowband,
+                    p.lm as i32,
+                    out,
+                    x_cm | y_cm,
+                    &mut scratch,
+                );
             } else {
-                x_cm = ctx.quant_band(xr, n, b, bb, lowband, p.lm as i32, out, 1.0, x_cm | y_cm, &mut scratch);
+                x_cm = ctx.quant_band(
+                    xr,
+                    n,
+                    b,
+                    bb,
+                    lowband,
+                    p.lm as i32,
+                    out,
+                    1.0,
+                    x_cm | y_cm,
+                    &mut scratch,
+                );
             }
             y_cm = x_cm;
         }

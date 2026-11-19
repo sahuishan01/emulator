@@ -85,13 +85,26 @@ fn sha256_abc_through_guest_instructions() {
         0xc67178f2,
     ];
     let initial = [
-        0x6a09e667u32, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x6a09e667u32,
+        0xbb67ae85,
+        0x3c6ef372,
+        0xa54ff53a,
+        0x510e527f,
+        0x9b05688c,
+        0x1f83d9ab,
         0x5be0cd19,
     ];
     let mut guest = Guest::new();
     let block = padded_abc();
     let mut schedule: Vec<u128> = (0..4)
-        .map(|i| lanes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]))
+        .map(|i| {
+            lanes([
+                block[4 * i],
+                block[4 * i + 1],
+                block[4 * i + 2],
+                block[4 * i + 3],
+            ])
+        })
         .collect();
     // SHA256SU0 Vd, Vn then SHA256SU1 Vd, Vn, Vm extend the schedule.
     for i in 0..12 {
@@ -108,13 +121,19 @@ fn sha256_abc_through_guest_instructions() {
     guest.cpu.v[0] = abcd;
     guest.cpu.v[1] = efgh;
     for (i, w) in schedule.iter().enumerate() {
-        guest.cpu.v[16] = add4(*w, lanes([K[4 * i], K[4 * i + 1], K[4 * i + 2], K[4 * i + 3]]));
+        guest.cpu.v[16] = add4(
+            *w,
+            lanes([K[4 * i], K[4 * i + 1], K[4 * i + 2], K[4 * i + 3]]),
+        );
         guest.cpu.v[2] = guest.cpu.v[0];
         guest.exec(three(0x5e00_4000, 0, 1, 16)); // SHA256H q0, q1, v16.4s
         guest.exec(three(0x5e00_5000, 1, 2, 16)); // SHA256H2 q1, q2, v16.4s
     }
     let (abcd, efgh) = (add4(guest.cpu.v[0], abcd), add4(guest.cpu.v[1], efgh));
-    let digest: Vec<u32> = (0..4).map(|i| lane(abcd, i)).chain((0..4).map(|i| lane(efgh, i))).collect();
+    let digest: Vec<u32> = (0..4)
+        .map(|i| lane(abcd, i))
+        .chain((0..4).map(|i| lane(efgh, i)))
+        .collect();
     assert_eq!(
         digest,
         [
@@ -129,7 +148,14 @@ fn sha1_abc_through_guest_instructions() {
     let mut guest = Guest::new();
     let block = padded_abc();
     let mut schedule: Vec<u128> = (0..4)
-        .map(|i| lanes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]))
+        .map(|i| {
+            lanes([
+                block[4 * i],
+                block[4 * i + 1],
+                block[4 * i + 2],
+                block[4 * i + 3],
+            ])
+        })
         .collect();
     // SHA1SU0 Vd, Vn, Vm then SHA1SU1 Vd, Vn.
     for i in 0..16 {
@@ -161,8 +187,17 @@ fn sha1_abc_through_guest_instructions() {
         assert_eq!(guest.cpu.v[2] >> 32, 0, "SHA1H zeroes the upper lanes");
     }
     let abcd = add4(guest.cpu.v[0], initial);
-    let digest = [lane(abcd, 0), lane(abcd, 1), lane(abcd, 2), lane(abcd, 3), e.wrapping_add(initial_e)];
-    assert_eq!(digest, [0xa9993e36, 0x4706816a, 0xba3e2571, 0x7850c26c, 0x9cd0d89d]);
+    let digest = [
+        lane(abcd, 0),
+        lane(abcd, 1),
+        lane(abcd, 2),
+        lane(abcd, 3),
+        e.wrapping_add(initial_e),
+    ];
+    assert_eq!(
+        digest,
+        [0xa9993e36, 0x4706816a, 0xba3e2571, 0x7850c26c, 0x9cd0d89d]
+    );
 }
 
 fn expand_key(key: [u8; 16]) -> Vec<u128> {
@@ -180,15 +215,29 @@ fn expand_key(key: [u8; 16]) -> Vec<u128> {
         p
     };
     for (x, entry) in sbox.iter_mut().enumerate() {
-        let inv = if x == 0 { 0 } else { (1..=255u8).find(|&c| mul(x as u8, c) == 1).unwrap() };
-        *entry = inv ^ inv.rotate_left(1) ^ inv.rotate_left(2) ^ inv.rotate_left(3) ^ inv.rotate_left(4) ^ 0x63;
+        let inv = if x == 0 {
+            0
+        } else {
+            (1..=255u8).find(|&c| mul(x as u8, c) == 1).unwrap()
+        };
+        *entry = inv
+            ^ inv.rotate_left(1)
+            ^ inv.rotate_left(2)
+            ^ inv.rotate_left(3)
+            ^ inv.rotate_left(4)
+            ^ 0x63;
     }
     let mut w: Vec<[u8; 4]> = key.chunks(4).map(|c| c.try_into().unwrap()).collect();
     let mut rcon = 1u8;
     for i in 4..44 {
         let mut t = w[i - 1];
         if i % 4 == 0 {
-            t = [sbox[t[1] as usize] ^ rcon, sbox[t[2] as usize], sbox[t[3] as usize], sbox[t[0] as usize]];
+            t = [
+                sbox[t[1] as usize] ^ rcon,
+                sbox[t[2] as usize],
+                sbox[t[3] as usize],
+                sbox[t[0] as usize],
+            ];
             rcon = mul(rcon, 2);
         }
         w.push([0, 1, 2, 3].map(|j| w[i - 4][j] ^ t[j]));
@@ -203,7 +252,8 @@ fn aes128_fips197_through_guest_instructions() {
     let key: [u8; 16] = core::array::from_fn(|i| i as u8);
     let plain: [u8; 16] = core::array::from_fn(|i| (i as u8) * 0x11);
     let expected = [
-        0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a,
+        0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5,
+        0x5a,
     ];
     let keys = expand_key(key);
     let mut guest = Guest::new();
@@ -238,8 +288,13 @@ fn reserved_crypto_opcodes_are_rejected() {
     let mut guest = Guest::new();
     let page = CODE;
     let word = 0x5e00_7000u32; // SHA three-register opcode 7: unallocated
-    guest.memory
-        .map(page, [word.to_le_bytes().to_vec(), vec![0; 4092]].concat(), Permissions::READ_EXECUTE)
+    guest
+        .memory
+        .map(
+            page,
+            [word.to_le_bytes().to_vec(), vec![0; 4092]].concat(),
+            Permissions::READ_EXECUTE,
+        )
         .unwrap();
     guest.cpu.pc = page;
     let before = guest.cpu.v;
@@ -250,9 +305,18 @@ fn reserved_crypto_opcodes_are_rejected() {
 #[test]
 fn exclusive_pairs_load_and_store_both_registers() {
     let mut guest = Guest::new();
-    guest.memory.map(0x9000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
-    guest.memory.write_u64(0x9000, 0x1111_2222_3333_4444).unwrap();
-    guest.memory.write_u64(0x9008, 0x5555_6666_7777_8888).unwrap();
+    guest
+        .memory
+        .map(0x9000, vec![0; 4096], Permissions::READ_WRITE)
+        .unwrap();
+    guest
+        .memory
+        .write_u64(0x9000, 0x1111_2222_3333_4444)
+        .unwrap();
+    guest
+        .memory
+        .write_u64(0x9008, 0x5555_6666_7777_8888)
+        .unwrap();
     guest.cpu.x[22] = 0x9000;
     guest.exec(0xc87f_a6c8); // LDAXP x8, x9, [x22]
     assert_eq!(guest.cpu.x[8], 0x1111_2222_3333_4444);

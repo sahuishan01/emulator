@@ -160,7 +160,9 @@ impl NcaFsHeader {
     pub fn parse(header: &[u8; NCA_FS_HEADER_SIZE]) -> Result<Self, LoadError> {
         let version = u16::from_le_bytes(header[0..2].try_into().unwrap());
         if version != 2 {
-            return Err(LoadError::Invalid("NCA3 filesystem header version must be 2"));
+            return Err(LoadError::Invalid(
+                "NCA3 filesystem header version must be 2",
+            ));
         }
         let fs_type = NcaFsType::try_from(header[2])?;
         let hash_type = NcaHashType::try_from(header[3])?;
@@ -193,9 +195,9 @@ impl NcaFsHeader {
         match self.hash_type {
             NcaHashType::HierarchicalSha256 | NcaHashType::HierarchicalSha3256 => {
                 if self.hash_data.len() >= 0x48 {
-                    let layer_count = u32::from_le_bytes(
-                        self.hash_data[0x24..0x28].try_into().unwrap_or([0; 4]),
-                    ) as usize;
+                    let layer_count =
+                        u32::from_le_bytes(self.hash_data[0x24..0x28].try_into().unwrap_or([0; 4]))
+                            as usize;
                     if (2..=5).contains(&layer_count) {
                         let data_layer_idx = layer_count - 1;
                         let reg_off = 0x28 + data_layer_idx * 16;
@@ -204,7 +206,9 @@ impl NcaFsHeader {
                                 self.hash_data[reg_off..reg_off + 8].try_into().unwrap(),
                             );
                             let sz = u64::from_le_bytes(
-                                self.hash_data[reg_off + 8..reg_off + 16].try_into().unwrap(),
+                                self.hash_data[reg_off + 8..reg_off + 16]
+                                    .try_into()
+                                    .unwrap(),
                             );
                             if off < section_len {
                                 let clamped_sz = sz.min(section_len.saturating_sub(off));
@@ -228,7 +232,8 @@ impl NcaFsHeader {
                                 self.hash_data[off + 8..off + 16].try_into().unwrap(),
                             );
                             if lvl_size > 0 && lvl_offset < section_len {
-                                let clamped_sz = lvl_size.min(section_len.saturating_sub(lvl_offset));
+                                let clamped_sz =
+                                    lvl_size.min(section_len.saturating_sub(lvl_offset));
                                 return (lvl_offset, clamped_sz);
                             }
                         }
@@ -332,9 +337,9 @@ impl NcaDecryptedHeader {
     /// appropriate generation key-area encryption key.
     pub fn derive_section_key(&self, keys: &KeyFile) -> Result<[u8; 16], LoadError> {
         if self.metadata.has_rights_id() {
-            let key = keys.title_key(&self.metadata.rights_id).ok_or(LoadError::Invalid(
-                "NCA3 title key not found in key file",
-            ))?;
+            let key = keys
+                .title_key(&self.metadata.rights_id)
+                .ok_or(LoadError::Invalid("NCA3 title key not found in key file"))?;
             return Ok(*key);
         }
 
@@ -381,7 +386,8 @@ impl NcaDecryptedHeader {
                 let nca_rev = self.metadata.master_key_revision();
                 if let Some(titlekek) = keys.title_kek(nca_rev) {
                     let mut dec = *raw_key;
-                    if aes128_ecb_decrypt(titlekek, &mut dec).is_ok() && !candidates.contains(&dec) {
+                    if aes128_ecb_decrypt(titlekek, &mut dec).is_ok() && !candidates.contains(&dec)
+                    {
                         candidates.push(dec);
                     }
                 }
@@ -390,7 +396,9 @@ impl NcaDecryptedHeader {
                     if rev != nca_rev {
                         if let Some(titlekek) = keys.title_kek(rev) {
                             let mut dec = *raw_key;
-                            if aes128_ecb_decrypt(titlekek, &mut dec).is_ok() && !candidates.contains(&dec) {
+                            if aes128_ecb_decrypt(titlekek, &mut dec).is_ok()
+                                && !candidates.contains(&dec)
+                            {
                                 candidates.push(dec);
                             }
                         }
@@ -407,7 +415,8 @@ impl NcaDecryptedHeader {
             for rev in 0..=32 {
                 if let Some(titlekek) = keys.title_kek(rev) {
                     let mut dec = tk;
-                    if aes128_ecb_decrypt(titlekek, &mut dec).is_ok() && !candidates.contains(&dec) {
+                    if aes128_ecb_decrypt(titlekek, &mut dec).is_ok() && !candidates.contains(&dec)
+                    {
                         candidates.push(dec);
                     }
                 }
@@ -418,7 +427,9 @@ impl NcaDecryptedHeader {
         let slots = if section_index < self.fs_headers.len() {
             if let Ok(fs_header) = NcaFsHeader::parse(&self.fs_headers[section_index]) {
                 match fs_header.encryption_type {
-                    NcaEncryptionType::AesCtrEx | NcaEncryptionType::AesCtrExSkipLayerHash => [3, 0, 2, 1],
+                    NcaEncryptionType::AesCtrEx | NcaEncryptionType::AesCtrExSkipLayerHash => {
+                        [3, 0, 2, 1]
+                    }
                     _ => [0, 2, 1, 3],
                 }
             } else {
@@ -429,7 +440,12 @@ impl NcaDecryptedHeader {
         };
 
         let primary_area = self.metadata.key_area().unwrap_or(KeyArea::Application);
-        let areas = [primary_area, KeyArea::Application, KeyArea::Ocean, KeyArea::System];
+        let areas = [
+            primary_area,
+            KeyArea::Application,
+            KeyArea::Ocean,
+            KeyArea::System,
+        ];
         let nca_rev = self.metadata.master_key_revision();
 
         for slot in slots {
@@ -443,7 +459,8 @@ impl NcaDecryptedHeader {
                 for area in areas {
                     if let Some(kaek) = keys.key_area_key(area, nca_rev) {
                         let mut dec = enc_entry;
-                        if aes128_ecb_decrypt(kaek, &mut dec).is_ok() && !candidates.contains(&dec) {
+                        if aes128_ecb_decrypt(kaek, &mut dec).is_ok() && !candidates.contains(&dec)
+                        {
                             candidates.push(dec);
                         }
                     }
@@ -451,7 +468,9 @@ impl NcaDecryptedHeader {
                         if rev != nca_rev {
                             if let Some(kaek) = keys.key_area_key(area, rev) {
                                 let mut dec = enc_entry;
-                                if aes128_ecb_decrypt(kaek, &mut dec).is_ok() && !candidates.contains(&dec) {
+                                if aes128_ecb_decrypt(kaek, &mut dec).is_ok()
+                                    && !candidates.contains(&dec)
+                                {
                                     candidates.push(dec);
                                 }
                             }
@@ -578,7 +597,9 @@ impl NcaDecryptedHeader {
             return Ok(decrypted);
         }
 
-        Err(LoadError::Invalid("Failed to decrypt NCA3 section: no matching key found in prod.keys"))
+        Err(LoadError::Invalid(
+            "Failed to decrypt NCA3 section: no matching key found in prod.keys",
+        ))
     }
 
     /// Open the ExeFS program contained in the NCA archive (typically Section 0, PartitionFs).
@@ -597,8 +618,12 @@ impl NcaDecryptedHeader {
                             Ok(decrypted) => {
                                 let (data_off, data_sz) =
                                     fs_header.data_region(decrypted.len() as u64);
-                                let exefs_bytes = if data_off > 0 && (data_off as usize) < decrypted.len() {
-                                    if data_sz > 0 && (data_off + data_sz) as usize <= decrypted.len() {
+                                let exefs_bytes = if data_off > 0
+                                    && (data_off as usize) < decrypted.len()
+                                {
+                                    if data_sz > 0
+                                        && (data_off + data_sz) as usize <= decrypted.len()
+                                    {
                                         &decrypted[data_off as usize..(data_off + data_sz) as usize]
                                     } else {
                                         &decrypted[data_off as usize..]
@@ -640,7 +665,9 @@ impl NcaDecryptedHeader {
                 }
             }
         }
-        Err(last_error.or(logo_error).unwrap_or(LoadError::Invalid("NCA3 archive does not contain an active PartitionFS section with executable modules")))
+        Err(last_error.or(logo_error).unwrap_or(LoadError::Invalid(
+            "NCA3 archive does not contain an active PartitionFS section with executable modules",
+        )))
     }
 
     /// Open the RomFS filesystem contained in the NCA archive (typically Section 1, RomFs).
@@ -661,7 +688,9 @@ impl NcaDecryptedHeader {
                         }
                         match self.decrypt_section(archive, i, keys) {
                             Ok(decrypted) => {
-                                match crate::romfs::RomFsArchive::from_section_payload(&decrypted, &fs_header) {
+                                match crate::romfs::RomFsArchive::from_section_payload(
+                                    &decrypted, &fs_header,
+                                ) {
                                     Ok(romfs) => return Ok(romfs),
                                     Err(e) => last_error = Some(e),
                                 }
@@ -672,7 +701,9 @@ impl NcaDecryptedHeader {
                 }
             }
         }
-        Err(last_error.unwrap_or(LoadError::Invalid("NCA3 archive does not contain an active RomFS section")))
+        Err(last_error.unwrap_or(LoadError::Invalid(
+            "NCA3 archive does not contain an active RomFS section",
+        )))
     }
 }
 
@@ -737,8 +768,8 @@ impl NcaHeader {
             _ => return Err(LoadError::Invalid("NCA3 magic is missing")),
         }
 
-        let distribution_type = NcaDistributionType::try_from(main[0x204])
-            .unwrap_or(NcaDistributionType::Download);
+        let distribution_type =
+            NcaDistributionType::try_from(main[0x204]).unwrap_or(NcaDistributionType::Download);
         let content_type = NcaContentType::try_from(main[0x205])?;
         let key_generation_old = main[0x206];
         let key_area_encryption_key_index = main[0x207];

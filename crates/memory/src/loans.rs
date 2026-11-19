@@ -90,7 +90,11 @@ impl AddressSpace {
             let regions = self
                 .regions
                 .iter()
-                .filter(|r| r.bytes.as_ref().is_some_and(|b| overlaps(b.range(), selected_range)))
+                .filter(|r| {
+                    r.bytes
+                        .as_ref()
+                        .is_some_and(|b| overlaps(b.range(), selected_range))
+                })
                 .count();
             if bytes.overlapping_slices(selected_range) != regions {
                 return Err(MemoryError::LoanConflict);

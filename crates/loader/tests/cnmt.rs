@@ -40,8 +40,14 @@ fn make_test_cnmt(
 
 #[test]
 fn test_cnmt_parsing_and_record_lookup() {
-    let prog_id = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10];
-    let ctrl_id = [0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30];
+    let prog_id = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10,
+    ];
+    let ctrl_id = [
+        0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+        0x30,
+    ];
     let legal_id = [0x31; 16];
 
     let raw = make_test_cnmt(
@@ -61,17 +67,23 @@ fn test_cnmt_parsing_and_record_lookup() {
     assert_eq!(cnmt.meta_type, ContentMetaType::Application);
     assert_eq!(cnmt.contents.len(), 3);
 
-    let prog = cnmt.find_program_record().expect("must find program record");
+    let prog = cnmt
+        .find_program_record()
+        .expect("must find program record");
     assert_eq!(prog.content_id, prog_id);
     assert_eq!(prog.size, 1048576);
     assert_eq!(prog.content_id_hex(), "0102030405060708090a0b0c0d0e0f10");
     assert_eq!(prog.nca_filename(), "0102030405060708090a0b0c0d0e0f10.nca");
 
-    let ctrl = cnmt.find_control_record().expect("must find control record");
+    let ctrl = cnmt
+        .find_control_record()
+        .expect("must find control record");
     assert_eq!(ctrl.content_id, ctrl_id);
     assert_eq!(ctrl.nca_filename(), "2122232425262728292a2b2c2d2e2f30.nca");
 
-    let legal = cnmt.find_legal_info_record().expect("must find legal info record");
+    let legal = cnmt
+        .find_legal_info_record()
+        .expect("must find legal info record");
     assert_eq!(legal.content_id, legal_id);
 }
 

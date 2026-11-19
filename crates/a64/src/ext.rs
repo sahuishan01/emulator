@@ -52,7 +52,11 @@ fn try_build(bits: u32, lanes: u32, mut f: impl FnMut(u32) -> Option<u64>) -> Op
 }
 
 fn half(v: u128, upper: bool) -> u128 {
-    if upper { v >> 64 } else { v & LOW }
+    if upper {
+        v >> 64
+    } else {
+        v & LOW
+    }
 }
 
 fn narrow_into(old: u128, upper: bool, value: u128) -> u128 {
@@ -64,7 +68,11 @@ fn narrow_into(old: u128, upper: bool, value: u128) -> u128 {
 }
 
 fn mask_if(condition: bool, bits: u32) -> u64 {
-    if condition { ones(bits) } else { 0 }
+    if condition {
+        ones(bits)
+    } else {
+        0
+    }
 }
 
 fn clamp_signed(value: i128, bits: u32) -> u64 {
@@ -595,7 +603,11 @@ fn int3(opcode: u32, u: bool, bits: u32, a: u64, b: u64, d: u64) -> Option<u64> 
             } else {
                 let right = (-shift) as u32;
                 if u {
-                    if right >= bits { 0 } else { a >> right }
+                    if right >= bits {
+                        0
+                    } else {
+                        a >> right
+                    }
                 } else {
                     (sx(a, bits) >> right.min(63)) as u64
                 }
@@ -607,7 +619,11 @@ fn int3(opcode: u32, u: bool, bits: u32, a: u64, b: u64, d: u64) -> Option<u64> 
             let rounding = opcode != 9;
             let saturating = opcode != 10;
             let shift = sx(b & 0xff, 8);
-            let mask = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+            let mask = if bits == 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits) - 1
+            };
             if shift >= 0 {
                 let shift = shift as u32;
                 if wa == 0 {
@@ -635,7 +651,11 @@ fn int3(opcode: u32, u: bool, bits: u32, a: u64, b: u64, d: u64) -> Option<u64> 
                     wa >> right.min(127)
                 };
                 // A rounded right shift can carry out of the unsigned range.
-                if saturating { saturate(value) } else { value as u64 & mask }
+                if saturating {
+                    saturate(value)
+                } else {
+                    value as u64 & mask
+                }
             }
         }
         12 => (if wa > wb { wa } else { wb }) as u64,
@@ -775,7 +795,11 @@ fn three_same(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
             (true, 2) => (d & !m) | (n & m),
             (true, _) => (d & m) | (n & !m),
         };
-        if q { value } else { value & LOW }
+        if q {
+            value
+        } else {
+            value & LOW
+        }
     } else {
         let bits = 8 << size;
         if scalar
@@ -871,9 +895,19 @@ fn fp_two_reg(double: bool, a: bool, opcode: u32, u: bool, x: u64, fpcr: u32) ->
 /// exponent and a 52-bit fraction (single-precision fractions are widened).
 fn estimate_parts(double: bool, x: u64) -> (u64, i64, u64, i64) {
     if double {
-        (x >> 63, ((x >> 52) & 0x7ff) as i64, x & ((1 << 52) - 1), 0x7ff)
+        (
+            x >> 63,
+            ((x >> 52) & 0x7ff) as i64,
+            x & ((1 << 52) - 1),
+            0x7ff,
+        )
     } else {
-        (x >> 31 & 1, ((x >> 23) & 0xff) as i64, (x & 0x7f_ffff) << 29, 0xff)
+        (
+            x >> 31 & 1,
+            ((x >> 23) & 0xff) as i64,
+            (x & 0x7f_ffff) << 29,
+            0xff,
+        )
     }
 }
 
@@ -893,7 +927,11 @@ fn quiet_nan(double: bool, x: u64) -> u64 {
 fn recip_estimate(double: bool, x: u64, fpcr: u32) -> u64 {
     let (sign, mut exp, mut fraction, max_exp) = estimate_parts(double, x);
     if exp == max_exp {
-        return if fraction != 0 { quiet_nan(double, x) } else { estimate_pack(double, sign, 0, 0) };
+        return if fraction != 0 {
+            quiet_nan(double, x)
+        } else {
+            estimate_pack(double, sign, 0, 0)
+        };
     }
     if exp == 0 && fraction == 0 {
         return estimate_pack(double, sign, max_exp, 0);
@@ -938,7 +976,11 @@ fn recip_estimate(double: bool, x: u64, fpcr: u32) -> u64 {
 /// FRSQRTE (Arm ARM FPRSqrtEstimate / RecipSqrtEstimate), FPCR.FZ not modelled.
 fn rsqrt_estimate(double: bool, x: u64) -> u64 {
     let (sign, mut exp, mut fraction, max_exp) = estimate_parts(double, x);
-    let default_nan = if double { 0x7ff8_0000_0000_0000 } else { 0x7fc0_0000 };
+    let default_nan = if double {
+        0x7ff8_0000_0000_0000
+    } else {
+        0x7fc0_0000
+    };
     if exp == max_exp && fraction != 0 {
         return quiet_nan(double, x);
     }
@@ -964,7 +1006,11 @@ fn rsqrt_estimate(double: bool, x: u64) -> u64 {
         0x80 | (fraction >> 45) & 0x7f
     };
     let result_exp = (if double { 3068 } else { 380 } - exp).div_euclid(2);
-    let a = if scaled < 256 { scaled * 2 + 1 } else { (((scaled >> 1) << 1) + 1) * 2 };
+    let a = if scaled < 256 {
+        scaled * 2 + 1
+    } else {
+        (((scaled >> 1) << 1) + 1) * 2
+    };
     let mut b = 512u64;
     while a * (b + 1) * (b + 1) < 1 << 28 {
         b += 1;
@@ -1031,9 +1077,13 @@ fn two_reg(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
             (8..=11, _) if size == 3 && !(opcode == 10 && u) => {
                 u128::from(int_two_reg(opcode, u, 64, lane(n, 64, 0))?)
             }
-            (20, _) if size < 3 => u128::from(saturating_narrow(lane(n, 2 * bits, 0), bits, !u, !u)),
+            (20, _) if size < 3 => {
+                u128::from(saturating_narrow(lane(n, 2 * bits, 0), bits, !u, !u))
+            }
             // SQXTUN: signed source, unsigned saturated result.
-            (18, true) if size < 3 => u128::from(saturating_narrow(lane(n, 2 * bits, 0), bits, true, false)),
+            (18, true) if size < 3 => {
+                u128::from(saturating_narrow(lane(n, 2 * bits, 0), bits, true, false))
+            }
             _ => return None,
         }
     } else {
@@ -1054,7 +1104,9 @@ fn two_reg(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
                     sum
                 }
             }),
-            (5, false) if size == 0 => build(8, total / 8, |i| u64::from(lane(n, 8, i).count_ones())),
+            (5, false) if size == 0 => {
+                build(8, total / 8, |i| u64::from(lane(n, 8, i).count_ones()))
+            }
             (5, true) if size == 0 => !n & if q { u128::MAX } else { LOW },
             (5, true) if size == 1 => build(8, total / 8, |i| {
                 u64::from((lane(n, 8, i) as u8).reverse_bits())
@@ -1066,7 +1118,9 @@ fn two_reg(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
             (18, true) if size < 3 => narrow_into(
                 d,
                 q,
-                build(bits, 64 / bits, |i| saturating_narrow(lane(n, 2 * bits, i), bits, true, false)),
+                build(bits, 64 / bits, |i| {
+                    saturating_narrow(lane(n, 2 * bits, i), bits, true, false)
+                }),
             ),
             (19, true) if size < 3 => {
                 let source = half(n, q);
@@ -1392,9 +1446,13 @@ fn three_different(cpu: &mut Cpu, word: u32) -> Option<()> {
     let other = |i: u32| extend(lane(hm, bits, i));
     let result = match opcode {
         0 => build(wide, lanes, |i| (narrow(i) + other(i)) as u64),
-        1 => build(wide, lanes, |i| lane(n, wide, i).wrapping_add(other(i) as u64)),
+        1 => build(wide, lanes, |i| {
+            lane(n, wide, i).wrapping_add(other(i) as u64)
+        }),
         2 => build(wide, lanes, |i| (narrow(i) - other(i)) as u64),
-        3 => build(wide, lanes, |i| lane(n, wide, i).wrapping_sub(other(i) as u64)),
+        3 => build(wide, lanes, |i| {
+            lane(n, wide, i).wrapping_sub(other(i) as u64)
+        }),
         4 | 6 => {
             let round = if u { 1_u64 << (bits - 1) } else { 0 };
             let value = build(bits, lanes, |i| {
@@ -1411,7 +1469,9 @@ fn three_different(cpu: &mut Cpu, word: u32) -> Option<()> {
         5 => build(wide, lanes, |i| {
             lane(d, wide, i).wrapping_add((narrow(i) - other(i)).unsigned_abs() as u64)
         }),
-        7 => build(wide, lanes, |i| (narrow(i) - other(i)).unsigned_abs() as u64),
+        7 => build(wide, lanes, |i| {
+            (narrow(i) - other(i)).unsigned_abs() as u64
+        }),
         8 => build(wide, lanes, |i| {
             lane(d, wide, i).wrapping_add((narrow(i) * other(i)) as u64)
         }),
@@ -1470,7 +1530,11 @@ fn shift_immediate(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
                     4 => shift_right(x, bits, right, !u, true),
                     6 => old.wrapping_add(shift_right(x, bits, right, !u, true)),
                     8 => {
-                        let mask = if right >= bits { 0 } else { ones(bits) >> right };
+                        let mask = if right >= bits {
+                            0
+                        } else {
+                            ones(bits) >> right
+                        };
                         (old & !mask) | (shift_right(x, bits, right, false, false) & mask)
                     }
                     _ => {
@@ -1606,10 +1670,7 @@ fn modified_immediate(cpu: &mut Cpu, word: u32) -> Option<()> {
             }
             (value, Action::Move)
         }
-        _ if !op => (
-            replicate32(expand_fp_imm(false, imm8 as u32)),
-            Action::Move,
-        ),
+        _ if !op => (replicate32(expand_fp_imm(false, imm8 as u32)), Action::Move),
         _ => {
             if !q {
                 return None;
@@ -1688,7 +1749,9 @@ fn indexed(cpu: &mut Cpu, word: u32, scalar: bool) -> Option<()> {
             }
         };
         match (u, opcode) {
-            (false, 8) => build(bits, total / bits, |i| lane(n, bits, i).wrapping_mul(element)),
+            (false, 8) => build(bits, total / bits, |i| {
+                lane(n, bits, i).wrapping_mul(element)
+            }),
             (true, 0) => build(bits, total / bits, |i| {
                 lane(d, bits, i).wrapping_add(lane(n, bits, i).wrapping_mul(element))
             }),
@@ -1741,11 +1804,7 @@ fn write_element(
     }
 }
 
-fn simd_memory(
-    cpu: &mut Cpu,
-    memory: &mut AddressSpace,
-    word: u32,
-) -> Result<bool, MemoryError> {
+fn simd_memory(cpu: &mut Cpu, memory: &mut AddressSpace, word: u32) -> Result<bool, MemoryError> {
     let q = bit(word, 30);
     let single = bit(word, 24);
     let post = bit(word, 23);

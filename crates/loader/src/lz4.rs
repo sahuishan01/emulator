@@ -37,10 +37,14 @@ pub fn lz4_decompress(compressed: &[u8], decompressed_size: usize) -> Result<Vec
 
         // Copy literals
         if cursor + literal_len > compressed.len() {
-            return Err(LoadError::Invalid("LZ4 literal length exceeds input bounds"));
+            return Err(LoadError::Invalid(
+                "LZ4 literal length exceeds input bounds",
+            ));
         }
         if output.len() + literal_len > decompressed_size {
-            return Err(LoadError::Invalid("LZ4 output exceeds expected decompressed size"));
+            return Err(LoadError::Invalid(
+                "LZ4 output exceeds expected decompressed size",
+            ));
         }
         output.extend_from_slice(&compressed[cursor..cursor + literal_len]);
         cursor += literal_len;
@@ -58,7 +62,9 @@ pub fn lz4_decompress(compressed: &[u8], decompressed_size: usize) -> Result<Vec
         cursor += 2;
 
         if offset == 0 || offset > output.len() {
-            return Err(LoadError::Invalid("LZ4 match offset is invalid or points out of bounds"));
+            return Err(LoadError::Invalid(
+                "LZ4 match offset is invalid or points out of bounds",
+            ));
         }
 
         // 3. Match length from low nibble (plus minimum match 4)
@@ -81,7 +87,9 @@ pub fn lz4_decompress(compressed: &[u8], decompressed_size: usize) -> Result<Vec
         match_len += 4;
 
         if output.len() + match_len > decompressed_size {
-            return Err(LoadError::Invalid("LZ4 match output exceeds expected decompressed size"));
+            return Err(LoadError::Invalid(
+                "LZ4 match output exceeds expected decompressed size",
+            ));
         }
 
         // Copy matching bytes (byte-by-byte to handle overlapping repeats)
@@ -93,7 +101,9 @@ pub fn lz4_decompress(compressed: &[u8], decompressed_size: usize) -> Result<Vec
     }
 
     if output.len() != decompressed_size {
-        return Err(LoadError::Invalid("LZ4 decompressed size did not match expected size"));
+        return Err(LoadError::Invalid(
+            "LZ4 decompressed size did not match expected size",
+        ));
     }
 
     Ok(output)
@@ -118,10 +128,7 @@ mod tests {
         // Literals: 'A', 'B', 'C', 'D', 'E', 'F'
         // Offset: 6, 0 (0x0006)
         // Then end of sequence: 0 literals, end: token 0x00
-        let compressed = [
-            0x60, b'A', b'B', b'C', b'D', b'E', b'F',
-            0x06, 0x00,
-        ];
+        let compressed = [0x60, b'A', b'B', b'C', b'D', b'E', b'F', 0x06, 0x00];
         let decompressed = lz4_decompress(&compressed, 10).expect("decompress should succeed");
         assert_eq!(&decompressed, b"ABCDEFABCD");
     }

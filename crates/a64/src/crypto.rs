@@ -203,7 +203,11 @@ pub(crate) fn aes_round(d: u128, n: u128, decrypt: bool) -> u128 {
 }
 
 pub(crate) fn aes_mix(n: u128, inverse: bool) -> u128 {
-    let coefficients: [u8; 4] = if inverse { [14, 11, 13, 9] } else { [2, 3, 1, 1] };
+    let coefficients: [u8; 4] = if inverse {
+        [14, 11, 13, 9]
+    } else {
+        [2, 3, 1, 1]
+    };
     let state = bytes(n);
     let mut out = [0u8; 16];
     for column in 0..4 {
@@ -282,7 +286,11 @@ mod tests {
         let value = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128;
         assert_eq!(aes_mix(aes_mix(value, false), true), value);
         // FIPS-197 column example: db 13 53 45 -> 8e 4d a1 bc.
-        let column = u128::from_le_bytes([0xdb, 0x13, 0x53, 0x45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(&aes_mix(column, false).to_le_bytes()[..4], &[0x8e, 0x4d, 0xa1, 0xbc]);
+        let column =
+            u128::from_le_bytes([0xdb, 0x13, 0x53, 0x45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            &aes_mix(column, false).to_le_bytes()[..4],
+            &[0x8e, 0x4d, 0xa1, 0xbc]
+        );
     }
 }

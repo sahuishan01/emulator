@@ -69,13 +69,24 @@ impl<'a> Pfs0Archive<'a> {
 
         for i in 0..num_files as usize {
             let entry_offset = PFS0_HEADER_SIZE + i * PFS0_FILE_ENTRY_SIZE;
-            let file_data_offset = u64::from_le_bytes(data[entry_offset..entry_offset + 8].try_into().unwrap());
-            let file_data_size = u64::from_le_bytes(data[entry_offset + 8..entry_offset + 16].try_into().unwrap());
-            let name_offset = u32::from_le_bytes(data[entry_offset + 16..entry_offset + 20].try_into().unwrap()) as usize;
+            let file_data_offset =
+                u64::from_le_bytes(data[entry_offset..entry_offset + 8].try_into().unwrap());
+            let file_data_size = u64::from_le_bytes(
+                data[entry_offset + 8..entry_offset + 16]
+                    .try_into()
+                    .unwrap(),
+            );
+            let name_offset = u32::from_le_bytes(
+                data[entry_offset + 16..entry_offset + 20]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
             // Bytes 20..24 are reserved/zero
 
             if name_offset >= string_table.len() {
-                return Err(LoadError::Invalid("PFS0 filename offset out of string table bounds"));
+                return Err(LoadError::Invalid(
+                    "PFS0 filename offset out of string table bounds",
+                ));
             }
 
             // Find null terminator
@@ -97,7 +108,9 @@ impl<'a> Pfs0Archive<'a> {
                 .ok_or(LoadError::AddressOverflow)?;
 
             if absolute_end > data.len() as u64 {
-                return Err(LoadError::Invalid("PFS0 file entry payload extends beyond archive EOF"));
+                return Err(LoadError::Invalid(
+                    "PFS0 file entry payload extends beyond archive EOF",
+                ));
             }
 
             files.push(Pfs0FileEntry {
@@ -150,9 +163,7 @@ impl<'a> Pfs0Archive<'a> {
                 || entry_clean
                     .strip_suffix(".nso")
                     .unwrap_or(&entry_clean)
-                    .eq_ignore_ascii_case(
-                        clean_name.strip_suffix(".nso").unwrap_or(&clean_name),
-                    )
+                    .eq_ignore_ascii_case(clean_name.strip_suffix(".nso").unwrap_or(&clean_name))
             {
                 let start = entry.offset as usize;
                 let end = start + (entry.size as usize);

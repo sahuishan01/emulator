@@ -153,10 +153,20 @@ pub fn pitch_downsample(x: &[&[f32]], x_lp: &mut [f32], len: usize) {
         *v *= tmp;
     }
     let c1 = 0.8f32;
-    let num = [l[0] + 0.8, l[1] + c1 * l[0], l[2] + c1 * l[1], l[3] + c1 * l[2], c1 * l[3]];
+    let num = [
+        l[0] + 0.8,
+        l[1] + c1 * l[0],
+        l[2] + c1 * l[1],
+        l[3] + c1 * l[2],
+        c1 * l[3],
+    ];
     let mut mem = [0f32; 5];
     for v in &mut x_lp[..half] {
-        let sum = *v + num[0] * mem[0] + num[1] * mem[1] + num[2] * mem[2] + num[3] * mem[3]
+        let sum = *v
+            + num[0] * mem[0]
+            + num[1] * mem[1]
+            + num[2] * mem[2]
+            + num[3] * mem[3]
             + num[4] * mem[4];
         mem = [*v, mem[0], mem[1], mem[2], mem[3]];
         *v = sum;
@@ -180,7 +190,9 @@ pub fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize) -> us
     find_best_pitch(&xcorr, &y4, len >> 2, max_pitch >> 2, &mut best);
     for i in 0..max_pitch >> 1 {
         xcorr[i] = 0.0;
-        if (i as isize - 2 * best[0] as isize).abs() > 2 && (i as isize - 2 * best[1] as isize).abs() > 2 {
+        if (i as isize - 2 * best[0] as isize).abs() > 2
+            && (i as isize - 2 * best[1] as isize).abs() > 2
+        {
             continue;
         }
         let sum = inner(&x_lp[..len >> 1], &y[i..i + (len >> 1)]);

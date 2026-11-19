@@ -175,7 +175,9 @@ impl Program {
                 Op::Add(a, b) => (f32::from_bits(bits[a]) + f32::from_bits(bits[b])).to_bits(),
                 Op::Subtract(a, b) => (f32::from_bits(bits[a]) - f32::from_bits(bits[b])).to_bits(),
                 Op::Multiply(a, b) => (f32::from_bits(bits[a]) * f32::from_bits(bits[b])).to_bits(),
-                Op::Fma(a, b, c) => (f32::from_bits(bits[a]) * f32::from_bits(bits[b]) + f32::from_bits(bits[c])).to_bits(),
+                Op::Fma(a, b, c) => (f32::from_bits(bits[a]) * f32::from_bits(bits[b])
+                    + f32::from_bits(bits[c]))
+                .to_bits(),
                 Op::FMin(a, b) => {
                     let fa = f32::from_bits(bits[a]);
                     let fb = f32::from_bits(bits[b]);
@@ -405,7 +407,14 @@ pub fn decode(code: &[u8], stage: Stage) -> Result<Program, Error> {
                 // LDC: constant buffer read c[bank][offset]
                 let bank = ((w >> 24) & 0x1f) as u8;
                 let offset_val = (w >> 8) as usize;
-                Some(value(&mut values, Type::Bits32, Op::ConstantBuffer { bank, offset: offset_val }))
+                Some(value(
+                    &mut values,
+                    Type::Bits32,
+                    Op::ConstantBuffer {
+                        bank,
+                        offset: offset_val,
+                    },
+                ))
             } else if matches!(
                 w & !0x000180003ff000ff,
                 0xefd87f800007ff00 | 0xeff07f800007ff00

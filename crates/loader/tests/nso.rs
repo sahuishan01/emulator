@@ -55,15 +55,24 @@ fn valid_nso_parses_and_maps_with_bss_and_permissions() {
     assert_eq!(loaded.end, 0x204000);
 
     // Text check
-    assert_eq!(memory.query(0x200000).unwrap().permissions, Permissions::READ_EXECUTE);
+    assert_eq!(
+        memory.query(0x200000).unwrap().permissions,
+        Permissions::READ_EXECUTE
+    );
     assert_eq!(memory.read_u64(0x200000).unwrap(), 0x1122334455667788);
 
     // Ro check
-    assert_eq!(memory.query(0x201000).unwrap().permissions, Permissions::READ);
+    assert_eq!(
+        memory.query(0x201000).unwrap().permissions,
+        Permissions::READ
+    );
     assert_eq!(memory.read_u64(0x201000).unwrap(), 0xaabbccddeeff0011);
 
     // Data check
-    assert_eq!(memory.query(0x202000).unwrap().permissions, Permissions::READ_WRITE);
+    assert_eq!(
+        memory.query(0x202000).unwrap().permissions,
+        Permissions::READ_WRITE
+    );
     assert_eq!(memory.read_u64(0x202000).unwrap(), 0x9988776655443322);
 
     // BSS check (zeroed)
@@ -91,12 +100,16 @@ fn nso_program_loads_multiple_modules_sequentially() {
     let mut memory = AddressSpace::default();
     let mut program = emulator_loader::NsoProgram::new();
 
-    let mod1 = program.load_module("main", &nso1, &mut memory, 0x100000).unwrap();
+    let mod1 = program
+        .load_module("main", &nso1, &mut memory, 0x100000)
+        .unwrap();
     assert_eq!(mod1.base, 0x100000);
     assert_eq!(mod1.end, 0x104000);
 
     // Second module should automatically place after first module if next_base is smaller
-    let mod2 = program.load_module("subsdk0", &nso2, &mut memory, 0x100000).unwrap();
+    let mod2 = program
+        .load_module("subsdk0", &nso2, &mut memory, 0x100000)
+        .unwrap();
     assert_eq!(mod2.base, 0x104000);
     assert_eq!(mod2.end, 0x109000); // 3 pages code/data + 2 pages BSS = 5 pages = 0x5000
 
@@ -105,7 +118,9 @@ fn nso_program_loads_multiple_modules_sequentially() {
     assert_eq!(program.modules()[1].name, "subsdk0");
 
     // Duplicate module names are rejected
-    assert!(program.load_module("main", &nso1, &mut memory, 0x200000).is_err());
+    assert!(program
+        .load_module("main", &nso1, &mut memory, 0x200000)
+        .is_err());
 }
 
 #[test]
@@ -131,7 +146,8 @@ fn test_nso_horizon_flags_at_0xc_and_non_page_aligned_sizes() {
     data[0x34..0x38].copy_from_slice(&0x3000u32.to_le_bytes());
     data[0x38..0x3c].copy_from_slice(&0x500u32.to_le_bytes());
 
-    let image = NsoImage::parse(&data).expect("parse NSO with flags at 0xC and non-page-aligned segment sizes");
+    let image = NsoImage::parse(&data)
+        .expect("parse NSO with flags at 0xC and non-page-aligned segment sizes");
     assert_eq!(image.segments()[0].file_size, 0x1234);
     assert_eq!(image.segments()[0].memory_size, 0x2000); // rounded up to page size
 }
@@ -142,7 +158,7 @@ fn test_nso_section_sha256_verification_at_offset_0xa0() {
     data[0..4].copy_from_slice(b"NSO0");
     data[4..8].copy_from_slice(&0u32.to_le_bytes()); // version
     data[8..12].copy_from_slice(&0u32.to_le_bytes()); // reserved = 0
-    // Flags at 0xC: enable hash checking for text (bit 3 = 0x8), ro (bit 4 = 0x10), data (bit 5 = 0x20) -> 0x38
+                                                      // Flags at 0xC: enable hash checking for text (bit 3 = 0x8), ro (bit 4 = 0x10), data (bit 5 = 0x20) -> 0x38
     data[0xC..0x10].copy_from_slice(&0x38u32.to_le_bytes());
 
     // Text: file offset 0x100, size 0x1000
@@ -175,13 +191,14 @@ fn test_nso_section_sha256_verification_at_offset_0xa0() {
     data[0xC0..0xE0].copy_from_slice(&ro_hash);
     data[0xE0..0x100].copy_from_slice(&data_hash);
 
-    let image = NsoImage::parse(&data).expect("NSO with correct SHA-256 hashes at 0xA0/0xC0/0xE0 should succeed");
+    let image = NsoImage::parse(&data)
+        .expect("NSO with correct SHA-256 hashes at 0xA0/0xC0/0xE0 should succeed");
     assert_eq!(image.segments()[0].file_size, 0x1000);
 
     // Now corrupt the text hash at 0xA0 and verify rejection
     data[0xA0] ^= 0xFF;
     let err = NsoImage::parse(&data).expect_err("corrupted SHA-256 hash must be rejected");
-    assert!(err.to_string().contains("NSO section SHA-256 hash mismatch"));
+    assert!(err
+        .to_string()
+        .contains("NSO section SHA-256 hash mismatch"));
 }
-
-

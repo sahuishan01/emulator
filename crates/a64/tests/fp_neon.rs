@@ -48,18 +48,13 @@ fn test_scalar_f32_arithmetic() {
 
     let code = [
         // FADD S2, S0, S1: 0x1e202800 | (1 << 16) | (0 << 5) | 2
-        0x1e212802,
-        // FSUB S3, S0, S1: 0x1e203800 | (1 << 16) | (0 << 5) | 3
-        0x1e213803,
-        // FMUL S4, S0, S1: 0x1e200800 | (1 << 16) | (0 << 5) | 4
-        0x1e210804,
-        // FDIV S5, S0, S1: 0x1e201800 | (1 << 16) | (0 << 5) | 5
+        0x1e212802, // FSUB S3, S0, S1: 0x1e203800 | (1 << 16) | (0 << 5) | 3
+        0x1e213803, // FMUL S4, S0, S1: 0x1e200800 | (1 << 16) | (0 << 5) | 4
+        0x1e210804, // FDIV S5, S0, S1: 0x1e201800 | (1 << 16) | (0 << 5) | 5
         0x1e211805,
         // FNEG S6, S0: 0x1e204000 with op=2 (0x1e214000) | (0 << 5) | 6
-        0x1e214006,
-        // FABS S7, S6: op=1 (0x1e20c000) | (6 << 5) | 7
-        0x1e20c0c7,
-        // SVC #0x42
+        0x1e214006, // FABS S7, S6: op=1 (0x1e20c000) | (6 << 5) | 7
+        0x1e20c0c7, // SVC #0x42
         0xd4000841,
     ];
 
@@ -92,12 +87,9 @@ fn test_scalar_f64_arithmetic_and_fma() {
 
     let code = [
         // FMADD D3, D0, D1, D2: type=1 (bit 22), sub=0, neg=0 -> 0x1f400000 | (1 << 16) | (2 << 10) | (0 << 5) | 3
-        0x1f410803,
-        // FMSUB D4, D0, D1, D2: sub=1 (bit 21) -> 0x1f610804
-        0x1f610804,
-        // FSQRT D5, D0: 1-source double (0x1e61c000) | (0 << 5) | 5
-        0x1e61c005,
-        // SVC #1
+        0x1f410803, // FMSUB D4, D0, D1, D2: sub=1 (bit 21) -> 0x1f610804
+        0x1f610804, // FSQRT D5, D0: 1-source double (0x1e61c000) | (0 << 5) | 5
+        0x1e61c005, // SVC #1
         0xd4000021,
     ];
 
@@ -189,14 +181,12 @@ fn test_conversions_and_fmov() {
 
     let code = [
         // SCVTF S0, W0: 0x1e220000 | (0 << 5) | 0
-        0x1e220000,
-        // FCVT D1, S0 (single to double): 0x1e22c000 | (0 << 5) | 1
+        0x1e220000, // FCVT D1, S0 (single to double): 0x1e22c000 | (0 << 5) | 1
         0x1e22c001,
         // FCVTZS W2, D1 (double to signed int): 0x1e780000 | (1 << 5) | 2
         0x1e780022,
         // FMOV W3, S0: 0x1e260000 | (0 << 5) | 3 (0x1e27.... is the reverse FMOV Sd, Wn)
-        0x1e260003,
-        // SVC #99
+        0x1e260003, // SVC #99
         0xd4000c61,
     ];
 
@@ -225,14 +215,12 @@ fn test_simd_fp_load_store_and_vector_ops() {
 
     let code = [
         // STR Q0, [X10]: 0x3d800000 | (10 << 5) | 0
-        0x3d800140,
-        // LDR Q1, [X10]: 0x3dc00000 | (10 << 5) | 1
+        0x3d800140, // LDR Q1, [X10]: 0x3dc00000 | (10 << 5) | 1
         0x3dc00141,
         // EOR V2.16B, V0.16B, V1.16B -> should be all zeros: 0x6e201c00 | (1 << 16) | (0 << 5) | 2
         0x6e211c02,
         // ORR V3.16B, V0.16B, V1.16B -> should equal Q0: 0x4ea01c00 | (1 << 16) | (0 << 5) | 3
-        0x4ea11c03,
-        // SVC #7
+        0x4ea11c03, // SVC #7
         0xd40000e1,
     ];
 
@@ -246,9 +234,15 @@ fn test_simd_fp_load_store_and_vector_ops() {
         }
     }
 
-    assert_eq!(cpu.read_v_u128(1), 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128);
+    assert_eq!(
+        cpu.read_v_u128(1),
+        0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128
+    );
     assert_eq!(cpu.read_v_u128(2), 0);
-    assert_eq!(cpu.read_v_u128(3), 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128);
+    assert_eq!(
+        cpu.read_v_u128(3),
+        0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128
+    );
 }
 
 #[test]
@@ -261,20 +255,13 @@ fn test_simd_fp_single_pre_post_index_and_register_offset() {
 
     let code = [
         // 0: str q0, [sp, #-16]! (0x3c9f0fe0)
-        0x3c9f0fe0,
-        // 4: ldr q3, [sp], #16 (0x3cc107e3)
-        0x3cc107e3,
-        // 8: str d1, [sp, #-8]! (0xfc1f8fe1)
-        0xfc1f8fe1,
-        // 12: ldr d4, [sp], #8 (0xfc4087e4)
-        0xfc4087e4,
-        // 16: str s2, [sp, #-4]! (0xbc1fcfe2)
-        0xbc1fcfe2,
-        // 20: ldr s5, [sp], #4 (0xbc4047e5)
-        0xbc4047e5,
-        // 24: ldr q6, [x0, x1] (0x3ce16806)
-        0x3ce16806,
-        // 28: SVC #99
+        0x3c9f0fe0, // 4: ldr q3, [sp], #16 (0x3cc107e3)
+        0x3cc107e3, // 8: str d1, [sp, #-8]! (0xfc1f8fe1)
+        0xfc1f8fe1, // 12: ldr d4, [sp], #8 (0xfc4087e4)
+        0xfc4087e4, // 16: str s2, [sp, #-4]! (0xbc1fcfe2)
+        0xbc1fcfe2, // 20: ldr s5, [sp], #4 (0xbc4047e5)
+        0xbc4047e5, // 24: ldr q6, [x0, x1] (0x3ce16806)
+        0x3ce16806, // 28: SVC #99
         0xd4000c61,
     ];
 
@@ -298,11 +285,16 @@ fn test_simd_fp_single_pre_post_index_and_register_offset() {
     assert_eq!(cpu.read_v_u128(3), q_val);
     assert_eq!(cpu.read_v_u64(4), 0xbeef_cafe_face_feed);
     assert_eq!(cpu.read_v_u32(5), 0x1234_5678);
-    assert_eq!(cpu.read_v_u128(6), (u128::from(0x5555_6666_7777_8888u64) << 64) | u128::from(0x1111_2222_3333_4444u64));
+    assert_eq!(
+        cpu.read_v_u128(6),
+        (u128::from(0x5555_6666_7777_8888u64) << 64) | u128::from(0x1111_2222_3333_4444u64)
+    );
 }
 
 fn lanes32(v: &[u32; 4]) -> u128 {
-    v.iter().enumerate().fold(0u128, |acc, (i, &x)| acc | (u128::from(x) << (32 * i)))
+    v.iter()
+        .enumerate()
+        .fold(0u128, |acc, (i, &x)| acc | (u128::from(x) << (32 * i)))
 }
 
 #[test]
@@ -317,10 +309,32 @@ fn reciprocal_and_rsqrt_estimates_match_arm_tables() {
     ];
     let (mut cpu, mut memory) = setup_cpu_with_code(&code);
     let one = 1.0f32.to_bits();
-    cpu.write_v_u128(0, lanes32(&[one, 2.0f32.to_bits(), 0, f32::NEG_INFINITY.to_bits()]));
-    cpu.write_v_u128(1, lanes32(&[one, 4.0f32.to_bits(), (-1.0f32).to_bits(), f32::INFINITY.to_bits()]));
-    cpu.write_v_u128(3, u128::from(1.0f64.to_bits()) | u128::from(0.5f64.to_bits()) << 64);
-    cpu.write_v_u128(6, lanes32(&[3.0f32.to_bits(), 7.0f32.to_bits(), 1.0e-3f32.to_bits(), (-5.0f32).to_bits()]));
+    cpu.write_v_u128(
+        0,
+        lanes32(&[one, 2.0f32.to_bits(), 0, f32::NEG_INFINITY.to_bits()]),
+    );
+    cpu.write_v_u128(
+        1,
+        lanes32(&[
+            one,
+            4.0f32.to_bits(),
+            (-1.0f32).to_bits(),
+            f32::INFINITY.to_bits(),
+        ]),
+    );
+    cpu.write_v_u128(
+        3,
+        u128::from(1.0f64.to_bits()) | u128::from(0.5f64.to_bits()) << 64,
+    );
+    cpu.write_v_u128(
+        6,
+        lanes32(&[
+            3.0f32.to_bits(),
+            7.0f32.to_bits(),
+            1.0e-3f32.to_bits(),
+            (-5.0f32).to_bits(),
+        ]),
+    );
     loop {
         if let StepEvent::SupervisorCall { immediate } = cpu.step(&mut memory).unwrap() {
             assert_eq!(immediate, 7);
@@ -331,7 +345,10 @@ fn reciprocal_and_rsqrt_estimates_match_arm_tables() {
         cpu.read_v_u128(4),
         lanes32(&[0x3f7f_8000, 0x3eff_8000, 0x7f80_0000, 0x8000_0000])
     );
-    assert_eq!(cpu.read_v_u128(5), lanes32(&[0x3f7f_8000, 0x3eff_8000, 0x7fc0_0000, 0]));
+    assert_eq!(
+        cpu.read_v_u128(5),
+        lanes32(&[0x3f7f_8000, 0x3eff_8000, 0x7fc0_0000, 0])
+    );
     assert_eq!(
         cpu.read_v_u128(2),
         u128::from(0x3fef_f000_0000_0000u64) | u128::from(0x3fff_f000_0000_0000u64) << 64
@@ -349,10 +366,9 @@ fn sqxtun_saturates_signed_lanes_to_unsigned_and_keeps_upper_half_for_v2() {
     // sqxtun v1.8b, v1.8h ; sqxtun2 v2.16b, v3.8h ; sqxtun b4, h5
     let (mut cpu, mut memory) = setup_cpu_with_code(&[0x2e212821, 0x6e212862, 0x7e2128a4]);
     let halves: [i16; 8] = [-1, 0, 1, 127, 128, 255, 256, i16::MIN];
-    let packed = halves
-        .iter()
-        .enumerate()
-        .fold(0u128, |acc, (i, &h)| acc | (u128::from(h as u16) << (16 * i)));
+    let packed = halves.iter().enumerate().fold(0u128, |acc, (i, &h)| {
+        acc | (u128::from(h as u16) << (16 * i))
+    });
     cpu.v[1] = packed;
     cpu.v[3] = packed;
     cpu.v[2] = 0xaaaa_aaaa_aaaa_aaaa_1122_3344_5566_7788;
@@ -362,6 +378,9 @@ fn sqxtun_saturates_signed_lanes_to_unsigned_and_keeps_upper_half_for_v2() {
     }
     let expected: u64 = u64::from_le_bytes([0, 0, 1, 127, 128, 255, 255, 0]);
     assert_eq!(cpu.v[1], u128::from(expected));
-    assert_eq!(cpu.v[2], (u128::from(expected) << 64) | 0x1122_3344_5566_7788);
+    assert_eq!(
+        cpu.v[2],
+        (u128::from(expected) << 64) | 0x1122_3344_5566_7788
+    );
     assert_eq!(cpu.v[4], 0xff);
 }

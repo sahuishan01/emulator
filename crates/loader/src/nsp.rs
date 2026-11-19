@@ -11,7 +11,7 @@
 
 use crate::cnmt::Cnmt;
 use crate::nca::{decrypt_nca3_header, NcaContentType, NcaDecryptedHeader, NcaFsHeader, NcaFsType};
-use crate::pfs0::{HFS0_MAGIC, PFS0_MAGIC, Pfs0Archive};
+use crate::pfs0::{Pfs0Archive, HFS0_MAGIC, PFS0_MAGIC};
 use crate::ticket::Ticket;
 use crate::LoadError;
 use emulator_crypto::keys::KeyFile;
@@ -268,7 +268,9 @@ impl<'a> NspArchive<'a> {
 
         if header_decrypt_failed {
             let detail = match &last_header_error {
-                Some(LoadError::Invalid(msg)) if *msg == "NCA3 magic is missing" => "NCA3 magic missing",
+                Some(LoadError::Invalid(msg)) if *msg == "NCA3 magic is missing" => {
+                    "NCA3 magic missing"
+                }
                 Some(LoadError::Invalid(msg)) => *msg,
                 _ => "decryption error",
             };
@@ -286,7 +288,9 @@ impl<'a> NspArchive<'a> {
             ));
         }
 
-        Err(LoadError::Invalid("NSP archive contains no valid Program NCA"))
+        Err(LoadError::Invalid(
+            "NSP archive contains no valid Program NCA",
+        ))
     }
 
     /// Locate the raw bytes of the Control NCA inside the NSP, if present.

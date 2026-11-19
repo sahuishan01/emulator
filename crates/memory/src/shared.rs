@@ -134,7 +134,9 @@ impl BackingSlice {
             .slices
             .borrow()
             .iter()
-            .filter(|&(&(offset, len), _)| offset < range.offset + range.length && range.offset < offset + len)
+            .filter(|&(&(offset, len), _)| {
+                offset < range.offset + range.length && range.offset < offset + len
+            })
             .map(|(_, count)| count)
             .sum()
     }

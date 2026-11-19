@@ -42,7 +42,11 @@ pub fn bits2pulses(band: usize, lm: i32, bits: i32) -> i32 {
             lo = mid;
         }
     }
-    let lo_bits = if lo == 0 { -1 } else { i32::from(cache[lo as usize]) };
+    let lo_bits = if lo == 0 {
+        -1
+    } else {
+        i32::from(cache[lo as usize])
+    };
     if bits - lo_bits <= i32::from(cache[hi as usize]) - bits {
         lo
     } else {
@@ -62,8 +66,7 @@ pub fn pulses2bits(band: usize, lm: i32, pulses: i32) -> i32 {
 pub fn init_caps(cap: &mut [i32; NB_EBANDS], lm: usize, c: usize) {
     for (i, cap) in cap.iter_mut().enumerate() {
         let n = i32::from(EBANDS[i + 1] - EBANDS[i]) << lm;
-        *cap = (i32::from(CACHE_CAPS50[NB_EBANDS * (2 * lm + c - 1) + i]) + 64) * c as i32 * n
-            >> 2;
+        *cap = (i32::from(CACHE_CAPS50[NB_EBANDS * (2 * lm + c - 1) + i]) + 64) * c as i32 * n >> 2;
     }
 }
 
@@ -121,7 +124,8 @@ pub fn compute_allocation(
         let w = band_width(j);
         thresh[j] = (cc << BITRES).max((3 * w << lm << BITRES) >> 4);
         trim_offset[j] =
-            cc * w * (alloc_trim - 5 - lmi) * (end - j - 1) as i32 * (1 << (lm as u32 + BITRES)) >> 6;
+            cc * w * (alloc_trim - 5 - lmi) * (end - j - 1) as i32 * (1 << (lm as u32 + BITRES))
+                >> 6;
         if w << lm == 1 {
             trim_offset[j] -= cc << BITRES;
         }
@@ -324,8 +328,7 @@ fn interp_bits2pulses(
         if n > 1 {
             excess = (bit - cap[j]).max(0);
             bits[j] = bit - excess;
-            let den = cc * n
-                + i32::from(c == 2 && n > 2 && !dual_stereo && j < intensity);
+            let den = cc * n + i32::from(c == 2 && n > 2 && !dual_stereo && j < intensity);
             let nclogn = den * (i32::from(LOGN400[j]) + log_m);
             let mut offset = (nclogn >> 1) - den * FINE_OFFSET;
             if n == 2 {

@@ -32,5 +32,8 @@ fn main() {
         best = best.min(start.elapsed().as_secs_f64());
     }
     std::hint::black_box(&pcm);
-    println!("emulator-opus {best:.4}s ({:.0}x realtime)", samples as f64 / f64::from(rate) / best);
+    println!(
+        "emulator-opus {best:.4}s ({:.0}x realtime)",
+        samples as f64 / f64::from(rate) / best
+    );
 }

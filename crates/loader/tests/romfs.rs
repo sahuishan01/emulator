@@ -1,6 +1,4 @@
-use emulator_loader::nca::{
-    NcaFsHeader, NcaFsType, NcaHashType, NCA_FS_HEADER_SIZE,
-};
+use emulator_loader::nca::{NcaFsHeader, NcaFsType, NcaHashType, NCA_FS_HEADER_SIZE};
 use emulator_loader::romfs::{build_romfs_image, RomFsArchive, IVFC_MAGIC};
 
 #[test]
@@ -19,7 +17,10 @@ fn test_romfs_archive_directory_hierarchy_and_streaming() {
     assert!(archive.contains_file("/system/version.txt"));
     assert!(!archive.contains_file("nonexistent.txt"));
 
-    assert_eq!(archive.get_file("content/pokemon.pkm").unwrap(), b"Pikachu-025");
+    assert_eq!(
+        archive.get_file("content/pokemon.pkm").unwrap(),
+        b"Pikachu-025"
+    );
     assert_eq!(
         archive.get_file("content/map/lumiose.bin").unwrap(),
         b"LumioseCity3DGrid"
@@ -30,9 +31,7 @@ fn test_romfs_archive_directory_hierarchy_and_streaming() {
 
 #[test]
 fn test_romfs_ivfc_section_parsing() {
-    let files = [
-        ("data/test.bin", b"TrinityEngineDataPayload".as_slice()),
-    ];
+    let files = [("data/test.bin", b"TrinityEngineDataPayload".as_slice())];
     let romfs_raw = build_romfs_image(&files);
 
     // Construct a section payload with IVFC layout:
@@ -57,7 +56,7 @@ fn test_romfs_ivfc_section_parsing() {
     hash_data[8..12].copy_from_slice(&0x20u32.to_le_bytes()); // master hash size
 
     hash_data[12..16].copy_from_slice(&7u32.to_le_bytes()); // max layers
-    // Level table starts at 0x10; level 5 entry at 0x10 + 5 * 0x18.
+                                                            // Level table starts at 0x10; level 5 entry at 0x10 + 5 * 0x18.
     let l5_off = 0x10 + 5 * 24;
     hash_data[l5_off..l5_off + 8].copy_from_slice(&data_offset.to_le_bytes());
     hash_data[l5_off + 8..l5_off + 16].copy_from_slice(&data_size.to_le_bytes());

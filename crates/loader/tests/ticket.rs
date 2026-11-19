@@ -59,7 +59,9 @@ fn test_ticket_parsing_and_signature_types() {
     let rights_id = [0x55; 16];
     let key = [0x77; 16];
 
-    for sig_type in [0x010000, 0x010001, 0x010002, 0x010003, 0x010004, 0x010005, 0x010006] {
+    for sig_type in [
+        0x010000, 0x010001, 0x010002, 0x010003, 0x010004, 0x010005, 0x010006,
+    ] {
         let raw = make_test_ticket(sig_type, "Root-CA00000003-XS0000000c", rights_id, 0, 1, key);
         let parsed = Ticket::parse(&raw).expect("ticket should parse successfully");
         assert_eq!(parsed.signature_type, sig_type);
@@ -74,7 +76,10 @@ fn test_ticket_parsing_and_signature_types() {
 
 #[test]
 fn test_ticket_common_title_key_decryption_and_import() {
-    let rights_id = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0, 0x01];
+    let rights_id = [
+        0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0,
+        0x01,
+    ];
     let raw_title_key = [0x42; 16];
     let titlekek = [0x88; 16];
 
@@ -101,14 +106,20 @@ fn test_ticket_common_title_key_decryption_and_import() {
     keys.add_key("titlekek_02", &titlekek).unwrap();
 
     // Now decryption should succeed and match raw_title_key
-    let decrypted = ticket.decrypt_title_key(&keys).expect("decryption should succeed");
+    let decrypted = ticket
+        .decrypt_title_key(&keys)
+        .expect("decryption should succeed");
     assert_eq!(decrypted, raw_title_key);
 
     // Import into KeyFile
-    ticket.import_into(&mut keys).expect("import should succeed");
+    ticket
+        .import_into(&mut keys)
+        .expect("import should succeed");
 
     // Look up title key in KeyFile by rights ID
-    let looked_up = keys.title_key(&rights_id).expect("title key must be registered");
+    let looked_up = keys
+        .title_key(&rights_id)
+        .expect("title key must be registered");
     assert_eq!(looked_up, &raw_title_key);
 }
 

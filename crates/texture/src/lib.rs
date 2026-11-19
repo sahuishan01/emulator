@@ -239,7 +239,9 @@ pub fn decode_bc7_block(block: &[u8; 16]) -> [[u8; 4]; 16] {
             ((b1 << 1) | p1) as u16,
             ((a1 << 1) | p1) as u16,
         ];
-        let weights = [0u16, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
+        let weights = [
+            0u16, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64,
+        ];
         let mut pixels = [[0u8; 4]; 16];
         for i in 0..16 {
             let idx_bits = if i == 0 { 3 } else { 4 };

@@ -278,8 +278,9 @@ impl CeltDecoder {
                         let e0 = e0 - (0.0f32).max((1.0 + missing) * slope);
                         self.old_band_e[k] = (-20.0f32).max(e0);
                     } else {
-                        self.old_band_e[k] =
-                            self.old_band_e[k].min(self.old_log_e[k]).min(self.old_log_e2[k]);
+                        self.old_band_e[k] = self.old_band_e[k]
+                            .min(self.old_log_e[k])
+                            .min(self.old_log_e2[k]);
                     }
                     self.old_band_e[k] -= safety;
                 }
@@ -334,7 +335,8 @@ impl CeltDecoder {
             0
         };
         bits -= anti_collapse_rsv;
-        let alloc = rate::compute_allocation(start, end, &offsets, &cap, alloc_trim, bits, c, lm, dec);
+        let alloc =
+            rate::compute_allocation(start, end, &offsets, &cap, alloc_trim, bits, c, lm, dec);
         energy::unquant_fine(start, end, &mut self.old_band_e, &alloc.fine_quant, dec, c);
         for ch in 0..cc {
             self.decode_mem[ch].copy_within(n.., 0);
@@ -484,7 +486,15 @@ impl CeltDecoder {
         Ok(())
     }
 
-    fn synthesis(&mut self, c: usize, start: usize, eff_end: usize, is_transient: bool, lm: usize, silence: bool) {
+    fn synthesis(
+        &mut self,
+        c: usize,
+        start: usize,
+        eff_end: usize,
+        is_transient: bool,
+        lm: usize,
+        silence: bool,
+    ) {
         let cc = self.channels;
         let m = 1usize << lm;
         let n = m * SHORT_MDCT_SIZE;
@@ -497,7 +507,16 @@ impl CeltDecoder {
         let out_off = DECODE_BUFFER_SIZE - n;
         let ds = self.downsample;
         if cc == 2 && c == 1 {
-            denormalise_bands(&self.x[..n], &mut self.freq, &self.old_band_e[..NB_EBANDS], start, eff_end, m, ds, silence);
+            denormalise_bands(
+                &self.x[..n],
+                &mut self.freq,
+                &self.old_band_e[..NB_EBANDS],
+                start,
+                eff_end,
+                m,
+                ds,
+                silence,
+            );
             for ch in 0..2 {
                 for b in 0..bcount {
                     let out = &mut self.decode_mem[ch][out_off + nb * b..];
@@ -505,8 +524,26 @@ impl CeltDecoder {
                 }
             }
         } else if cc == 1 && c == 2 {
-            denormalise_bands(&self.x[..n], &mut self.freq, &self.old_band_e[..NB_EBANDS], start, eff_end, m, ds, silence);
-            denormalise_bands(&self.x[n..2 * n], &mut self.freq2, &self.old_band_e[NB_EBANDS..], start, eff_end, m, ds, silence);
+            denormalise_bands(
+                &self.x[..n],
+                &mut self.freq,
+                &self.old_band_e[..NB_EBANDS],
+                start,
+                eff_end,
+                m,
+                ds,
+                silence,
+            );
+            denormalise_bands(
+                &self.x[n..2 * n],
+                &mut self.freq2,
+                &self.old_band_e[NB_EBANDS..],
+                start,
+                eff_end,
+                m,
+                ds,
+                silence,
+            );
             for i in 0..n {
                 self.freq[i] = 0.5 * self.freq[i] + 0.5 * self.freq2[i];
             }
@@ -657,7 +694,13 @@ impl CeltDecoder {
                 }
                 if loss_duration == 0 {
                     let mut ac = [0f32; LPC_ORDER + 1];
-                    plc::autocorr(&exc_buf[LPC_ORDER..], &mut ac, Some(win), OVERLAP, LPC_ORDER);
+                    plc::autocorr(
+                        &exc_buf[LPC_ORDER..],
+                        &mut ac,
+                        Some(win),
+                        OVERLAP,
+                        LPC_ORDER,
+                    );
                     ac[0] *= 1.0001;
                     for (i, a) in ac.iter_mut().enumerate().skip(1) {
                         *a -= *a * (0.008 * 0.008) * (i * i) as f32;
@@ -719,7 +762,8 @@ impl CeltDecoder {
                 }
                 #[allow(clippy::neg_cmp_op_on_partial_ord)]
                 if !(s1 > 0.2 * s2) {
-                    buf[DECODE_BUFFER_SIZE - n..DECODE_BUFFER_SIZE - n + extrapolation_len].fill(0.0);
+                    buf[DECODE_BUFFER_SIZE - n..DECODE_BUFFER_SIZE - n + extrapolation_len]
+                        .fill(0.0);
                 } else if s1 < s2 {
                     let ratio = ((s1 + 1.0) / (s2 + 1.0)).sqrt();
                     for i in 0..OVERLAP {
@@ -738,7 +782,10 @@ impl CeltDecoder {
 
     fn plc_pitch_search(&self) -> usize {
         let mut lp = vec![0f32; DECODE_BUFFER_SIZE >> 1];
-        let chans: Vec<&[f32]> = self.decode_mem[..self.channels].iter().map(|v| &v[..]).collect();
+        let chans: Vec<&[f32]> = self.decode_mem[..self.channels]
+            .iter()
+            .map(|v| &v[..])
+            .collect();
         plc::pitch_downsample(&chans, &mut lp, DECODE_BUFFER_SIZE);
         let p = plc::pitch_search(
             &lp[PLC_PITCH_LAG_MAX >> 1..],
@@ -750,7 +797,14 @@ impl CeltDecoder {
     }
 }
 
-fn tf_decode(start: usize, end: usize, is_transient: bool, tf_res: &mut [i32; NB_EBANDS], lm: usize, dec: &mut RangeDecoder) {
+fn tf_decode(
+    start: usize,
+    end: usize,
+    is_transient: bool,
+    tf_res: &mut [i32; NB_EBANDS],
+    lm: usize,
+    dec: &mut RangeDecoder,
+) {
     let mut budget = dec.storage() as u32 * 8;
     let mut tell = dec.tell() as u32;
     let mut logp = if is_transient { 2 } else { 4 };
@@ -770,7 +824,8 @@ fn tf_decode(start: usize, end: usize, is_transient: bool, tf_res: &mut [i32; NB
     let t = 4 * usize::from(is_transient);
     let mut tf_select = 0;
     if tf_select_rsv
-        && TF_SELECT_TABLE[lm][t + tf_changed as usize] != TF_SELECT_TABLE[lm][t + 2 + tf_changed as usize]
+        && TF_SELECT_TABLE[lm][t + tf_changed as usize]
+            != TF_SELECT_TABLE[lm][t + 2 + tf_changed as usize]
     {
         tf_select = usize::from(dec.bit_logp(1));
     }
@@ -808,7 +863,11 @@ fn comb_filter_inplace(
     let g10 = g1 * COMB_GAINS[tapset1][0];
     let g11 = g1 * COMB_GAINS[tapset1][1];
     let g12 = g1 * COMB_GAINS[tapset1][2];
-    let overlap = if g0 == g1 && t0 == t1 && tapset0 == tapset1 { 0 } else { OVERLAP.min(n) };
+    let overlap = if g0 == g1 && t0 == t1 && tapset0 == tapset1 {
+        0
+    } else {
+        OVERLAP.min(n)
+    };
     let mut x1 = buf[off + 1 - t1];
     let mut x2 = buf[off - t1];
     let mut x3 = buf[off - t1 - 1];

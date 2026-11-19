@@ -123,30 +123,23 @@ fn test_session_from_nca_execution_and_lifecycle() {
     // and exits via SVC #0x07 (ExitProcess)
     let program_code = [
         // MOVZ X0, #42
-        0xd2800540,
-        // SCVTF S0, W0 -> S0 = 42.0
-        0x1e220000,
-        // FCVT D1, S0 -> D1 = 42.0
-        0x1e22c001,
-        // FADD D2, D1, D1 -> D2 = 84.0: 0x1e612822
-        0x1e612822,
-        // FCVTZS X3, D2 -> X3 = 84: sf=1, double=1 -> 0x9e780043
-        0x9e780043,
-        // SVC #0x07 (ExitProcess syscall)
+        0xd2800540, // SCVTF S0, W0 -> S0 = 42.0
+        0x1e220000, // FCVT D1, S0 -> D1 = 42.0
+        0x1e22c001, // FADD D2, D1, D1 -> D2 = 84.0: 0x1e612822
+        0x1e612822, // FCVTZS X3, D2 -> X3 = 84: sf=1, double=1 -> 0x9e780043
+        0x9e780043, // SVC #0x07 (ExitProcess syscall)
         0xd40000e1,
     ];
 
     let nso_bytes = build_minimal_nso(&program_code);
     let npdm_bytes = build_minimal_npdm();
 
-    let exefs_pfs0 = build_pfs0(&[
-        ("main.npdm", &npdm_bytes),
-        ("main.nso", &nso_bytes),
-    ]);
+    let exefs_pfs0 = build_pfs0(&[("main.npdm", &npdm_bytes), ("main.nso", &nso_bytes)]);
 
-    let romfs_raw = build_romfs_image(&[
-        ("pokemon/species.bin", b"PokemonLegendsZA_TrinityEngine".as_slice()),
-    ]);
+    let romfs_raw = build_romfs_image(&[(
+        "pokemon/species.bin",
+        b"PokemonLegendsZA_TrinityEngine".as_slice(),
+    )]);
 
     // Align sections to 0x200 media units
     let mut exefs_section = exefs_pfs0;
@@ -219,10 +212,9 @@ fn test_session_from_nca_execution_and_lifecycle() {
 
     // Encrypt header area with XTS using a known test header_key
     let header_key = [
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f, 0x10,
     ];
 
     let mut encrypted_header_area = header_area.clone();
@@ -257,7 +249,8 @@ fn test_session_from_nca_execution_and_lifecycle() {
     let keys = KeyFile::parse(key_file_text.as_bytes()).expect("parse test keys");
 
     // Load Session from the NCA file!
-    let mut session = Session::from_nca(&nca_file, &keys).expect("Session::from_nca should succeed");
+    let mut session =
+        Session::from_nca(&nca_file, &keys).expect("Session::from_nca should succeed");
 
     // Run session
     let outcome = session.run(100);
