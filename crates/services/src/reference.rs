@@ -255,14 +255,21 @@ impl Rig {
         self.nv = self.open(b"/dev/nvmap");
         assert_eq!(self.io(self.nv, 0xc0080101, &[4096, 0]), 0);
         let handle = self.m.read_u32(0x6004).unwrap();
+        // GPU access follows the guest pages at import: a read-only import is
+        // made from read-only pages (flags are only cache attributes). The
+        // CPU regains write access afterwards; the object stays read-only.
+        if !write {
+            self.m.protect(0x8000, 4096, Permissions::READ).unwrap();
+        }
         assert_eq!(
-            self.io(
-                self.nv,
-                0xc0200104,
-                &[handle, 0, u32::from(write), 4096, 0, 0, 0x8000, 0]
-            ),
+            self.io(self.nv, 0xc0200104, &[handle, 0, 1, 4096, 0, 0, 0x8000, 0]),
             0
         );
+        if !write {
+            self.m
+                .protect(0x8000, 4096, Permissions::READ_WRITE)
+                .unwrap();
+        }
         self.asfd = self.open(b"/dev/nvhost-as-gpu");
         assert_eq!(self.io(self.asfd, INIT, &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 0);
         assert_eq!(

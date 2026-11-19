@@ -89,7 +89,7 @@ impl NvMap {
         code: u32,
         input: &[u8],
         budget: ImportBudget,
-        pin: impl FnOnce(u64, usize, Permissions) -> Option<MemoryView>,
+        mut pin: impl FnMut(u64, usize, Permissions) -> Option<MemoryView>,
     ) -> Result<Vec<u8>, u32> {
         if Some(input.len()) != Self::argument_size(code) {
             return Err(BAD_PARAMETER);
@@ -334,7 +334,8 @@ mod tests {
             assert_eq!(n.imported_usage(), (0, 0));
         }
         let args = words(&[1, 0, 0, 4096, 0, 0, 0x8000, 0]);
-        for (size, rights) in [(4096, Permissions::READ_WRITE), (8192, Permissions::READ)] {
+        // A capability with other rights or size than requested is refused.
+        for (size, rights) in [(4096, Permissions::READ), (8192, Permissions::READ_WRITE)] {
             assert_eq!(
                 n.ioctl(1, 0xc0200104, &args, budget(), |a, _, _| m
                     .pin(a, size, rights)
