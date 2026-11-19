@@ -235,6 +235,13 @@ pub(crate) struct MethodState {
     semaphore: [Option<u32>; 3],
     /// SYNCPOINTA payload (a wait threshold; increments ignore it).
     syncpoint_payload: Option<u32>,
+    /// GPU time for timestamped releases; set per submit by the channel.
+    gpu_time_ns: Option<u64>,
+}
+impl MethodState {
+    pub(crate) fn set_gpu_time(&mut self, time: Option<u64>) {
+        self.gpu_time_ns = time;
+    }
 }
 #[derive(Clone, Debug)]
 enum EngineState {
@@ -790,12 +797,19 @@ impl PreparedBatch {
         let address = u64::from(high) << 32 | u64::from(low);
         match data & 0x1f {
             SEM_RELEASE => {
+                let mut bytes = payload.to_le_bytes().to_vec();
                 if data & 1 << 24 == 0 {
-                    return Err(ExecutionError::Semaphore(
+                    // 16-byte report: payload, zero word, 64-bit timestamp.
+                    let time = self.state.gpu_time_ns.ok_or(ExecutionError::Semaphore(
                         "16-byte release needs a GPU timestamp",
-                    ));
+                    ))?;
+                    if address % 16 != 0 {
+                        return Err(ExecutionError::Semaphore("16-byte release misaligned"));
+                    }
+                    bytes.extend_from_slice(&0u32.to_le_bytes());
+                    bytes.extend_from_slice(&time.to_le_bytes());
                 }
-                self.push_prepared(space, address, payload.to_le_bytes().to_vec(), spans, false)?;
+                self.push_prepared(space, address, bytes, spans, false)?;
                 self.stats.semaphore_releases += 1;
             }
             op @ (SEM_ACQUIRE | SEM_ACQ_GEQ | SEM_ACQ_AND) => {

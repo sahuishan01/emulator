@@ -594,7 +594,13 @@ impl NvDriver {
         c.nvmap = Some(fd);
         Ok(input.to_vec())
     }
-    fn submit(&mut self, at: usize, input: &[u8], output: MemoryView) -> Result<ServiceReply, u32> {
+    fn submit(
+        &mut self,
+        at: usize,
+        input: &[u8],
+        output: MemoryView,
+        time_ns: u64,
+    ) -> Result<ServiceReply, u32> {
         let DeviceObject::Channel(channel) = &self.devices[at].object else {
             unreachable!()
         };
@@ -616,7 +622,7 @@ impl NvDriver {
         }
         let point = channel.syncpoint as usize - 1;
         let (next, mut bytes, work, value) =
-            channel.submit(input, space, self.syncpoints[point])?;
+            channel.submit(input, space, self.syncpoints[point], time_ns)?;
         // Entries passed inline (Ioctl2) are not echoed: the reply is the
         // argument buffer only.
         bytes.truncate(output.len());
@@ -779,7 +785,12 @@ impl NvDriver {
                 bytes.extend_from_slice(&entries);
             }
             return Ok(
-                match self.submit(at, &bytes, output.expect("inout submit")) {
+                match self.submit(
+                    at,
+                    &bytes,
+                    output.expect("inout submit"),
+                    c.virtual_time_ns(),
+                ) {
                     Ok(reply) => reply,
                     Err(error) => reply(&[error]),
                 },

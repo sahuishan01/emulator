@@ -142,9 +142,21 @@ impl ChannelProcessor {
         entries: &[u8],
         class: Option<u32>,
     ) -> Result<(Self, PreparedSubmission), String> {
+        self.prepare_at(space, entries, class, None)
+    }
+    /// As `prepare_for_class`, with the GPU time (ns) stamped into 16-byte
+    /// semaphore releases. Without a time those releases fail explicitly.
+    pub fn prepare_at(
+        &self,
+        space: &GpuAddressSpace,
+        entries: &[u8],
+        class: Option<u32>,
+        gpu_time_ns: Option<u64>,
+    ) -> Result<(Self, PreparedSubmission), String> {
         let mut queue =
             SubmissionQueue::new(space, QueueLimits::default()).map_err(|e| e.to_string())?;
         queue.methods = self.methods.clone();
+        queue.methods.set_gpu_time(gpu_time_ns);
         let id = queue.submit(space, entries).map_err(|e| e.to_string())?;
         if let Some(class) = class {
             if let Some(bad) = queue

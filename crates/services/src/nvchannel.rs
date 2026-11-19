@@ -187,6 +187,7 @@ impl Channel {
         input: &[u8],
         space: &GpuAddressSpace,
         completed: u32,
+        time_ns: u64,
     ) -> Result<(Self, Vec<u8>, PreparedSubmission, u32), u32> {
         if self.context.is_none() {
             return Err(8);
@@ -219,7 +220,7 @@ impl Channel {
 
         let (processor, work) = self
             .processor
-            .prepare_for_class(space, &entries_bytes, self.context)
+            .prepare_at(space, &entries_bytes, self.context, Some(time_ns))
             .map_err(|error| {
                 crate::nv::record_submit_error(error, &entries_bytes);
                 BAD_PARAMETER

@@ -684,3 +684,22 @@ fn syncpoint_increments_are_reported_and_waits_fail() {
         assert_eq!(rig.execute(id), Err(expected));
     }
 }
+#[test]
+fn timestamped_semaphore_release_writes_payload_and_gpu_time() {
+    let mut rig = Rig::new();
+    let entry = rig.entry(&semaphore(16, 0xabcd, 2));
+    let (_, work) = ChannelProcessor::default()
+        .prepare_at(&rig.gpu, &entry, None, Some(0x1122_3344_5566_7788))
+        .unwrap();
+    work.commit();
+    let bytes = rig.bytes();
+    assert_eq!(&bytes[16..20], &0xabcd_u32.to_le_bytes());
+    assert_eq!(&bytes[20..24], &[0; 4]);
+    assert_eq!(&bytes[24..32], &0x1122_3344_5566_7788_u64.to_le_bytes());
+    // Misaligned 16-byte releases fail.
+    let entry = rig.entry(&semaphore(8, 1, 2));
+    let error = ChannelProcessor::default()
+        .prepare_at(&rig.gpu, &entry, None, Some(1))
+        .unwrap_err();
+    assert!(error.contains("16-byte release misaligned"), "{error}");
+}
