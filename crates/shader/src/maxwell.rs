@@ -485,7 +485,12 @@ pub fn decode_word(word: u64) -> Option<Decoded> {
             neg: bit(word, 48),
             sat: bit(word, 50),
         }
-    } else if top & 0xffc0 == 0xe000 {
+    } else if top & 0xff00 == 0xe000 {
+        // Only the observed form: Rc = RZ and bits 47..50 = 0b0111 (meaning
+        // unknown); anything else stays undecoded.
+        if reg(word, 39) != RZ || field(word, 47, 4) != 0b0111 {
+            return None;
+        }
         Instr::Ipa {
             d,
             index: a,

@@ -25,7 +25,7 @@ const TABLE: &[(u16, u16, &str)] = &[
     (0xfff8, 0xef98, "MEMBAR"),
     (0xfff8, 0x50b0, "NOP"),
     // Attributes, constants, memory.
-    (0xffc0, 0xe000, "IPA"),
+    (0xff00, 0xe000, "IPA"),
     (0xfff8, 0xefd8, "ALD"),
     (0xfff8, 0xeff0, "AST"),
     (0xfff8, 0xef90, "LDC"),

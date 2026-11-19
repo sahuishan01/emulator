@@ -42,7 +42,7 @@ fn float_alu_predicates_and_branch() {
     let fadd_imm = (0x3858u64 << 48) | (0x3f800 << 20) | PT_GUARD | 1;
     let fsetp_gt = (0x36b4u64 << 48) | (7 << 39) | (0x40200 << 20) | PT_GUARD | (1 << 8) | 7;
     let bra_p0 = 0xe240_0000_0000_000fu64 | 8 << 20;
-    let ipa = (0xe000u64 << 48) | (0x80 << 28) | (0xff << 20) | PT_GUARD | (0xff << 8) | 4;
+    let ipa = (0xe000u64 << 48) | (0xffu64 << 39) | (0b0111u64 << 47) | (0x80 << 28) | (0xff << 20) | PT_GUARD | (0xff << 8) | 4;
     // FFMA R5, R1, c[1][4], R1  -> 3 * 0.5 + 3
     let ffma_cbuf = (0x4980u64 << 48) | (1 << 39) | (1 << 34) | (1 << 20) | PT_GUARD | (1 << 8) | 5;
     let s = execute(&[
