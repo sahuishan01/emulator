@@ -43,7 +43,6 @@ fn configuration_only(class: u32, offset: u32) -> bool {
                 || (0x800..0x838).contains(&offset)
                 || (0x860..0x8fc).contains(&offset)
         }
-        KEPLER_INLINE_TO_MEMORY_B => offset == 0x100 || (0x180..0x1b0).contains(&offset),
         _ => false,
     }
 }
@@ -105,6 +104,8 @@ pub struct ExecutionStats {
     pub drawn_bytes: usize,
     /// LOAD_CONSTANT_BUFFER bytes (also counted in copied_bytes).
     pub constant_bytes: usize,
+    /// Inline-to-memory bytes (also counted in copied_bytes).
+    pub inline_bytes: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionError {
@@ -134,6 +135,7 @@ pub enum ExecutionError {
     /// (first such byte offset); rendering it would silently ignore state.
     UnmodelledState(u32),
     ConstantBuffer(&'static str),
+    InlineToMemory(&'static str),
 }
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -158,6 +160,7 @@ struct ThreedExtra {
     constant: [Option<u32>; 4],
     /// First recorded 3D state write that the draw/clear models ignore.
     unmodelled: Option<u32>,
+    i2m: crate::i2m::I2m,
 }
 
 const CB_SIZE: u32 = 0x2380;
@@ -165,12 +168,11 @@ const CB_POS: u32 = 0x238c;
 const CB_DATA_FIRST: u32 = 0x2390;
 const CB_DATA_LAST: u32 = 0x23cc;
 /// 3D methods with effects beyond register state that are not modelled:
-/// inline-to-memory LAUNCH_DMA / LOAD_INLINE_DATA and the report semaphore
-/// trigger (SET_REPORT_SEMAPHORE_D). They fail instead of being recorded.
+/// the report semaphore trigger (SET_REPORT_SEMAPHORE_D). They fail instead of being recorded.
 /// Draw begin/end (VERTEX_BEGIN/END_GL 0x1614/0x1618) and report-counter reset
 /// (0x1530) are included so a draw outside the modelled triggers cannot be
 /// recorded as plain state.
-const THREED_ACTIONS: [u32; 6] = [0x1b0, 0x1b4, 0x1b0c, 0x1530, 0x1614, 0x1618];
+const THREED_ACTIONS: [u32; 4] = [0x1b0c, 0x1530, 0x1614, 0x1618];
 /// Methods the draw model turns into draws.
 const DRAW_TRIGGERS: [u32; 4] = [0x1214, 0x17e4, 0x17e8, 0x17ec];
 /// Bytes one constant-buffer upload run may hold (CB_SIZE is at most 64 KiB).
@@ -211,6 +213,7 @@ enum EngineState {
     /// Class without an executor: configuration writes are accepted (they
     /// have no effect until a trigger), every trigger fails explicitly.
     Unimplemented(u32),
+    InlineToMemory(Box<crate::i2m::I2m>),
 }
 #[derive(Debug)]
 enum CopyInput {
@@ -419,9 +422,8 @@ impl MethodState {
                             ..ThreedExtra::default()
                         }),
                     ),
-                    KEPLER_INLINE_TO_MEMORY_B | FERMI_TWOD_A => {
-                        EngineState::Unimplemented(write.data)
-                    }
+                    KEPLER_INLINE_TO_MEMORY_B => EngineState::InlineToMemory(Box::default()),
+                    FERMI_TWOD_A => EngineState::Unimplemented(write.data),
                     _ => return Err(ExecutionError::UnsupportedClass(write.data)),
                 };
                 // This subset binds a class directly. NV object handles and
@@ -436,6 +438,22 @@ impl MethodState {
             let engine = channel
                 .as_mut()
                 .ok_or(ExecutionError::UnboundSubchannel(write.subchannel))?;
+            if let EngineState::InlineToMemory(i2m) = engine {
+                if crate::i2m::I2m::handles(offset) {
+                    for (address, bytes) in i2m.write(offset, write.data)? {
+                        batch.push_prepared(space, address, bytes, &mut spans, false)?;
+                    }
+                    continue;
+                }
+                i2m.require_idle()?;
+                if offset == 0x100 {
+                    continue;
+                }
+                return Err(ExecutionError::UnsupportedMethod {
+                    subchannel: write.subchannel,
+                    offset,
+                });
+            }
             if let EngineState::Unimplemented(class) = engine {
                 if configuration_only(*class, offset) {
                     continue;
@@ -446,6 +464,13 @@ impl MethodState {
                 });
             }
             if let EngineState::Color(registers, draw_registers, extra) = engine {
+                if extra.threed && crate::i2m::I2m::handles(offset) {
+                    for (address, bytes) in extra.i2m.write(offset, write.data)? {
+                        batch.push_prepared(space, address, bytes, &mut spans, false)?;
+                    }
+                    continue;
+                }
+                extra.i2m.require_idle()?;
                 if extra.threed && (CB_SIZE..=CB_DATA_LAST).contains(&offset) {
                     if offset <= CB_POS {
                         extra.constant[((offset - CB_SIZE) / 4) as usize] = Some(write.data);
@@ -636,6 +661,13 @@ impl MethodState {
         if let Some(run) = cb_run.take() {
             batch.flush_constant(space, run, &mut spans)?;
         }
+        for engine in batch.state.channels.iter().flatten() {
+            match engine {
+                EngineState::Color(_, _, extra) => extra.i2m.require_idle()?,
+                EngineState::InlineToMemory(i2m) => i2m.require_idle()?,
+                _ => {}
+            }
+        }
         // A draw or clear anywhere in a batch whose 3D state includes ignored
         // writes (earlier or later in the batch) is rejected as a whole.
         if !(batch.draws.is_empty() && batch.clears.is_empty() && batch.depth_clears.is_empty()) {
@@ -679,6 +711,17 @@ impl PreparedBatch {
         (start, bytes): (u64, Vec<u8>),
         spans: &mut usize,
     ) -> Result<(), ExecutionError> {
+        self.push_prepared(space, start, bytes, spans, true)
+    }
+    /// Queue an ordered write of known bytes (constant buffer or I2M data).
+    fn push_prepared(
+        &mut self,
+        space: &GpuAddressSpace,
+        start: u64,
+        bytes: Vec<u8>,
+        spans: &mut usize,
+        constant: bool,
+    ) -> Result<(), ExecutionError> {
         let total = self.stats.copied_bytes
             + self.stats.cleared_bytes
             + self.stats.drawn_bytes
@@ -697,7 +740,11 @@ impl PreparedBatch {
             .try_reserve(1)
             .map_err(|_| ExecutionError::Capacity)?;
         self.stats.copied_bytes += bytes.len();
-        self.stats.constant_bytes += bytes.len();
+        if constant {
+            self.stats.constant_bytes += bytes.len();
+        } else {
+            self.stats.inline_bytes += bytes.len();
+        }
         self.copies.push(Copy {
             depth: false,
             source: CopyInput::Prepared,

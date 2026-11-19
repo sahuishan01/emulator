@@ -13,6 +13,7 @@ mod sampled_texture;
 pub use sampled_texture::SampledTexture;
 mod graphics;
 pub use graphics::{GraphicsBackend, GraphicsFrame};
+mod i2m;
 mod macros;
 mod methods;
 pub use clear::{ColorClear, BGRA8_UNORM, MAXWELL_B, RGBA8_UNORM};

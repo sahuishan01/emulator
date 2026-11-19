@@ -378,7 +378,7 @@ fn unmodelled_host_methods_fail_explicitly_and_roll_back() {
 }
 #[test]
 fn graphics_engine_classes_bind_but_unimplemented_methods_fail() {
-    for class in [KEPLER_INLINE_TO_MEMORY_B, FERMI_TWOD_A] {
+    for class in [FERMI_TWOD_A] {
         let mut rig = Rig::new();
         let (config, trigger) = if class == FERMI_TWOD_A {
             (0x2ac, 0x8fc)
@@ -478,7 +478,7 @@ fn unmodelled_threed_state_is_recorded_but_blocks_draws_and_clears() {
 }
 #[test]
 fn threed_action_methods_fail_explicitly() {
-    for offset in [0x1b0, 0x1b4, 0x1b0c, 0x1530, 0x1614, 0x1618] {
+    for offset in [0x1b0c, 0x1530, 0x1614, 0x1618] {
         let mut rig = Rig::new();
         let id = rig.submit(&[(0, 0, MAXWELL_B), (0, offset, 0)]);
         assert_eq!(
@@ -499,4 +499,75 @@ fn threed_action_methods_fail_explicitly() {
             offset: 0x3468
         })
     );
+}
+
+fn i2m_setup(sub: u8, length: u32, count: u32, pitch: u32, offset: u64) -> Vec<(u8, u32, u32)> {
+    let address = DATA + offset;
+    vec![
+        (sub, 0x180, length),
+        (sub, 0x184, count),
+        (sub, 0x188, (address >> 32) as u32),
+        (sub, 0x18c, address as u32),
+        (sub, 0x190, pitch),
+    ]
+}
+#[test]
+fn inline_to_memory_writes_pitch_lines_from_3d_and_i2m_classes() {
+    // 3D class: two 3-byte lines, pitch 8, at DATA+4.
+    let mut rig = Rig::new();
+    let mut methods = vec![(0, 0, MAXWELL_B)];
+    methods.extend(i2m_setup(0, 3, 2, 8, 4));
+    methods.extend([
+        (0, 0x1b0, 1),
+        (0, 0x1b4, 0x0403_0201),
+        (0, 0x1b4, 0x0000_0605),
+    ]);
+    let id = rig.submit(&methods);
+    let stats = rig.execute(id).unwrap();
+    assert_eq!(stats.inline_bytes, 6);
+    let bytes = rig.bytes();
+    assert_eq!(&bytes[4..8], &[1, 2, 3, 7]);
+    assert_eq!(&bytes[12..16], &[4, 5, 6, 15]);
+    // I2M class, flush-only completion, one partial-word line.
+    let mut rig = Rig::new();
+    let mut methods = vec![(2, 0, KEPLER_INLINE_TO_MEMORY_B)];
+    methods.extend(i2m_setup(2, 5, 1, 0, 32));
+    methods.extend([(2, 0x1b0, 0x11), (2, 0x1b4, 0xaabb_ccdd), (2, 0x1b4, 0xee)]);
+    let id = rig.submit(&methods);
+    rig.execute(id).unwrap();
+    assert_eq!(&rig.bytes()[32..38], &[0xdd, 0xcc, 0xbb, 0xaa, 0xee, 37]);
+}
+#[test]
+fn inline_to_memory_failures_are_explicit() {
+    let cases: Vec<(Vec<(u8, u32, u32)>, ExecutionError)> = vec![
+        (
+            [i2m_setup(2, 4, 1, 0, 0), vec![(2, 0x1b0, 0)]].concat(),
+            ExecutionError::InlineToMemory("block-linear destination"),
+        ),
+        (
+            [i2m_setup(2, 4, 1, 0, 0), vec![(2, 0x1b0, 0x21)]].concat(),
+            ExecutionError::InlineToMemory("semaphore completion"),
+        ),
+        (
+            [i2m_setup(2, 8, 1, 0, 0), vec![(2, 0x1b0, 1), (2, 0x1b4, 1)]].concat(),
+            ExecutionError::InlineToMemory("launch data incomplete"),
+        ),
+        (
+            vec![(2, 0x1b4, 1)],
+            ExecutionError::InlineToMemory("data without launch"),
+        ),
+        (
+            [i2m_setup(2, 8, 1, 0, 0), vec![(2, 0x1b0, 1), (2, 0x18c, 0)]].concat(),
+            ExecutionError::InlineToMemory("launch data incomplete"),
+        ),
+    ];
+    for (methods, expected) in cases {
+        let mut rig = Rig::new();
+        let mut all = vec![(2, 0, KEPLER_INLINE_TO_MEMORY_B)];
+        all.extend(methods);
+        let id = rig.submit(&all);
+        let before = rig.bytes();
+        assert_eq!(rig.execute(id), Err(expected));
+        assert_eq!(rig.bytes(), before);
+    }
 }
