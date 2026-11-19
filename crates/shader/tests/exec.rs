@@ -64,8 +64,8 @@ fn float_alu_predicates_and_branch() {
 
 #[test]
 fn explicit_failures() {
-    // XMAD is decoded but has no semantics yet.
-    let xmad = (0x5b00u64 << 48) | PT_GUARD;
+    // XMAD CSFU has no modelled semantics.
+    let xmad = (0x5b00u64 << 48) | (3 << 50) | PT_GUARD;
     assert!(matches!(
         execute(&[xmad, EXIT]),
         Err(ExecError::Unsupported {
@@ -98,4 +98,54 @@ fn compare_codes() {
     assert_eq!(compare(13, nan, 2.0), Some(true));
     assert_eq!(compare(8, nan, 0.0), Some(true));
     assert_eq!(compare(16, 0.0, 0.0), None);
+}
+
+fn xmad(d: u64, a: u64, b: u64, c: u64, flags: u64) -> u64 {
+    (0x5b00u64 << 48) | flags | c << 39 | b << 20 | PT_GUARD | a << 8 | d
+}
+
+#[test]
+fn xmad_three_instruction_multiply() {
+    // The usual 32-bit IMUL lowering: lo*lo, merged lo*hi, then hi*lo << 16 + CBCC.
+    const HIGH_A: u64 = 1 << 53;
+    const HIGH_B: u64 = 1 << 35;
+    const PSL: u64 = 1 << 36;
+    const MRG: u64 = 1 << 37;
+    const BCC: u64 = 4 << 50;
+    for (x, y) in [
+        (3u32, 5u32),
+        (0x1234_5678, 0x9abc_def1),
+        (u32::MAX, 7),
+        (0x10000, 0x10000),
+    ] {
+        let s = execute(&[
+            mov32i(0, x, 7),
+            mov32i(1, y, 7),
+            xmad(2, 0, 1, 255, 0),
+            xmad(3, 0, 1, 255, MRG | HIGH_B),
+            xmad(0, 0, 3, 2, HIGH_A | HIGH_B | PSL | BCC),
+            EXIT,
+        ])
+        .expect("runs");
+        assert_eq!(s.registers[0], x.wrapping_mul(y), "{x:#x} * {y:#x}");
+    }
+}
+
+#[test]
+fn xmad_signed_halves_and_modes() {
+    const SIGN_A: u64 = 1 << 48;
+    const CHI: u64 = 2 << 50;
+    const CLO: u64 = 1 << 50;
+    // (-2) * 3 + (c >> 16)
+    let s = execute(&[
+        mov32i(0, 0xfffe, 7),
+        mov32i(1, 3, 7),
+        mov32i(2, 0x0005_0009, 7),
+        xmad(3, 0, 1, 2, SIGN_A | CHI),
+        xmad(4, 0, 1, 2, CLO),
+        EXIT,
+    ])
+    .expect("runs");
+    assert_eq!(s.registers[3] as i32, -6 + 5);
+    assert_eq!(s.registers[4], 0xfffe * 3 + 9);
 }

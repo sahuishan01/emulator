@@ -66,6 +66,20 @@ pub enum MufuOp {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XmadMode {
+    /// c used as is.
+    Full,
+    /// c & 0xffff.
+    Lo,
+    /// c >> 16.
+    Hi,
+    /// Mode 3 (CSFU); semantics not modelled.
+    Csfu,
+    /// c + (b << 16).
+    Bcc,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Instr {
     Nop,
     /// Condition code test in bits 0..4 (0xf = always).
@@ -174,14 +188,26 @@ pub enum Instr {
         sample: u8,
         sat: bool,
     },
-    /// 16x16 multiply-add; `mode` keeps the remaining flag bits for now.
+    /// 16x16 multiply-add: d = (a.half * b.half) [<< 16] + mode(c) [merged].
     Xmad {
         d: u8,
         a: u8,
+        /// Immediate forms carry a plain 16-bit value.
         b: Source,
         c: u8,
-        form: u8,
-        flags: u64,
+        sign_a: bool,
+        sign_b: bool,
+        high_a: bool,
+        high_b: bool,
+        /// Product shifted left by 16.
+        psl: bool,
+        /// Result low half merged with operand B's low half in the high half.
+        mrg: bool,
+        /// Extended (carry-in) add.
+        x: bool,
+        /// Writes the condition code.
+        cc: bool,
+        mode: XmadMode,
     },
     /// Texture fetch with scalar register layout; all fields raw.
     Texs {
@@ -470,18 +496,55 @@ pub fn decode_word(word: u64) -> Option<Decoded> {
             mode: field(word, 54, 2) as u8,
         }
     } else if top & 0xff80 == 0x5b00 || top & 0xfe00 == 0x4e00 || top & 0xfec0 == 0x3600 {
-        let (form, b) = match top >> 8 {
-            0x5b => (0, Source::Reg(reg(word, 20))),
-            0x4e | 0x4f => (1, cbuf(word)),
-            _ => (2, Source::Imm20(field(word, 20, 16) as u32)),
+        // Register form: 3-bit mode; cbuf and immediate forms: 2-bit mode.
+        let (b, high_b, psl, mrg, x, mode) = match top >> 8 {
+            0x5b => (
+                Source::Reg(reg(word, 20)),
+                bit(word, 35),
+                bit(word, 36),
+                bit(word, 37),
+                bit(word, 38),
+                field(word, 50, 3),
+            ),
+            0x4e | 0x4f => (
+                cbuf(word),
+                bit(word, 52),
+                bit(word, 55),
+                bit(word, 56),
+                bit(word, 54),
+                field(word, 50, 2),
+            ),
+            _ => (
+                Source::Imm20(field(word, 20, 16) as u32),
+                false,
+                bit(word, 36),
+                bit(word, 37),
+                bit(word, 38),
+                field(word, 50, 2),
+            ),
+        };
+        let mode = match mode {
+            0 => XmadMode::Full,
+            1 => XmadMode::Lo,
+            2 => XmadMode::Hi,
+            3 => XmadMode::Csfu,
+            4 => XmadMode::Bcc,
+            _ => return None,
         };
         Instr::Xmad {
             d,
             a,
             b,
             c: reg(word, 39),
-            form,
-            flags: word & 0x00ff_8000_0000_0000,
+            sign_a: bit(word, 48),
+            sign_b: bit(word, 49),
+            high_a: bit(word, 53),
+            high_b,
+            psl,
+            mrg,
+            x,
+            cc: bit(word, 47),
+            mode,
         }
     } else if top & 0xfe00 == 0xd800 {
         Instr::Texs {

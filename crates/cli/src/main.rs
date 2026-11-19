@@ -1028,6 +1028,14 @@ fn print_run_report(
                 Ok(blocks) => println!("    cfg: {blocks} reachable blocks"),
                 Err(e) => println!("    cfg: {e:?}"),
             }
+            match &record.exec {
+                Some(Ok(())) => println!("    exec (zero inputs): exits"),
+                Some(Err(e)) => println!("    exec (zero inputs): {e:?}"),
+                None => {}
+            }
+            for (o, form) in &record.forms {
+                println!("    form code+{o:#x}: {form}");
+            }
         }
     }
     let total: u64 = samples.values().sum();

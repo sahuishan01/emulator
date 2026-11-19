@@ -2,11 +2,11 @@
 //!
 //! Runs one invocation over the [`Cfg`] with scalar f32 semantics so the
 //! decoder and the later SPIR-V translation have an independent reference.
-//! Forms whose semantics are not modelled (XMAD, texture fetches, IADD with
+//! Forms whose semantics are not modelled (XMAD CSFU/carry/CC, texture fetches, IADD with
 //! carry or saturation, condition-code control flow) fail explicitly.
 
 use crate::cfg::{Cfg, Terminator};
-use crate::maxwell::{Instr, Listing, MufuOp, Pred, Source, PT, RZ};
+use crate::maxwell::{Instr, Listing, MufuOp, Pred, Source, XmadMode, PT, RZ};
 
 /// Inputs an invocation reads from outside the register file.
 pub trait Environment {
@@ -413,6 +413,52 @@ fn step(at: usize, instr: Instr, env: &dyn Environment, s: &mut State) -> Result
                 v
             };
             s.set(d, saturate(v, sat).to_bits())
+        }
+        Instr::Xmad {
+            d,
+            a,
+            b,
+            c,
+            sign_a,
+            sign_b,
+            high_a,
+            high_b,
+            psl,
+            mrg,
+            x: false,
+            cc: false,
+            mode,
+        } if mode != XmadMode::Csfu => {
+            let half = |v: u32, high: bool, signed: bool| -> u32 {
+                let h = if high { v >> 16 } else { v & 0xffff };
+                if signed {
+                    h as u16 as i16 as i32 as u32
+                } else {
+                    h
+                }
+            };
+            let bv = match b {
+                // Immediate forms hold an unsigned 16-bit value.
+                Source::Imm20(i) => i & 0xffff,
+                _ => operand(s, b, false)?,
+            };
+            let mut product = half(s.reg(a), high_a, sign_a).wrapping_mul(half(bv, high_b, sign_b));
+            if psl {
+                product <<= 16;
+            }
+            let cv = s.reg(c);
+            let addend = match mode {
+                XmadMode::Full => cv,
+                XmadMode::Lo => cv & 0xffff,
+                XmadMode::Hi => cv >> 16,
+                XmadMode::Bcc => cv.wrapping_add(bv << 16),
+                XmadMode::Csfu => unreachable!(),
+            };
+            let mut v = product.wrapping_add(addend);
+            if mrg {
+                v = (v & 0xffff) | (bv << 16);
+            }
+            s.set(d, v)
         }
         _ => return Err(ExecError::Unsupported { at, instr }),
     }

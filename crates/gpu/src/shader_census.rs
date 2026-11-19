@@ -31,6 +31,52 @@ pub struct ShaderRecord {
     pub undecoded_examples: Vec<(usize, u64)>,
     /// Control-flow graph: reachable block count, or why it failed.
     pub cfg: Result<usize, emulator_shader::cfg::CfgError>,
+    /// Distinct XMAD and texture instruction forms (offset, decoded), capped.
+    pub forms: Vec<(usize, String)>,
+    /// Reference executor with every constant and attribute reading zero:
+    /// steps-free outcome, or the first explicit failure.
+    pub exec: Option<Result<(), emulator_shader::exec::ExecError>>,
+}
+
+const MAX_FORMS: usize = 48;
+
+/// Probe environment: every input reads 0.
+struct Zeros;
+impl emulator_shader::exec::Environment for Zeros {
+    fn constant(&self, _: u8, _: u32) -> Option<u32> {
+        Some(0)
+    }
+    fn attribute(&self, _: u16) -> Option<u32> {
+        Some(0)
+    }
+}
+
+fn forms(listing: &emulator_shader::maxwell::Listing) -> Vec<(usize, String)> {
+    use emulator_shader::maxwell::Instr;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (at, d) in &listing.instructions {
+        let key = match d.instr {
+            // Distinct by flags and operand kind, not register numbers.
+            Instr::Xmad { b, .. } => {
+                let mut i = d.instr;
+                if let Instr::Xmad { d, a, c, b: bb, .. } = &mut i {
+                    (*d, *a, *c) = (0, 0, 0);
+                    if matches!(b, emulator_shader::maxwell::Source::Reg(_)) {
+                        *bb = emulator_shader::maxwell::Source::Reg(0);
+                    }
+                }
+                format!("{i:?}")
+            }
+            Instr::Texs { kind, mask, .. } => format!("Texs kind={kind} mask={mask}"),
+            Instr::TexOther { top } => format!("TexOther {top:#06x}"),
+            _ => continue,
+        };
+        if out.len() < MAX_FORMS && seen.insert(key.clone()) {
+            out.push((*at, format!("{key} <- {:?}", d.instr)));
+        }
+    }
+    out
 }
 
 thread_local! {
@@ -79,6 +125,17 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                 }
             }
             let listing = emulator_shader::maxwell::list(&code);
+            let graph = emulator_shader::cfg::build(&listing);
+            let exec = graph.as_ref().ok().map(|g| {
+                emulator_shader::exec::run(
+                    &listing,
+                    g,
+                    &Zeros,
+                    emulator_shader::exec::State::default(),
+                    1 << 20,
+                )
+                .map(|_| ())
+            });
             programs.insert(
                 base,
                 ShaderRecord {
@@ -91,7 +148,9 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                     zero_words: listing.zero_words,
                     undecoded: listing.unsupported_count,
                     first_undecoded: listing.unsupported,
-                    cfg: emulator_shader::cfg::build(&listing).map(|g| g.blocks.len()),
+                    cfg: graph.map(|g| g.blocks.len()),
+                    forms: forms(&listing),
+                    exec,
                     undecoded_examples: listing.undecoded_examples,
                 },
             );
