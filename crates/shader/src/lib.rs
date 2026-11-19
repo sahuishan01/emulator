@@ -3,6 +3,7 @@
 //! bounded vertex varyings and one explicit-LOD 2D texture binding are supported.
 use std::fmt;
 pub mod census;
+pub mod cfg;
 mod header;
 pub mod maxwell;
 pub mod reference;

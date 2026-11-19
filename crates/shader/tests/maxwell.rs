@@ -143,3 +143,76 @@ fn unknown_words_fail_and_listing_counts() {
     assert_eq!(l.unsupported, Some((24, 0x5c30000000070000)));
     assert_eq!(l.unsupported_count, 1);
 }
+
+#[test]
+fn fmul32i_iadd_fcmp_fset() {
+    let w = (0x1eu64 << 56) | (1 << 55) | (0x3f80_0000u64 << 20) | (7 << 16) | (2 << 8) | 1;
+    assert_eq!(
+        instr(w),
+        Instr::Fmul32i {
+            d: 1,
+            a: 2,
+            imm: 0x3f80_0000,
+            sat: true
+        }
+    );
+    // IADD R1, -R2, R3
+    let w = (0x5c10u64 << 48) | (1 << 49) | (3 << 20) | (7 << 16) | (2 << 8) | 1;
+    assert_eq!(
+        instr(w),
+        Instr::Iadd {
+            d: 1,
+            a: 2,
+            b: Source::Reg(3),
+            neg_a: true,
+            neg_b: false,
+            sat: false,
+            x: false
+        }
+    );
+    // FCMP.GE R0, R1, c[0x3][0x8], R4 (cmp 0xe in the opcode's low nibble)
+    let w = (0x4baeu64 << 48) | (4 << 39) | (3 << 34) | (2 << 20) | (7 << 16) | (1 << 8);
+    assert_eq!(
+        instr(w),
+        Instr::Fcmp {
+            d: 0,
+            a: 1,
+            b: Source::Cbuf { bank: 3, offset: 8 },
+            c: Source::Reg(4),
+            cmp: 0xe
+        }
+    );
+    // FSET.LT.FTZ.AND R5, R6, R7, PT (integer-mask result)
+    let w = (0x5881u64 << 48) | (7 << 39) | (7 << 20) | (7 << 16) | (6 << 8) | 5;
+    let Instr::Fset {
+        d: 5,
+        a: 6,
+        b: Source::Reg(7),
+        cmp: 1,
+        bop: 0,
+        c,
+        float_result: false,
+        ..
+    } = instr(w)
+    else {
+        panic!("fset {:?}", instr(w));
+    };
+    assert_eq!(
+        c,
+        Pred {
+            index: PT,
+            negate: false
+        }
+    );
+}
+
+#[test]
+fn undecoded_examples_are_distinct() {
+    let mut code = vec![0u8; 32];
+    code[8..16].copy_from_slice(&0x1234u64.to_le_bytes());
+    code[16..24].copy_from_slice(&0x1234u64.to_le_bytes());
+    code[24..32].copy_from_slice(&0x5678u64.to_le_bytes());
+    let l = list(&code);
+    assert_eq!(l.unsupported_count, 3);
+    assert_eq!(l.undecoded_examples, vec![(8, 0x1234), (24, 0x5678)]);
+}

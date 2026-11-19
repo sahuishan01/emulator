@@ -27,6 +27,10 @@ pub struct ShaderRecord {
     pub zero_words: usize,
     pub undecoded: usize,
     pub first_undecoded: Option<(usize, u64)>,
+    /// Undecodable words with distinct top 16 bits (offset, word).
+    pub undecoded_examples: Vec<(usize, u64)>,
+    /// Control-flow graph: reachable block count, or why it failed.
+    pub cfg: Result<usize, emulator_shader::cfg::CfgError>,
 }
 
 thread_local! {
@@ -87,6 +91,8 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                     zero_words: listing.zero_words,
                     undecoded: listing.unsupported_count,
                     first_undecoded: listing.unsupported,
+                    cfg: emulator_shader::cfg::build(&listing).map(|g| g.blocks.len()),
+                    undecoded_examples: listing.undecoded_examples,
                 },
             );
         });

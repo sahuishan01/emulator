@@ -1018,6 +1018,16 @@ fn print_run_report(
                         emulator_shader::census::identify(w).unwrap_or("?")
                     ))
             );
+            for (o, w) in &record.undecoded_examples {
+                println!(
+                    "      undecoded code+{o:#x}: {w:#018x} ({})",
+                    emulator_shader::census::identify(*w).unwrap_or("?")
+                );
+            }
+            match &record.cfg {
+                Ok(blocks) => println!("    cfg: {blocks} reachable blocks"),
+                Err(e) => println!("    cfg: {e:?}"),
+            }
         }
     }
     let total: u64 = samples.values().sum();

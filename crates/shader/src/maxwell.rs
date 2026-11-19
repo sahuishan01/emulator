@@ -193,6 +193,45 @@ pub enum Instr {
         kind: u8,
         mask: u8,
     },
+    /// d = a * imm (full 32-bit float immediate).
+    Fmul32i {
+        d: u8,
+        a: u8,
+        imm: u32,
+        sat: bool,
+    },
+    /// Integer add; `x` adds the carry flag.
+    Iadd {
+        d: u8,
+        a: u8,
+        b: Source,
+        neg_a: bool,
+        neg_b: bool,
+        sat: bool,
+        x: bool,
+    },
+    /// d = (c cmp 0.0) ? a : b.
+    Fcmp {
+        d: u8,
+        a: u8,
+        b: Source,
+        c: Source,
+        cmp: u8,
+    },
+    /// d = ((a cmp b) bop c) ? (float_result ? 1.0 : !0) : 0.
+    Fset {
+        d: u8,
+        a: u8,
+        b: Source,
+        cmp: u8,
+        bop: u8,
+        c: Pred,
+        neg_a: bool,
+        abs_a: bool,
+        neg_b: bool,
+        abs_b: bool,
+        float_result: bool,
+    },
     /// Other texture forms: decoded only as "a texture instruction".
     TexOther {
         top: u16,
@@ -260,6 +299,47 @@ pub fn decode_word(word: u64) -> Option<Decoded> {
         }
     } else if top & 0xfff8 == 0xf0f8 {
         Instr::Sync { cc }
+    } else if top & 0xfe00 == 0x1e00 {
+        Instr::Fmul32i {
+            d,
+            a,
+            imm: field(word, 20, 32) as u32,
+            sat: bit(word, 55),
+        }
+    } else if matches!(top & 0xfff0, 0x5ba0 | 0x4ba0 | 0x53a0) || top & 0xfef0 == 0x36a0 {
+        let rc = Source::Reg(reg(word, 39));
+        let (b, c) = match top >> 8 {
+            0x5b => (Source::Reg(reg(word, 20)), rc),
+            0x4b => (cbuf(word), rc),
+            0x53 => (Source::Reg(reg(word, 39)), cbuf(word)),
+            _ => (Source::Imm20(imm20(word)), rc),
+        };
+        Instr::Fcmp {
+            d,
+            a,
+            b,
+            c,
+            cmp: field(word, 48, 4) as u8,
+        }
+    } else if matches!(top & 0xff00, 0x5800 | 0x4800) || top & 0xfe00 == 0x3000 {
+        let b = match top >> 8 {
+            0x58 => Source::Reg(reg(word, 20)),
+            0x48 => cbuf(word),
+            _ => Source::Imm20(imm20(word)),
+        };
+        Instr::Fset {
+            d,
+            a,
+            b,
+            c: Pred::at(word, 39),
+            neg_a: bit(word, 43),
+            abs_b: bit(word, 44),
+            bop: field(word, 45, 2) as u8,
+            cmp: field(word, 48, 4) as u8,
+            float_result: bit(word, 52),
+            neg_b: bit(word, 53),
+            abs_a: bit(word, 54),
+        }
     } else if top & 0xfff0 == 0x0100 {
         Instr::Mov32i {
             d,
@@ -289,6 +369,15 @@ pub fn decode_word(word: u64) -> Option<Decoded> {
                 b,
                 scale: field(word, 41, 3) as u8,
                 neg_b: bit(word, 48),
+                sat: bit(word, 50),
+            },
+            0x5c10 => Instr::Iadd {
+                d,
+                a,
+                b,
+                x: bit(word, 43),
+                neg_b: bit(word, 48),
+                neg_a: bit(word, 49),
                 sat: bit(word, 50),
             },
             0x5c60 => Instr::Fmnmx {
@@ -420,6 +509,8 @@ pub struct Listing {
     pub unsupported: Option<(usize, u64)>,
     /// Undecodable words in total (the scan continues past the first).
     pub unsupported_count: usize,
+    /// Up to 12 undecodable words with distinct top 16 bits (offset, word).
+    pub undecoded_examples: Vec<(usize, u64)>,
     /// All-zero words (not an instruction; counted separately).
     pub zero_words: usize,
 }
@@ -439,6 +530,14 @@ pub fn list(code: &[u8]) -> Listing {
             } else {
                 listing.unsupported_count += 1;
                 listing.unsupported.get_or_insert((offset, word));
+                if listing.undecoded_examples.len() < 12
+                    && !listing
+                        .undecoded_examples
+                        .iter()
+                        .any(|(_, w)| w >> 48 == word >> 48 && (w >> 48 != 0 || *w == word))
+                {
+                    listing.undecoded_examples.push((offset, word));
+                }
             }
             if word == crate::census::SELF_BRANCH {
                 break 'outer;
