@@ -191,6 +191,11 @@ impl PreparedSubmission {
     pub fn stats(&self) -> crate::ExecutionStats {
         self.batch.stats()
     }
+    /// Syncpoint indices this batch increments (host SYNCPOINTB), in order.
+    /// The channel owner applies them when it commits the batch.
+    pub fn syncpoint_increments(&self) -> &[u32] {
+        self.batch.syncpoint_increments()
+    }
     pub fn write_ranges(&self) -> impl Iterator<Item = BackingRange> + '_ {
         self.batch.write_ranges()
     }

@@ -30,6 +30,11 @@ impl Rig {
         Self { cpu, gpu, queue }
     }
     fn submit(&mut self, methods: &[(u8, u32, u32)]) -> SubmissionId {
+        let entry = self.entry(methods);
+        self.queue.submit(&self.gpu, &entry).unwrap()
+    }
+    /// Write methods to command memory and return their GP entry bytes.
+    fn entry(&mut self, methods: &[(u8, u32, u32)]) -> Vec<u8> {
         let words: Vec<u32> = methods
             .iter()
             .flat_map(|&(sub, offset, data)| {
@@ -45,7 +50,7 @@ impl Rig {
         .into_iter()
         .flat_map(u32::to_le_bytes)
         .collect();
-        self.queue.submit(&self.gpu, &entry).unwrap()
+        entry
     }
     fn execute(&mut self, id: SubmissionId) -> Result<ExecutionStats, ExecutionError> {
         self.queue
@@ -357,7 +362,6 @@ fn host_methods_run_on_any_subchannel_without_a_bound_class() {
 fn unmodelled_host_methods_fail_explicitly_and_roll_back() {
     for (sub, offset, data) in [
         (6, 0x2c, 0x4800_0000), // MEM_OP_B MMU TLB invalidate
-        (0, 0x70, 0),           // syncpoint payload
         (2, 0x20, 0),           // non-stall interrupt
     ] {
         let mut rig = Rig::new();
@@ -653,4 +657,30 @@ fn host_semaphore_operation_needs_address_and_payload() {
             "operation before address/payload"
         ))
     );
+}
+#[test]
+fn syncpoint_increments_are_reported_and_waits_fail() {
+    let mut rig = Rig::new();
+    let entry = rig.entry(&[
+        (0, 0x70, 0),
+        (0, 0x74, 0x0501),
+        (3, 0x74, 0x0511), // wait switch bit with increment
+        (0, 0x74, 0x0701),
+    ]);
+    let (_, work) = ChannelProcessor::default()
+        .prepare(&rig.gpu, &entry)
+        .unwrap();
+    assert_eq!(work.syncpoint_increments(), &[5, 5, 7]);
+    for (data, expected) in [
+        (0x0500, ExecutionError::SyncpointOperation(0x0500)), // wait
+        (
+            0x2_0001 << 12,
+            ExecutionError::SyncpointOperation(0x2_0001 << 12),
+        ),
+        (0x0503, ExecutionError::SyncpointOperation(0x0503)),
+    ] {
+        let mut rig = Rig::new();
+        let id = rig.submit(&[(0, 0x74, data)]);
+        assert_eq!(rig.execute(id), Err(expected));
+    }
 }

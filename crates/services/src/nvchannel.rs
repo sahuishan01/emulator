@@ -33,10 +33,10 @@ pub(crate) const SUBMIT_HW_FORMAT: u32 = 1 << 2;
 /// Skip the wait-for-idle before the driver's syncpoint increment. Work
 /// completes synchronously here, so it has no effect.
 pub(crate) const SUBMIT_SUPPRESS_WFI: u32 = 1 << 4;
-/// Switch "increment by value": believed to raise the channel syncpoint by
-/// the input fence value for increments the pushbuffer itself performs.
-/// Only a zero value (no increment, the form NVN uses) is accepted until
-/// that is verified and pushbuffer syncpoint methods exist.
+/// Switch "increment by value": the pushbuffer itself raises the channel
+/// syncpoint by the input fence value (host SYNCPOINTB increments). The
+/// submit is accepted only when the pushbuffer's increments of the channel
+/// syncpoint equal that value, so the returned fence is exact.
 pub(crate) const SUBMIT_INCREMENT_BY_VALUE: u32 = 1 << 8;
 const SUBMIT_FLAGS: u32 = SUBMIT_FENCE_WAIT
     | SUBMIT_FENCE_GET
@@ -46,7 +46,8 @@ const SUBMIT_FLAGS: u32 = SUBMIT_FENCE_WAIT
 
 /// Validate SUBMIT_GPFIFO flags against the input fence value.
 pub(crate) fn check_submit_flags(flags: u32, fence_value: u32) -> Result<(), u32> {
-    if flags & !SUBMIT_FLAGS != 0 || (flags & SUBMIT_INCREMENT_BY_VALUE != 0 && fence_value != 0) {
+    let _ = fence_value;
+    if flags & !SUBMIT_FLAGS != 0 {
         return Err(NOT_SUPPORTED);
     }
     Ok(())
@@ -200,11 +201,6 @@ impl Channel {
         }
         let flags = word(input, 12);
         check_submit_flags(flags, word(input, 20))?;
-        let next_value = if flags & SUBMIT_FENCE_GET != 0 {
-            completed.checked_add(1).ok_or(NO_MEMORY)?
-        } else {
-            completed
-        };
 
         let entries_bytes: Vec<u8> = if input.len() >= 24 + count * 8 {
             input[24..24 + count * 8].to_vec()
@@ -228,6 +224,28 @@ impl Channel {
                 crate::nv::record_submit_error(error, &entries_bytes);
                 BAD_PARAMETER
             })?;
+        // Syncpoint increments from the pushbuffer: only the channel's own
+        // syncpoint is modelled; with increment-by-value their count must
+        // equal the fence value the driver declared.
+        let increments = work.syncpoint_increments();
+        if increments.iter().any(|&id| id != self.syncpoint) {
+            return Err(NOT_SUPPORTED);
+        }
+        let own = increments.len() as u32;
+        if flags & SUBMIT_INCREMENT_BY_VALUE != 0 && own != word(input, 20) {
+            crate::nv::record_submit_error(
+                format!(
+                    "increment-by-value {} but pushbuffer increments {own}",
+                    word(input, 20)
+                ),
+                &entries_bytes,
+            );
+            return Err(NOT_SUPPORTED);
+        }
+        let mut next_value = completed.checked_add(own).ok_or(NO_MEMORY)?;
+        if flags & SUBMIT_FENCE_GET != 0 {
+            next_value = next_value.checked_add(1).ok_or(NO_MEMORY)?;
+        }
         let mut next = self.clone();
         next.processor = processor;
         let mut output = input.to_vec();

@@ -47,6 +47,8 @@ fn configuration_only(class: u32, offset: u32) -> bool {
     }
 }
 
+const HOST_SYNCPOINT_A: u32 = 0x70;
+const HOST_SYNCPOINT_B: u32 = 0x74;
 const HOST_SEMAPHORE_A: u32 = 0x10;
 const HOST_SEMAPHORE_D: u32 = 0x1c;
 /// SEMAPHORED operation field (bits 4:0).
@@ -152,6 +154,8 @@ pub enum ExecutionError {
     InlineToMemoryLaunch(u32),
     Semaphore(&'static str),
     SemaphoreOperation(u32),
+    /// SYNCPOINTB waits and unknown bits (raw value).
+    SyncpointOperation(u32),
     /// Acquire that would wait forever in synchronous execution.
     SemaphoreAcquire {
         address: u64,
@@ -228,6 +232,8 @@ pub(crate) struct MethodState {
     macros: crate::macros::MacroState,
     /// SEMAPHOREA (address upper), SEMAPHOREB (lower), SEMAPHOREC (payload).
     semaphore: [Option<u32>; 3],
+    /// SYNCPOINTA payload (a wait threshold; increments ignore it).
+    syncpoint_payload: Option<u32>,
 }
 #[derive(Clone, Debug)]
 enum EngineState {
@@ -298,6 +304,8 @@ pub(crate) struct PreparedBatch {
     inputs_snapshotted: bool,
     resolved_copies: usize,
     stats: ExecutionStats,
+    /// Syncpoint indices raised by SYNCPOINTB increments, in order.
+    syncpoint_increments: Vec<u32>,
 }
 impl PreparedBatch {
     pub(crate) fn depth_clears(&self) -> &[crate::DepthClear] {
@@ -419,6 +427,7 @@ impl MethodState {
             snapshot_bytes: 0,
             inputs_snapshotted: false,
             resolved_copies: 0,
+            syncpoint_increments: Vec::new(),
             stats: ExecutionStats {
                 methods: writes.len(),
                 ..ExecutionStats::default()
@@ -461,6 +470,10 @@ impl MethodState {
             if offset < 0x100 {
                 if (HOST_SEMAPHORE_A..=HOST_SEMAPHORE_D).contains(&offset) {
                     batch.semaphore(space, offset, write.data, &mut spans)?;
+                } else if offset == HOST_SYNCPOINT_A {
+                    batch.state.syncpoint_payload = Some(write.data);
+                } else if offset == HOST_SYNCPOINT_B {
+                    batch.syncpoint(write.data)?;
                 } else {
                     host_method(write.subchannel, offset, write.data)?;
                 }
@@ -809,6 +822,26 @@ impl PreparedBatch {
             _ => return Err(ExecutionError::SemaphoreOperation(data)),
         }
         Ok(())
+    }
+    /// SYNCPOINTB: bit 0 operation (0 wait, 1 increment), bit 4 wait switch,
+    /// bits 8-19 syncpoint index. Increments are reported to the channel
+    /// owner, which applies them on commit; waits need the syncpoint table
+    /// and fail explicitly.
+    fn syncpoint(&mut self, data: u32) -> Result<(), ExecutionError> {
+        if data & !(1 | 1 << 4 | 0xfff << 8) != 0 {
+            return Err(ExecutionError::SyncpointOperation(data));
+        }
+        if data & 1 == 0 {
+            return Err(ExecutionError::SyncpointOperation(data));
+        }
+        self.syncpoint_increments
+            .try_reserve(1)
+            .map_err(|_| ExecutionError::Capacity)?;
+        self.syncpoint_increments.push((data >> 8) & 0xfff);
+        Ok(())
+    }
+    pub(crate) fn syncpoint_increments(&self) -> &[u32] {
+        &self.syncpoint_increments
     }
     /// Turn a constant-buffer run into an ordered prepared write.
     fn flush_constant(

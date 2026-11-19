@@ -516,6 +516,34 @@ pub fn run() -> Vec<CaseResult> {
             r.verify(0x8108, 42);
             assert_eq!(r.read(r.point), 1);
         }),
+        // NVN raises the channel syncpoint from the pushbuffer (SYNCPOINTB
+        // increments) and declares the count as an increment-by-value fence.
+        (
+            "increment-by-value-matches-pushbuffer-syncpoint-increments",
+            |r| {
+                r.prepare(true, true);
+                let incr = (r.point << 8) | 1;
+                r.program(&[
+                    0x20010000, 0xb0b5, 0x20010100, 1, 0x20010101, 0x100, 0x20010102, 1,
+                    0x20010103, 0x108, 0x20010106, 8, 0x200100c0, 0x182, 0x2001001d, incr,
+                    0x2001001d, incr,
+                ]);
+                // Declared 1 but the pushbuffer increments twice: refused, no effect.
+                assert_eq!(r.submit(0x102, 0, 1, 0, 18), 2);
+                r.verify(0x8108, 99);
+                assert_eq!(r.read(r.point), 0);
+                // Declared 2 plus fence get: two pushbuffer increments + one.
+                assert_eq!(r.submit(0x102, 0, 2, 0, 18), 0);
+                r.verify(0x8108, 42);
+                assert_eq!(r.read(r.point), 3);
+                assert_eq!(r.m.read_u32(0x6014).unwrap(), 3);
+                // Increments of a syncpoint the channel does not own are refused.
+                let other = ((r.point + 1) << 8) | 1;
+                r.program(&[0x2001001d, other]);
+                assert_eq!(r.submit(0, 0, 0, 0, 2), 2);
+                assert_eq!(r.read(r.point), 3);
+            },
+        ),
         ("ioctl2-inline-entries", |r| {
             r.prepare(true, true);
             r.full_program();
@@ -1328,7 +1356,7 @@ mod tests {
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();
-        assert_eq!(cases.len(), 54);
+        assert_eq!(cases.len(), 55);
         for case in cases {
             assert!(case.passed, "{}: {}", case.name, case.error)
         }
