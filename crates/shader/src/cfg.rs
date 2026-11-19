@@ -47,7 +47,8 @@ pub struct Block {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CfgError {
-    /// The listing holds an undecodable word.
+    /// Execution reaches an undecodable word (unreached ones are ignored:
+    /// the scan may run past the program into neighbouring data).
     Undecoded {
         offset: usize,
         word: u64,
@@ -101,15 +102,15 @@ impl Cfg {
     }
 }
 
+/// Branch target: relative to the next instruction. A target at a bundle
+/// start (the control word) executes the bundle's first instruction.
 fn target(at: usize, offset: i32) -> Option<usize> {
-    (at as i64 + 8 + offset as i64).try_into().ok()
+    let t: usize = (at as i64 + 8 + offset as i64).try_into().ok()?;
+    Some(if t % 32 == 0 { t + 8 } else { t })
 }
 
 /// Build the graph of blocks reachable from the first instruction.
 pub fn build(listing: &Listing) -> Result<Cfg, CfgError> {
-    if let Some((offset, word)) = listing.unsupported {
-        return Err(CfgError::Undecoded { offset, word });
-    }
     let code = &listing.instructions;
     if code.is_empty() {
         return Err(CfgError::EmptyProgram);
@@ -172,6 +173,24 @@ pub fn build(listing: &Listing) -> Result<Cfg, CfgError> {
                 }
                 inner.push(code[resolve(*at, offset)?].0);
             }
+        }
+        // Undecodable words inside the block or in the gap it falls into.
+        let reach_end = if end < code.len() {
+            code[end].0
+        } else {
+            code[end - 1].0 + 8
+        };
+        if let Some(&offset) = listing
+            .undecoded_offsets
+            .iter()
+            .find(|&&o| (first == 0 || o >= start) && o < reach_end)
+        {
+            let word = listing
+                .undecoded_examples
+                .iter()
+                .find(|(o, _)| *o == offset)
+                .map_or(0, |(_, w)| *w);
+            return Err(CfgError::Undecoded { offset, word });
         }
         let (at, last): (usize, Decoded) = code[end - 1];
         let next = |inner: &Vec<usize>| -> Result<(usize, Vec<usize>), CfgError> {

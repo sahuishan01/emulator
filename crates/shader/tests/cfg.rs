@@ -67,6 +67,11 @@ fn rejections() {
         build(&list(&code(&[guarded_exit]))),
         Err(CfgError::FallsOffEnd { at: 8 })
     );
+    // BRA -0x10 in slot 1 targets its own bundle start: a halt loop.
+    let halt = build(&list(&code(&[bra(-16, 7)]))).expect("halt loop");
+    assert_eq!(halt.blocks[&8].terminator, Terminator::Jump(8));
+    // Unreached data after EXIT is ignored.
+    assert!(build(&list(&code(&[EXIT, 0x1234]))).is_ok());
     assert!(matches!(
         build(&list(&code(&[0x1234, EXIT]))),
         Err(CfgError::Undecoded { offset: 8, .. })

@@ -509,6 +509,8 @@ pub struct Listing {
     pub unsupported: Option<(usize, u64)>,
     /// Undecodable words in total (the scan continues past the first).
     pub unsupported_count: usize,
+    /// Byte offsets of every undecodable word.
+    pub undecoded_offsets: Vec<usize>,
     /// Up to 12 undecodable words with distinct top 16 bits (offset, word).
     pub undecoded_examples: Vec<(usize, u64)>,
     /// All-zero words (not an instruction; counted separately).
@@ -530,6 +532,7 @@ pub fn list(code: &[u8]) -> Listing {
             } else {
                 listing.unsupported_count += 1;
                 listing.unsupported.get_or_insert((offset, word));
+                listing.undecoded_offsets.push(offset);
                 if listing.undecoded_examples.len() < 12
                     && !listing
                         .undecoded_examples
