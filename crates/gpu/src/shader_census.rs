@@ -51,31 +51,35 @@ impl emulator_shader::exec::Environment for Zeros {
     fn attribute(&self, _: u16) -> Option<u32> {
         Some(0)
     }
+    fn texture_2d(&self, _: u16, _: f32, _: f32, _: f32) -> Option<[f32; 4]> {
+        Some([0.0; 4])
+    }
 }
 
-fn forms(listing: &emulator_shader::maxwell::Listing) -> Vec<(usize, String)> {
-    use emulator_shader::maxwell::Instr;
+fn forms(listing: &emulator_shader::maxwell::Listing, code: &[u8]) -> Vec<(usize, String)> {
+    use emulator_shader::maxwell::{Instr, Source};
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for (at, d) in &listing.instructions {
+        let word = u64::from_le_bytes(code[*at..*at + 8].try_into().expect("word"));
+        // Distinct by flags and operand kind, not register numbers.
         let key = match d.instr {
-            // Distinct by flags and operand kind, not register numbers.
             Instr::Xmad { b, .. } => {
                 let mut i = d.instr;
                 if let Instr::Xmad { d, a, c, b: bb, .. } = &mut i {
                     (*d, *a, *c) = (0, 0, 0);
-                    if matches!(b, emulator_shader::maxwell::Source::Reg(_)) {
-                        *bb = emulator_shader::maxwell::Source::Reg(0);
+                    if matches!(b, Source::Reg(_)) {
+                        *bb = Source::Reg(0);
                     }
                 }
                 format!("{i:?}")
             }
             Instr::Texs { kind, mask, .. } => format!("Texs kind={kind} mask={mask}"),
-            Instr::TexOther { top } => format!("TexOther {top:#06x}"),
+            Instr::TexOther { .. } | Instr::Ipa { .. } => format!("top={:#06x}", word >> 48),
             _ => continue,
         };
         if out.len() < MAX_FORMS && seen.insert(key.clone()) {
-            out.push((*at, format!("{key} <- {:?}", d.instr)));
+            out.push((*at, format!("{key} <- {:?} raw={word:#018x}", d.instr)));
         }
     }
     out
@@ -156,7 +160,7 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                     undecoded: listing.unsupported_count,
                     first_undecoded: listing.unsupported,
                     cfg: graph.map(|g| g.blocks.len()),
-                    forms: forms(&listing),
+                    forms: forms(&listing, &code),
                     exec,
                     sph,
                     undecoded_examples: listing.undecoded_examples,

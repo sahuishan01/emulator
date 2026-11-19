@@ -14,6 +14,33 @@ pub trait Environment {
     fn constant(&self, bank: u8, offset: u32) -> Option<u32>;
     /// Interpolated input attribute at byte address `attr` (IPA).
     fn attribute(&self, attr: u16) -> Option<u32>;
+    /// RGBA sample of texture `handle` at (x, y) and explicit level of detail.
+    /// None when the texture is unbound or unsupported.
+    fn texture_2d(&self, _handle: u16, _x: f32, _y: f32, _lod: f32) -> Option<[f32; 4]> {
+        None
+    }
+}
+
+/// TEXS component selection from memory of the public encoding (unverified):
+/// with d1 = RZ one or two components go to d0, d0+1; otherwise three or
+/// four components go to d0, d0+1, d1, d1+1.
+pub fn texs_components(mask: u8, two_registers: bool) -> Option<&'static [usize]> {
+    Some(match (two_registers, mask) {
+        (false, 0) => &[0],
+        (false, 1) => &[1],
+        (false, 2) => &[2],
+        (false, 3) => &[3],
+        (false, 4) => &[0, 1],
+        (false, 5) => &[0, 3],
+        (false, 6) => &[1, 3],
+        (false, 7) => &[2, 3],
+        (true, 0) => &[0, 1, 2],
+        (true, 1) => &[0, 1, 3],
+        (true, 2) => &[0, 2, 3],
+        (true, 3) => &[1, 2, 3],
+        (true, 4) => &[0, 1, 2, 3],
+        _ => return None,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +69,10 @@ pub enum ExecError {
     BadScale {
         at: usize,
         scale: u8,
+    },
+    Texture {
+        at: usize,
+        handle: u16,
     },
     /// The invocation did not exit within the step budget.
     StepBudget,
@@ -459,6 +490,29 @@ fn step(at: usize, instr: Instr, env: &dyn Environment, s: &mut State) -> Result
                 v = (v & 0xffff) | (bv << 16);
             }
             s.set(d, v)
+        }
+        // Kind 2: 2D with level of detail zero; coordinates in a, b.
+        Instr::Texs {
+            d0,
+            d1,
+            a,
+            b,
+            handle,
+            kind: 2,
+            mask,
+        } => {
+            let comps =
+                texs_components(mask, d1 != RZ).ok_or(ExecError::Unsupported { at, instr })?;
+            let texel = env
+                .texture_2d(handle, f(s.reg(a)), f(s.reg(b)), 0.0)
+                .ok_or(ExecError::Texture { at, handle })?;
+            let targets = [d0, d0.saturating_add(1), d1, d1.saturating_add(1)];
+            if d0 == RZ {
+                return Err(ExecError::Unsupported { at, instr });
+            }
+            for (i, c) in comps.iter().enumerate() {
+                s.set(targets[i], texel[*c].to_bits());
+            }
         }
         _ => return Err(ExecError::Unsupported { at, instr }),
     }

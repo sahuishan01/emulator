@@ -13,6 +13,9 @@ impl Environment for Env {
     fn attribute(&self, attr: u16) -> Option<u32> {
         (attr == 0x80).then_some(0.25f32.to_bits())
     }
+    fn texture_2d(&self, handle: u16, x: f32, y: f32, lod: f32) -> Option<[f32; 4]> {
+        (handle == 8 && lod == 0.0).then_some([x, y, 0.5, 0.75])
+    }
 }
 
 fn code(words: &[u64]) -> Vec<u8> {
@@ -148,4 +151,45 @@ fn xmad_signed_halves_and_modes() {
     .expect("runs");
     assert_eq!(s.registers[3] as i32, -6 + 5);
     assert_eq!(s.registers[4], 0xfffe * 3 + 9);
+}
+
+fn texs(d0: u64, d1: u64, a: u64, b: u64, handle: u64, mask: u64, kind: u64) -> u64 {
+    (0xd8u64 << 56)
+        | kind << 53
+        | mask << 50
+        | handle << 36
+        | d1 << 28
+        | b << 20
+        | PT_GUARD
+        | a << 8
+        | d0
+}
+
+#[test]
+fn texs_2d_lz_component_layouts() {
+    let x = 0.125f32.to_bits();
+    let y = 0.25f32.to_bits();
+    let s = execute(&[
+        mov32i(0, x, 7),
+        mov32i(1, y, 7),
+        texs(10, 255, 0, 1, 8, 1, 2), // G -> R10
+        texs(12, 20, 0, 1, 8, 4, 2),  // RGBA -> R12,R13,R20,R21
+        texs(14, 30, 0, 1, 8, 0, 2),  // RGB -> R14,R15,R30
+        EXIT,
+    ])
+    .expect("runs");
+    let r = |i: usize| f32::from_bits(s.registers[i]);
+    assert_eq!(r(10), 0.25);
+    assert_eq!([r(12), r(13), r(20), r(21)], [0.125, 0.25, 0.5, 0.75]);
+    assert_eq!([r(14), r(15), r(30)], [0.125, 0.25, 0.5]);
+    assert_eq!(s.registers[31], 0, "RGB writes only d1");
+    // Unbound handle and unmodelled kind fail explicitly.
+    assert!(matches!(
+        execute(&[texs(10, 255, 0, 1, 9, 1, 2), EXIT]),
+        Err(ExecError::Texture { handle: 9, .. })
+    ));
+    assert!(matches!(
+        execute(&[texs(10, 255, 0, 1, 8, 1, 1), EXIT]),
+        Err(ExecError::Unsupported { .. })
+    ));
 }
