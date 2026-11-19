@@ -357,7 +357,6 @@ fn host_methods_run_on_any_subchannel_without_a_bound_class() {
 fn unmodelled_host_methods_fail_explicitly_and_roll_back() {
     for (sub, offset, data) in [
         (6, 0x2c, 0x4800_0000), // MEM_OP_B MMU TLB invalidate
-        (0, 0x1c, 0x2),         // semaphore release
         (0, 0x70, 0),           // syncpoint payload
         (2, 0x20, 0),           // non-stall interrupt
     ] {
@@ -578,4 +577,71 @@ fn inline_to_memory_failures_are_explicit() {
         assert_eq!(rig.execute(id), Err(expected));
         assert_eq!(rig.bytes(), before);
     }
+}
+
+fn semaphore(offset: u64, payload: u32, operation: u32) -> Vec<(u8, u32, u32)> {
+    let address = DATA + offset;
+    vec![
+        (6, 0x10, (address >> 32) as u32),
+        (6, 0x14, address as u32),
+        (6, 0x18, payload),
+        (6, 0x1c, operation),
+    ]
+}
+#[test]
+fn host_semaphore_release_then_acquire_in_order() {
+    let mut rig = Rig::new();
+    let mut methods = semaphore(8, 0x1234_5678, 2 | 1 << 24 | 1 << 20);
+    methods.extend(semaphore(8, 0x1234_5678, 1)); // equal
+    methods.extend(semaphore(8, 0x1234_0000, 4)); // geq
+    methods.extend(semaphore(8, 0x8, 8 | 1 << 12)); // and
+    let id = rig.submit(&methods);
+    let stats = rig.execute(id).unwrap();
+    assert_eq!((stats.semaphore_releases, stats.semaphore_acquires), (1, 3));
+    assert_eq!(&rig.bytes()[8..12], &0x1234_5678_u32.to_le_bytes());
+}
+#[test]
+fn host_semaphore_failures_are_explicit_and_roll_back() {
+    let cases = [
+        (
+            semaphore(0, 0, 2),
+            ExecutionError::Semaphore("16-byte release needs a GPU timestamp"),
+        ),
+        (
+            semaphore(0, 99, 1),
+            ExecutionError::SemaphoreAcquire {
+                address: DATA,
+                value: 0x0302_0100,
+                payload: 99,
+            },
+        ),
+        (
+            semaphore(0, 0, 16 | 1 << 24),
+            ExecutionError::SemaphoreOperation(16 | 1 << 24),
+        ),
+        (
+            semaphore(0, 0, 2 | 1 << 2 << 24),
+            ExecutionError::SemaphoreOperation(2 | 1 << 26),
+        ),
+    ];
+    for (tail, expected) in cases {
+        let mut rig = Rig::new();
+        let mut methods = semaphore(16, 7, 2 | 1 << 24); // earlier release is rolled back
+        methods.extend(tail);
+        let id = rig.submit(&methods);
+        let before = rig.bytes();
+        assert_eq!(rig.execute(id), Err(expected));
+        assert_eq!(rig.bytes(), before);
+    }
+}
+#[test]
+fn host_semaphore_operation_needs_address_and_payload() {
+    let mut rig = Rig::new();
+    let id = rig.submit(&[(6, 0x1c, 2)]);
+    assert_eq!(
+        rig.execute(id),
+        Err(ExecutionError::Semaphore(
+            "operation before address/payload"
+        ))
+    );
 }

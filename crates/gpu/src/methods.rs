@@ -47,6 +47,17 @@ fn configuration_only(class: u32, offset: u32) -> bool {
     }
 }
 
+const HOST_SEMAPHORE_A: u32 = 0x10;
+const HOST_SEMAPHORE_D: u32 = 0x1c;
+/// SEMAPHORED operation field (bits 4:0).
+const SEM_ACQUIRE: u32 = 1;
+const SEM_RELEASE: u32 = 2;
+const SEM_ACQ_GEQ: u32 = 4;
+const SEM_ACQ_AND: u32 = 8;
+/// SEMAPHORED RELEASE_WFI (bit 20) and RELEASE_SIZE 4 bytes (bit 24); bit 12
+/// ACQUIRE_SWITCH only affects scheduling while a wait is pending.
+const SEM_KNOWN_BITS: u32 = 0x1f | 1 << 12 | 1 << 20 | 1 << 24;
+
 /// Host (PFIFO) methods, byte offsets below 0x100, valid on every subchannel.
 const HOST_NOP: u32 = 0x08;
 const HOST_FB_FLUSH: u32 = 0x24;
@@ -104,8 +115,10 @@ pub struct ExecutionStats {
     pub drawn_bytes: usize,
     /// LOAD_CONSTANT_BUFFER bytes (also counted in copied_bytes).
     pub constant_bytes: usize,
-    /// Inline-to-memory bytes (also counted in copied_bytes).
+    /// Inline-to-memory and semaphore payload bytes (also in copied_bytes).
     pub inline_bytes: usize,
+    pub semaphore_releases: usize,
+    pub semaphore_acquires: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionError {
@@ -137,6 +150,14 @@ pub enum ExecutionError {
     ConstantBuffer(&'static str),
     InlineToMemory(&'static str),
     InlineToMemoryLaunch(u32),
+    Semaphore(&'static str),
+    SemaphoreOperation(u32),
+    /// Acquire that would wait forever in synchronous execution.
+    SemaphoreAcquire {
+        address: u64,
+        value: u32,
+        payload: u32,
+    },
 }
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -202,6 +223,8 @@ fn constant_upload(regs: &mut [Option<u32>; 4]) -> Result<u64, ExecutionError> {
 pub(crate) struct MethodState {
     channels: [Option<EngineState>; 8],
     macros: crate::macros::MacroState,
+    /// SEMAPHOREA (address upper), SEMAPHOREB (lower), SEMAPHOREC (payload).
+    semaphore: [Option<u32>; 3],
 }
 #[derive(Clone, Debug)]
 enum EngineState {
@@ -433,7 +456,11 @@ impl MethodState {
                 continue;
             }
             if offset < 0x100 {
-                host_method(write.subchannel, offset, write.data)?;
+                if (HOST_SEMAPHORE_A..=HOST_SEMAPHORE_D).contains(&offset) {
+                    batch.semaphore(space, offset, write.data, &mut spans)?;
+                } else {
+                    host_method(write.subchannel, offset, write.data)?;
+                }
                 continue;
             }
             let engine = channel
@@ -704,6 +731,70 @@ impl PreparedBatch {
         };
         run.1.extend_from_slice(&data.to_le_bytes());
         Ok(Some(run))
+    }
+    /// Host semaphore methods. Release writes the 4-byte payload in order with
+    /// other prepared writes. Acquire reads the semaphore (including earlier
+    /// writes of this batch); in synchronous execution nothing else can change
+    /// it while the channel would wait, so an unsatisfied acquire fails.
+    /// 16-byte releases (payload + GPU timestamp) and reductions fail.
+    fn semaphore(
+        &mut self,
+        space: &GpuAddressSpace,
+        offset: u32,
+        data: u32,
+        spans: &mut usize,
+    ) -> Result<(), ExecutionError> {
+        if offset != HOST_SEMAPHORE_D {
+            self.state.semaphore[((offset - HOST_SEMAPHORE_A) / 4) as usize] = Some(data);
+            return Ok(());
+        }
+        let [Some(high), Some(low), Some(payload)] = self.state.semaphore else {
+            return Err(ExecutionError::Semaphore(
+                "operation before address/payload",
+            ));
+        };
+        if high > 0xff || low % 4 != 0 {
+            return Err(ExecutionError::Semaphore("invalid address"));
+        }
+        if data & !SEM_KNOWN_BITS != 0 {
+            return Err(ExecutionError::SemaphoreOperation(data));
+        }
+        let address = u64::from(high) << 32 | u64::from(low);
+        match data & 0x1f {
+            SEM_RELEASE => {
+                if data & 1 << 24 == 0 {
+                    return Err(ExecutionError::Semaphore(
+                        "16-byte release needs a GPU timestamp",
+                    ));
+                }
+                self.push_prepared(space, address, payload.to_le_bytes().to_vec(), spans, false)?;
+                self.stats.semaphore_releases += 1;
+            }
+            op @ (SEM_ACQUIRE | SEM_ACQ_GEQ | SEM_ACQ_AND) => {
+                let source = space
+                    .pin(GpuVa(address), 4, Access::Read)
+                    .map_err(ExecutionError::Memory)?;
+                let mut value = [0; 4];
+                read_projected(&source, &mut value, &self.copies)?;
+                let value = u32::from_le_bytes(value);
+                let satisfied = match op {
+                    SEM_ACQUIRE => value == payload,
+                    // GEQ compares as a wrapping sequence number.
+                    SEM_ACQ_GEQ => (value.wrapping_sub(payload) as i32) >= 0,
+                    _ => value & payload != 0,
+                };
+                if !satisfied {
+                    return Err(ExecutionError::SemaphoreAcquire {
+                        address,
+                        value,
+                        payload,
+                    });
+                }
+                self.stats.semaphore_acquires += 1;
+            }
+            _ => return Err(ExecutionError::SemaphoreOperation(data)),
+        }
+        Ok(())
     }
     /// Turn a constant-buffer run into an ordered prepared write.
     fn flush_constant(
