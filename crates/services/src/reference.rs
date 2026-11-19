@@ -230,7 +230,11 @@ impl Rig {
         bytes[..4].copy_from_slice(&(4_u32 | (2 << 20) | (1 << 24)).to_le_bytes());
         bytes[4..8].copy_from_slice(&10_u32.to_le_bytes());
         let mut at = 8;
-        for (address, size) in [(0x6000, 24), (0x6100, entries.len() as u32 * 4), (0x6000, 24)] {
+        for (address, size) in [
+            (0x6000, 24),
+            (0x6100, entries.len() as u32 * 4),
+            (0x6000, 24),
+        ] {
             bytes[at..at + 4].copy_from_slice(&size.to_le_bytes());
             bytes[at + 4..at + 8].copy_from_slice(&(address as u32).to_le_bytes());
             at += 12
@@ -469,24 +473,38 @@ pub fn run() -> Vec<CaseResult> {
             assert_eq!(r.m.read_u32(0x6014).unwrap(), 0);
             // A NOP control entry and a SYNC=wait fetch in one submit.
             r.m.write_u64(0x8108, 99).unwrap();
-            assert_eq!(r.submit_inline(0x104, &[0, 0, 0, 0x8000_0000 | (14 << 10) | 1], 2), 0);
+            assert_eq!(
+                r.submit_inline(0x104, &[0, 0, 0, 0x8000_0000 | (14 << 10) | 1], 2),
+                0
+            );
             r.verify(0x8108, 42);
             // Subroutine segments split at a packet boundary decode alone.
             r.m.write_u64(0x8108, 99).unwrap();
             assert_eq!(
-                r.submit_inline(0x104, &[0, 0x200 | (6 << 10) | 1, 24, 0x200 | (8 << 10) | 1], 2),
+                r.submit_inline(
+                    0x104,
+                    &[0, 0x200 | (6 << 10) | 1, 24, 0x200 | (8 << 10) | 1],
+                    2
+                ),
                 0
             );
             r.verify(0x8108, 42);
             // A packet split across subroutine segments is truncated: no effect.
             r.m.write_u64(0x8108, 99).unwrap();
             assert_eq!(
-                r.submit_inline(0x104, &[0, 0x200 | (5 << 10) | 1, 20, 0x200 | (9 << 10) | 1], 2),
+                r.submit_inline(
+                    0x104,
+                    &[0, 0x200 | (5 << 10) | 1, 20, 0x200 | (9 << 10) | 1],
+                    2
+                ),
                 4
             );
             r.verify(0x8108, 99);
             // The same split across main segments continues the packet.
-            assert_eq!(r.submit_inline(0x104, &[0, (5 << 10) | 1, 20, (9 << 10) | 1], 2), 0);
+            assert_eq!(
+                r.submit_inline(0x104, &[0, (5 << 10) | 1, 20, (9 << 10) | 1], 2),
+                0
+            );
             r.verify(0x8108, 42);
             // Other control opcodes are still rejected without effects.
             r.m.write_u64(0x8108, 99).unwrap();
@@ -672,11 +690,28 @@ pub fn run() -> Vec<CaseResult> {
             assert_eq!(r.io(r.asfd, BIND_CHANNEL, &[r.channel]), 8);
             assert_eq!(r.io(r.channel, ALLOC_FIFO, &[3, 0, 1, 0, 0, 0, 0, 0]), 4);
             // Up to 64K entries; flags and the unknown word may be 0 or 1.
-            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x20000, 1, 0, 0, 0, 0, 0, 0]), 4);
-            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 2, 0, 0, 0, 0, 0, 0]), 2);
-            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 2, 0, 0, 0, 0, 0]), 2);
-            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 0, 0, 0, 0, 0, 0]), 0, "NVN's request");
-            assert_eq!(r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 0, 0, 0, 0, 0, 0]), 8, "only once");
+            assert_eq!(
+                r.io(r.channel, ALLOC_FIFO, &[0x20000, 1, 0, 0, 0, 0, 0, 0]),
+                4
+            );
+            assert_eq!(
+                r.io(r.channel, ALLOC_FIFO, &[0x10000, 2, 0, 0, 0, 0, 0, 0]),
+                2
+            );
+            assert_eq!(
+                r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 2, 0, 0, 0, 0, 0]),
+                2
+            );
+            assert_eq!(
+                r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 0, 0, 0, 0, 0, 0]),
+                0,
+                "NVN's request"
+            );
+            assert_eq!(
+                r.io(r.channel, ALLOC_FIFO, &[0x10000, 1, 0, 0, 0, 0, 0, 0]),
+                8,
+                "only once"
+            );
         }),
         ("error-notifier-must-lie-in-allocated-memory", |r| {
             r.nv = r.open(b"/dev/nvmap");
@@ -685,11 +720,30 @@ pub fn run() -> Vec<CaseResult> {
             r.channel = r.open(b"/dev/nvhost-gpu");
             let notifier = |offset: u32, size: u32, handle: u32| [offset, 0, size, 0, handle, 0];
             // Created but not yet allocated.
-            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, handle)), 8);
-            assert_eq!(r.io(r.nv, 0xc0200104, &[handle, 0, 1, 4096, 0, 0, 0x8000, 0]), 0);
-            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, handle)), 0);
-            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0x800, 0x1000, handle)), 4);
-            assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, 99)), 4);
+            assert_eq!(
+                r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, handle)),
+                8
+            );
+            assert_eq!(
+                r.io(r.nv, 0xc0200104, &[handle, 0, 1, 4096, 0, 0, 0x8000, 0]),
+                0
+            );
+            assert_eq!(
+                r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, handle)),
+                0
+            );
+            assert_eq!(
+                r.io(
+                    r.channel,
+                    SET_ERROR_NOTIFIER,
+                    &notifier(0x800, 0x1000, handle)
+                ),
+                4
+            );
+            assert_eq!(
+                r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0x1000, 99)),
+                4
+            );
             // Size 0 clears it, whatever the handle.
             assert_eq!(r.io(r.channel, SET_ERROR_NOTIFIER, &notifier(0, 0, 99)), 0);
             // User data round-trips (SET_USER_DATA / GET_USER_DATA).

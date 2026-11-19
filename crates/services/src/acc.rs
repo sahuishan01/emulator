@@ -32,11 +32,17 @@ fn uid_argument(request: &Request) -> Result<[u8; 16], ServiceError> {
 }
 
 fn reply(data: Vec<u8>) -> ServiceReply {
-    ServiceReply { data, ..ServiceReply::default() }
+    ServiceReply {
+        data,
+        ..ServiceReply::default()
+    }
 }
 
 fn failure(result: u32) -> ServiceReply {
-    ServiceReply { result, ..ServiceReply::default() }
+    ServiceReply {
+        result,
+        ..ServiceReply::default()
+    }
 }
 
 /// Fills a C (pointer receive) buffer with `uids`, zero (invalid) after them.
@@ -66,7 +72,11 @@ impl Service for AccountService {
         Box::new(self.clone())
     }
 
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         match request.command_id {
             // ListAllUsers / ListOpenUsers -> C: Uid[]
@@ -85,7 +95,9 @@ impl Service for AccountService {
             // GetUserCount -> i32
             0 => Ok(reply(1i32.to_le_bytes().to_vec())),
             // GetUserExistence(Uid) -> bool
-            1 => Ok(reply(vec![u8::from(uid_argument(request)? == DEFAULT_USER_ID)])),
+            1 => Ok(reply(vec![u8::from(
+                uid_argument(request)? == DEFAULT_USER_ID,
+            )])),
             // GetLastOpenedUser -> Uid
             4 => Ok(reply(DEFAULT_USER_ID.to_vec())),
             // GetProfile(Uid) -> IProfile
@@ -120,7 +132,10 @@ impl Service for AccountService {
             100 | 140 | 160 => Ok(ServiceReply::default()),
             // IsUserAccountSwitchLocked -> bool
             150 => Ok(reply(vec![0])),
-            command => Err(ServiceError::UnsupportedCommand { service: "acc:u0", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "acc:u0",
+                command,
+            }),
         }
     }
 }
@@ -145,7 +160,11 @@ impl Service for ProfileService {
         Box::new(self.clone())
     }
 
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         if request.command_id == 0 {
             // Get -> ProfileBase, C: UserData (default icon and colours).
@@ -169,7 +188,10 @@ impl Service for ProfileService {
             1 => Ok(reply(self.base())),
             // GetImageSize / LoadImage need a profile image, which the
             // project does not ship yet.
-            command => Err(ServiceError::UnsupportedCommand { service: "IProfile", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IProfile",
+                command,
+            }),
         }
     }
 }

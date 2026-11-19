@@ -22,7 +22,11 @@ impl Service for RandomService {
     fn clone_for_request(&self) -> Box<dyn Service> {
         Box::new(self.clone())
     }
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         if request.command_id != 0 {
             context.require_buffers(0, 0)?;
@@ -34,9 +38,15 @@ impl Service for RandomService {
         let view = context.receive_buffer(0)?;
         let mut bytes = vec![0u8; view.len()];
         host_random(&mut bytes)?;
-        Ok(ServiceReply { effect: Some(Box::new(BufferWrite::new(view, bytes))), ..ServiceReply::default() })
+        Ok(ServiceReply {
+            effect: Some(Box::new(BufferWrite::new(view, bytes))),
+            ..ServiceReply::default()
+        })
     }
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
-        Err(ServiceError::UnsupportedCommand { service: "csrng", command: request.command_id })
+        Err(ServiceError::UnsupportedCommand {
+            service: "csrng",
+            command: request.command_id,
+        })
     }
 }

@@ -39,7 +39,9 @@ const RESULT_PL_INVALID_FONT_TYPE: u32 = 1 | (196 << 9);
 /// Write one font at `offset` (header included) and return the data offset.
 pub fn encode_font(region: &mut [u8], offset: usize, font: &[u8], key: u32) -> Option<usize> {
     let size = u32::try_from(font.len()).ok()?;
-    let end = offset.checked_add(8)?.checked_add(font.len().next_multiple_of(4))?;
+    let end = offset
+        .checked_add(8)?
+        .checked_add(font.len().next_multiple_of(4))?;
     if offset % 4 != 0 || end > region.len() {
         return None;
     }
@@ -57,7 +59,9 @@ pub fn decode_font(region: &[u8], data_offset: usize, key: u32) -> Option<Vec<u8
         return None;
     }
     let size = (u32::from_be_bytes(header[4..8].try_into().expect("4")) ^ key) as usize;
-    region.get(data_offset..data_offset.checked_add(size)?).map(<[u8]>::to_vec)
+    region
+        .get(data_offset..data_offset.checked_add(size)?)
+        .map(<[u8]>::to_vec)
 }
 
 #[derive(Clone, Debug)]
@@ -142,16 +146,17 @@ impl Service for SharedFontService {
             for index in 0..3 {
                 let view = context.receive_buffer(index)?;
                 let bytes: Vec<u8> = (0..count as u32)
-                    .flat_map(|ty| {
-                        [ty, self.data_offset, self.size][index].to_le_bytes()
-                    })
+                    .flat_map(|ty| [ty, self.data_offset, self.size][index].to_le_bytes())
                     .collect();
                 if !bytes.is_empty() {
                     let view = view.slice(0, bytes.len()).map_err(ServiceError::Memory)?;
                     writes.push((view, bytes));
                 }
             }
-            let ranges = writes.iter().flat_map(|(v, _)| v.backing_ranges()).collect();
+            let ranges = writes
+                .iter()
+                .flat_map(|(v, _)| v.backing_ranges())
+                .collect();
             let mut data = vec![0u8; 8];
             data[0] = 1; // loaded
             data[4..8].copy_from_slice(&(count as u32).to_le_bytes());
@@ -174,7 +179,8 @@ impl Service for SharedFontService {
             result: RESULT_PL_INVALID_FONT_TYPE,
             ..ServiceReply::default()
         };
-        let per_type = |value: u32| font_type(request).map(|ty| ty.map_or_else(invalid, |_| word(value)));
+        let per_type =
+            |value: u32| font_type(request).map(|ty| ty.map_or_else(invalid, |_| word(value)));
         match request.command_id {
             // RequestLoad: fonts are resident from the start.
             0 => Ok(match font_type(request)? {

@@ -91,7 +91,10 @@ fn sync_wait_entries_fetch_and_nop_control_entries_are_skippable() {
         Err(DecodeError::UnsupportedEntry),
         "GpFifoEntry::parse is main-level only"
     );
-    assert_eq!(GpEntry::parse(&bytes(&[0, 0])).unwrap(), GpEntry::ControlNop);
+    assert_eq!(
+        GpEntry::parse(&bytes(&[0, 0])).unwrap(),
+        GpEntry::ControlNop
+    );
     assert_eq!(
         GpEntry::parse(&bytes(&[0, 0x8000_0000])).unwrap(),
         GpEntry::ControlNop
@@ -99,13 +102,7 @@ fn sync_wait_entries_fetch_and_nop_control_entries_are_skippable() {
 }
 #[test]
 fn unsupported_entry_control_flags_and_address_overflow_fail_explicitly() {
-    for (low, high) in [
-        (1, 0x400),
-        (2, 0x400),
-        (0, 0x500),
-        (0, 0x600),
-        (0, 0),
-    ] {
+    for (low, high) in [(1, 0x400), (2, 0x400), (0, 0x500), (0, 0x600), (0, 0)] {
         assert_eq!(
             GpFifoEntry::parse(&bytes(&[low, high])),
             Err(DecodeError::UnsupportedEntry)

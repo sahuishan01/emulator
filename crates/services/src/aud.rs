@@ -1,7 +1,9 @@
 //! Original audio services (`audren:u`, `audout:u`).
 
 use emulator_ipc::Request;
-use emulator_kernel::service::{PreparedServiceEffect, Service, ServiceContext, ServiceError, ServiceReply};
+use emulator_kernel::service::{
+    PreparedServiceEffect, Service, ServiceContext, ServiceError, ServiceReply,
+};
 use emulator_memory::{BackingRange, MemoryView};
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -75,14 +77,12 @@ impl Service for AudioRendererManager {
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
             // OpenAudioRenderer (command 0) -> returns IAudioRenderer
-            0 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: vec![Box::new(AudioRenderer::default())],
-                    effect: None,
-                })
-            }
+            0 => Ok(ServiceReply {
+                result: 0,
+                data: Vec::new(),
+                moved_objects: vec![Box::new(AudioRenderer::default())],
+                effect: None,
+            }),
             // GetAudioRendererWorkBufferSize (command 1) -> returns size: u64
             1 => {
                 let size = 0x4_0000u64; // 256 KiB work buffer
@@ -184,9 +184,9 @@ impl PreparedServiceEffect for ReleaseTimers {
             self.timers.cancel(&self.event);
         }
         for &due in &self.arm {
-            self.timers
-                .arm_once(&self.event, due)
-                .map_err(|error| ServiceError::DeviceFault(format!("audio out timer: {error:?}")))?;
+            self.timers.arm_once(&self.event, due).map_err(|error| {
+                ServiceError::DeviceFault(format!("audio out timer: {error:?}"))
+            })?;
         }
         Ok(())
     }
@@ -228,7 +228,12 @@ impl AudioOut {
         ends
     }
 
-    fn timers(&self, context: &ServiceContext<'_>, cancel: bool, arm: Vec<u64>) -> Option<Box<dyn PreparedServiceEffect>> {
+    fn timers(
+        &self,
+        context: &ServiceContext<'_>,
+        cancel: bool,
+        arm: Vec<u64>,
+    ) -> Option<Box<dyn PreparedServiceEffect>> {
         (cancel || !arm.is_empty()).then(|| {
             Box::new(ReleaseTimers {
                 timers: context.timers().clone(),
@@ -295,7 +300,11 @@ impl Service for AudioOut {
                     frames: u64::from_le_bytes(size) / AUDIO_OUT_FRAME_BYTES,
                     end_ns: None,
                 });
-                let arm = if self.started { self.schedule(now) } else { Vec::new() };
+                let arm = if self.started {
+                    self.schedule(now)
+                } else {
+                    Vec::new()
+                };
                 Ok(ServiceReply {
                     effect: self.timers(context, false, arm),
                     ..ServiceReply::default()
@@ -399,7 +408,11 @@ impl Service for AudioOut {
                 Ok(reply(vec![u8::from(held)]))
             }
             // GetAudioOutBufferCount
-            9 => Ok(reply(((self.queued.len() + self.released.len()) as u32).to_le_bytes().to_vec())),
+            9 => Ok(reply(
+                ((self.queued.len() + self.released.len()) as u32)
+                    .to_le_bytes()
+                    .to_vec(),
+            )),
             // GetAudioOutPlayedSampleCount: frames of fully played buffers.
             10 => Ok(reply(self.played_samples.to_le_bytes().to_vec())),
             12 => {
@@ -488,7 +501,9 @@ impl Service for AudioOutManager {
             // default output.
             1 | 3 => {
                 if request.copy_handles.len() > 1 {
-                    return Err(ServiceError::InvalidCopyHandleCount(request.copy_handles.len()));
+                    return Err(ServiceError::InvalidCopyHandleCount(
+                        request.copy_handles.len(),
+                    ));
                 }
                 let (input, output) = if request.command_id == 1 {
                     context.require_buffers(1, 1)?;

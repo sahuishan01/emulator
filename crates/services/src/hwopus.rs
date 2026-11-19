@@ -266,7 +266,10 @@ impl OpusDecoderManager {
     }
 
     /// 3 / 7 / 9 GetWorkBufferSizeForMultiStream(Ex/ExEx): X = parameters.
-    fn multistream_size(context: &ServiceContext<'_>, ex: bool) -> Result<ServiceReply, ServiceError> {
+    fn multistream_size(
+        context: &ServiceContext<'_>,
+        ex: bool,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         context.require_exact_buffers(0, 0, 1, 0)?;
         Ok(match multistream_params(context, ex)? {
@@ -342,7 +345,12 @@ impl Engine {
             Self::Multi(d) => d.reset(),
         }
     }
-    fn decode(&mut self, packet: &[u8], pcm: &mut [i16], capacity: usize) -> Result<usize, OpusError> {
+    fn decode(
+        &mut self,
+        packet: &[u8],
+        pcm: &mut [i16],
+        capacity: usize,
+    ) -> Result<usize, OpusError> {
         match self {
             Self::Single(d) => d.decode(Some(packet), pcm, capacity),
             Self::Multi(d) => d.decode(Some(packet), pcm, capacity),
@@ -461,9 +469,7 @@ impl OpusDecoder {
             ..ServiceReply::default()
         };
         if !bytes.is_empty() {
-            let view = output
-                .slice(0, bytes.len())
-                .map_err(ServiceError::Memory)?;
+            let view = output.slice(0, bytes.len()).map_err(ServiceError::Memory)?;
             reply.effect = Some(Box::new(BufferWrite::new(view, bytes)));
         }
         Ok(reply)

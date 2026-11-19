@@ -2,23 +2,23 @@
 mod gpu;
 mod nv;
 pub use nv::{nv_failures, nv_submit_errors};
-mod nvas;
-mod nvchannel;
-mod nvmap;
 pub mod acc;
 pub mod aoc;
 pub mod apm;
-pub mod ectx;
 pub mod applet;
 pub mod aud;
 pub mod bcat;
-pub mod csrng;
 pub mod binder;
+pub mod csrng;
+pub mod ectx;
 pub mod event;
 pub mod fspsrv;
 pub mod hid;
 pub mod hwopus;
 pub mod lm;
+mod nvas;
+mod nvchannel;
+mod nvmap;
 pub mod pctl;
 pub mod plu;
 pub mod reference;
@@ -27,12 +27,12 @@ pub mod setsys;
 pub mod timesys;
 pub mod timezone;
 pub mod vi;
-use emulator_ipc::Request;
-use emulator_kernel::service::{Service, ServiceError, ServiceReply};
 pub use acc::AccountService;
 pub use apm::ApmService;
 pub use applet::AppletManagerService;
 pub use aud::{AudioOutManager, AudioRendererManager};
+use emulator_ipc::Request;
+use emulator_kernel::service::{Service, ServiceError, ServiceReply};
 pub use event::EventHandle;
 pub use fspsrv::FspSrvService;
 pub use gpu::DiagnosticGpu;
@@ -53,7 +53,11 @@ pub(crate) struct BufferWrite {
 impl BufferWrite {
     pub(crate) fn new(view: emulator_memory::MemoryView, bytes: Vec<u8>) -> Self {
         let ranges = view.backing_ranges().collect();
-        Self { view, bytes, ranges }
+        Self {
+            view,
+            bytes,
+            ranges,
+        }
     }
 }
 
@@ -160,16 +164,24 @@ impl Service for ServiceManager {
                             .with_save_data(self.save_data.clone()),
                     ),
                     b"set:sys\0" | b"set\0\0\0\0\0" => Box::new(SetSysService::default()),
-                    b"time:s\0\0" | b"time:u\0\0" | b"time:a\0\0" => Box::new(TimeService::default()),
+                    b"time:s\0\0" | b"time:u\0\0" | b"time:a\0\0" => {
+                        Box::new(TimeService::default())
+                    }
                     b"vi:m\0\0\0\0" | b"vi:u\0\0\0\0" | b"vi:s\0\0\0\0" => {
                         Box::new(ViManagerService::with_graphics(self.graphics.clone()))
                     }
-                    b"appletAE" | b"appletOE" => Box::new(AppletManagerService::with_state(self.applet.clone())),
-                    b"hid\0\0\0\0\0" | b"hid:sys\0" | b"hid:dbg\0" => Box::new(HidService::default()),
+                    b"appletAE" | b"appletOE" => {
+                        Box::new(AppletManagerService::with_state(self.applet.clone()))
+                    }
+                    b"hid\0\0\0\0\0" | b"hid:sys\0" | b"hid:dbg\0" => {
+                        Box::new(HidService::default())
+                    }
                     b"acc:u0\0\0" | b"acc:u1\0\0" | b"acc:e\0\0\0" => {
                         Box::new(AccountService::default())
                     }
-                    b"apm\0\0\0\0\0" | b"apm:p\0\0\0" | b"apm:sys\0" => Box::new(ApmService::default()),
+                    b"apm\0\0\0\0\0" | b"apm:p\0\0\0" | b"apm:sys\0" => {
+                        Box::new(ApmService::default())
+                    }
                     b"audren:u" => Box::new(AudioRendererManager::default()),
                     b"lm\0\0\0\0\0\0" => Box::new(lm::LogManager),
                     b"aoc:u\0\0\0" => Box::new(aoc::AddOnContentManager),

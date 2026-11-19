@@ -133,20 +133,31 @@ impl PreparedServiceEffect for AppletCommit {
 }
 
 fn reply(data: Vec<u8>) -> ServiceReply {
-    ServiceReply { data, ..ServiceReply::default() }
+    ServiceReply {
+        data,
+        ..ServiceReply::default()
+    }
 }
 
 fn failure(result: u32) -> ServiceReply {
-    ServiceReply { result, ..ServiceReply::default() }
+    ServiceReply {
+        result,
+        ..ServiceReply::default()
+    }
 }
 
 fn object(service: impl Service + 'static) -> ServiceReply {
-    ServiceReply { moved_objects: vec![Box::new(service)], ..ServiceReply::default() }
+    ServiceReply {
+        moved_objects: vec![Box::new(service)],
+        ..ServiceReply::default()
+    }
 }
 
 fn u32_argument(request: &Request) -> Result<u32, ServiceError> {
     crate::payload(request, 4)?;
-    Ok(u32::from_le_bytes(request.data[..4].try_into().expect("4 bytes")))
+    Ok(u32::from_le_bytes(
+        request.data[..4].try_into().expect("4 bytes"),
+    ))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -228,7 +239,10 @@ impl Service for CommonStateGetter {
                     actual: raw as usize,
                 })?;
                 Ok(ServiceReply {
-                    effect: Some(Box::new(AppletCommit::SetCpuBoostMode(self.state.clone(), mode))),
+                    effect: Some(Box::new(AppletCommit::SetCpuBoostMode(
+                        self.state.clone(),
+                        mode,
+                    ))),
                     ..ServiceReply::default()
                 })
             }
@@ -433,7 +447,9 @@ pub struct AppletStorage {
 
 impl AppletStorage {
     pub fn new(data: Vec<u8>) -> Self {
-        Self { data: Rc::new(RefCell::new(data)) }
+        Self {
+            data: Rc::new(RefCell::new(data)),
+        }
     }
 }
 
@@ -447,11 +463,16 @@ impl Service for AppletStorage {
             // Open -> IStorageAccessor over the same bytes.
             0 => {
                 crate::payload(request, 0)?;
-                Ok(object(AppletStorageAccessor { data: self.data.clone() }))
+                Ok(object(AppletStorageAccessor {
+                    data: self.data.clone(),
+                }))
             }
             // OpenTransferStorage is only valid for transfer-memory storages,
             // which are never created here.
-            command => Err(ServiceError::UnsupportedCommand { service: "IStorage", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IStorage",
+                command,
+            }),
         }
     }
 }
@@ -479,7 +500,11 @@ impl Service for AppletStorageAccessor {
         Box::new(self.clone())
     }
 
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         match request.command_id {
             // Write(i64 offset, AutoSelect in buffer)
@@ -495,7 +520,11 @@ impl Service for AppletStorageAccessor {
                     view.read(0, &mut bytes).map_err(ServiceError::Memory)?;
                 }
                 Ok(ServiceReply {
-                    effect: Some(Box::new(AppletCommit::StorageWrite(self.data.clone(), offset, bytes))),
+                    effect: Some(Box::new(AppletCommit::StorageWrite(
+                        self.data.clone(),
+                        offset,
+                        bytes,
+                    ))),
                     ..ServiceReply::default()
                 })
             }
@@ -531,7 +560,10 @@ impl Service for AppletStorageAccessor {
                 let size = self.data.borrow().len() as i64;
                 Ok(reply(size.to_le_bytes().to_vec()))
             }
-            command => Err(ServiceError::UnsupportedCommand { service: "IStorageAccessor", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IStorageAccessor",
+                command,
+            }),
         }
     }
 }
@@ -569,7 +601,10 @@ impl Service for ApplicationFunctions {
                 };
                 Ok(ServiceReply {
                     moved_objects: vec![Box::new(AppletStorage::new(data.clone()))],
-                    effect: Some(Box::new(AppletCommit::PopLaunchParameter(self.state.clone(), kind))),
+                    effect: Some(Box::new(AppletCommit::PopLaunchParameter(
+                        self.state.clone(),
+                        kind,
+                    ))),
                     ..ServiceReply::default()
                 })
             }
@@ -605,7 +640,8 @@ impl Service for ApplicationFunctions {
             50 => {
                 crate::payload(request, 0)?;
                 Ok(reply(vec![
-                    0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x0f, 0xed, 0xcb, 0xa9, 0x87, 0x65, 0x43, 0x21,
+                    0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x0f, 0xed, 0xcb, 0xa9, 0x87,
+                    0x65, 0x43, 0x21,
                 ]))
             }
             // GetGpuErrorDetectedSystemEvent (130),
@@ -667,7 +703,9 @@ impl Service for ApplicationProxy {
             0 => Ok(ServiceReply {
                 result: 0,
                 data: Vec::new(),
-                moved_objects: vec![Box::new(CommonStateGetter { state: self.state.clone() })],
+                moved_objects: vec![Box::new(CommonStateGetter {
+                    state: self.state.clone(),
+                })],
                 effect: None,
             }),
             // GetSelfController (command 1) -> ISelfController. The reply has no
@@ -710,7 +748,9 @@ impl Service for ApplicationProxy {
             20 => Ok(ServiceReply {
                 result: 0,
                 data: Vec::new(),
-                moved_objects: vec![Box::new(ApplicationFunctions { state: self.state.clone() })],
+                moved_objects: vec![Box::new(ApplicationFunctions {
+                    state: self.state.clone(),
+                })],
                 effect: None,
             }),
             // Legacy GetOperationMode -> returns u8 (0 = Handheld, 1 = Docked)
@@ -759,7 +799,9 @@ impl Service for AppletManagerService {
             0 | 200 => Ok(ServiceReply {
                 result: 0,
                 data: Vec::new(),
-                moved_objects: vec![Box::new(ApplicationProxy { state: self.state.clone() })],
+                moved_objects: vec![Box::new(ApplicationProxy {
+                    state: self.state.clone(),
+                })],
                 effect: None,
             }),
             command => Err(ServiceError::UnsupportedCommand {

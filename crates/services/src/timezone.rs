@@ -43,7 +43,9 @@ pub struct Zone {
 
 /// Every location name the service lists, in list order.
 pub fn zone_names() -> Vec<String> {
-    let mut names: Vec<String> = ["UTC", "GMT", "Etc/UTC", "Etc/GMT"].map(String::from).to_vec();
+    let mut names: Vec<String> = ["UTC", "GMT", "Etc/UTC", "Etc/GMT"]
+        .map(String::from)
+        .to_vec();
     names.extend((1..=12).map(|hours| format!("Etc/GMT+{hours}")));
     names.extend((1..=14).map(|hours| format!("Etc/GMT-{hours}")));
     names
@@ -51,7 +53,11 @@ pub fn zone_names() -> Vec<String> {
 
 /// Looks up a location name. `Etc/GMT+N` is N hours west (POSIX sign).
 pub fn find_zone(name: &str) -> Option<Zone> {
-    let zone = |offset: i32, abbreviation: String| Zone { name: name.to_string(), offset, abbreviation };
+    let zone = |offset: i32, abbreviation: String| Zone {
+        name: name.to_string(),
+        offset,
+        abbreviation,
+    };
     match name {
         "UTC" | "Etc/UTC" => return Some(zone(0, "UTC".into())),
         "GMT" | "Etc/GMT" => return Some(zone(0, "GMT".into())),
@@ -63,7 +69,11 @@ pub fn find_zone(name: &str) -> Option<Zone> {
         b'-' => (false, &rest[1..]),
         _ => return None,
     };
-    if digits.is_empty() || digits.len() > 2 || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    if digits.is_empty()
+        || digits.len() > 2
+        || digits.starts_with('0')
+        || !digits.bytes().all(|b| b.is_ascii_digit())
+    {
         return None;
     }
     let hours: i32 = digits.parse().ok()?;
@@ -71,14 +81,19 @@ pub fn find_zone(name: &str) -> Option<Zone> {
         return None;
     }
     let offset = if west { -hours * 3600 } else { hours * 3600 };
-    Some(zone(offset, format!("{}{hours:02}", if west { '-' } else { '+' })))
+    Some(zone(
+        offset,
+        format!("{}{hours:02}", if west { '-' } else { '+' }),
+    ))
 }
 
 fn location_name(bytes: &[u8]) -> Result<String, ServiceError> {
-    let raw = bytes.get(..LOCATION_NAME_SIZE).ok_or(ServiceError::InvalidPayload {
-        expected: LOCATION_NAME_SIZE,
-        actual: bytes.len(),
-    })?;
+    let raw = bytes
+        .get(..LOCATION_NAME_SIZE)
+        .ok_or(ServiceError::InvalidPayload {
+            expected: LOCATION_NAME_SIZE,
+            actual: bytes.len(),
+        })?;
     let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
     Ok(String::from_utf8_lossy(&raw[..end]).into_owned())
 }
@@ -98,7 +113,8 @@ pub fn encode_rule(zone: &Zone) -> Vec<u8> {
     rule[4..8].copy_from_slice(&RULE_VERSION.to_le_bytes());
     rule[8..12].copy_from_slice(&zone.offset.to_le_bytes());
     let abbreviation = zone.abbreviation.as_bytes();
-    rule[12..12 + abbreviation.len().min(7)].copy_from_slice(&abbreviation[..abbreviation.len().min(7)]);
+    rule[12..12 + abbreviation.len().min(7)]
+        .copy_from_slice(&abbreviation[..abbreviation.len().min(7)]);
     rule
 }
 
@@ -129,11 +145,16 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let shifted = days + 719_468;
     let era = shifted.div_euclid(146_097);
     let day_of_era = shifted - era * 146_097;
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_index = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
     let year = year_of_era + era * 400 + i64::from(month <= 2);
     (year, month, day)
 }
@@ -180,25 +201,46 @@ fn device_zone() -> Zone {
 }
 
 fn word(value: u32) -> ServiceReply {
-    ServiceReply { data: value.to_le_bytes().to_vec(), ..ServiceReply::default() }
+    ServiceReply {
+        data: value.to_le_bytes().to_vec(),
+        ..ServiceReply::default()
+    }
 }
 
 fn failure(result: u32) -> ServiceReply {
-    ServiceReply { result, ..ServiceReply::default() }
+    ServiceReply {
+        result,
+        ..ServiceReply::default()
+    }
 }
 
 fn payload(request: &Request, length: usize) -> Result<&[u8], ServiceError> {
-    request.data.get(..length).ok_or(ServiceError::InvalidPayload { expected: length, actual: request.data.len() })
+    request
+        .data
+        .get(..length)
+        .ok_or(ServiceError::InvalidPayload {
+            expected: length,
+            actual: request.data.len(),
+        })
 }
 
 fn posix_argument(request: &Request) -> Result<i64, ServiceError> {
-    Ok(i64::from_le_bytes(payload(request, 8)?.try_into().expect("8 bytes")))
+    Ok(i64::from_le_bytes(
+        payload(request, 8)?.try_into().expect("8 bytes"),
+    ))
 }
 
 /// Writes `bytes` to the start of a receive buffer as a deferred effect.
-fn output(view: emulator_memory::MemoryView, bytes: Vec<u8>, data: Vec<u8>) -> Result<ServiceReply, ServiceError> {
+fn output(
+    view: emulator_memory::MemoryView,
+    bytes: Vec<u8>,
+    data: Vec<u8>,
+) -> Result<ServiceReply, ServiceError> {
     if view.len() < bytes.len() {
-        return Err(ServiceError::InvalidPayload { expected: bytes.len(), actual: view.len() });
+        return Err(ServiceError::InvalidPayload {
+            expected: bytes.len(),
+            actual: view.len(),
+        });
     }
     let view = view.slice(0, bytes.len()).map_err(ServiceError::Memory)?;
     Ok(ServiceReply {
@@ -226,20 +268,32 @@ impl Service for TimeZoneService {
         Box::new(self.clone())
     }
 
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         match request.command_id {
             // LoadLocationNameList(u32 index) -> u32 count, B: LocationName[]
             3 => {
                 context.require_buffers(0, 1)?;
-                let index = u32::from_le_bytes(payload(request, 4)?.try_into().expect("4 bytes")) as usize;
+                let index =
+                    u32::from_le_bytes(payload(request, 4)?.try_into().expect("4 bytes")) as usize;
                 let view = context.receive_buffer(0)?;
                 let capacity = view.len() / LOCATION_NAME_SIZE;
-                let names: Vec<String> = zone_names().into_iter().skip(index).take(capacity).collect();
+                let names: Vec<String> = zone_names()
+                    .into_iter()
+                    .skip(index)
+                    .take(capacity)
+                    .collect();
                 let bytes: Vec<u8> = names.iter().flat_map(|name| encode_name(name)).collect();
                 let count = (names.len() as u32).to_le_bytes().to_vec();
                 if bytes.is_empty() {
-                    return Ok(ServiceReply { data: count, ..ServiceReply::default() });
+                    return Ok(ServiceReply {
+                        data: count,
+                        ..ServiceReply::default()
+                    });
                 }
                 output(view, bytes, count)
             }
@@ -261,14 +315,20 @@ impl Service for TimeZoneService {
                 };
                 Ok(to_calendar(posix, offset, abbreviation).map_or_else(
                     || failure(RESULT_TIME_OUT_OF_RANGE),
-                    |data| ServiceReply { data, ..ServiceReply::default() },
+                    |data| ServiceReply {
+                        data,
+                        ..ServiceReply::default()
+                    },
                 ))
             }
             // ToPosixTime(CalendarTime, A: TimeZoneRule) -> u32 count, C: PosixTime[]
             201 | 202 => {
                 let rule = if request.command_id == 201 {
                     if context.send_buffer(0).is_err() {
-                        return Err(ServiceError::InvalidBufferCounts { send: 0, receive: 0 });
+                        return Err(ServiceError::InvalidBufferCounts {
+                            send: 0,
+                            receive: 0,
+                        });
                     }
                     let Some((offset, _)) = read_rule(context)? else {
                         return Ok(failure(RESULT_TIME_ZONE_CONVERSION_FAILED));
@@ -279,12 +339,19 @@ impl Service for TimeZoneService {
                 };
                 let calendar = payload(request, 8)?;
                 let Some(view) = context.pointer_receive(0)?.filter(|view| view.len() >= 8) else {
-                    return Err(ServiceError::InvalidPayload { expected: 8, actual: 0 });
+                    return Err(ServiceError::InvalidPayload {
+                        expected: 8,
+                        actual: 0,
+                    });
                 };
                 let Some(posix) = to_posix(calendar, rule) else {
                     return Ok(failure(RESULT_TIME_OUT_OF_RANGE));
                 };
-                output(view, posix.to_le_bytes().to_vec(), 1u32.to_le_bytes().to_vec())
+                output(
+                    view,
+                    posix.to_le_bytes().to_vec(),
+                    1u32.to_le_bytes().to_vec(),
+                )
             }
             _ => {
                 context.require_buffers(0, 0)?;
@@ -296,28 +363,43 @@ impl Service for TimeZoneService {
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
             // GetDeviceLocationName -> LocationName
-            0 => Ok(ServiceReply { data: encode_name(&device_zone().name).to_vec(), ..ServiceReply::default() }),
+            0 => Ok(ServiceReply {
+                data: encode_name(&device_zone().name).to_vec(),
+                ..ServiceReply::default()
+            }),
             // GetTotalLocationNameCount -> u32
             2 => Ok(word(zone_names().len() as u32)),
             // GetTimeZoneRuleVersion -> 0x10-byte version string
             5 => {
                 let mut version = vec![0u8; 0x10];
                 version[..RULE_DATA_VERSION.len()].copy_from_slice(RULE_DATA_VERSION);
-                Ok(ServiceReply { data: version, ..ServiceReply::default() })
+                Ok(ServiceReply {
+                    data: version,
+                    ..ServiceReply::default()
+                })
             }
             // ToCalendarTimeWithMyRule(PosixTime) -> CalendarTime, CalendarAdditionalInfo
             101 => {
                 let zone = device_zone();
                 let mut abbreviation = [0u8; 8];
-                abbreviation[..zone.abbreviation.len()].copy_from_slice(zone.abbreviation.as_bytes());
-                Ok(to_calendar(posix_argument(request)?, zone.offset, abbreviation).map_or_else(
-                    || failure(RESULT_TIME_OUT_OF_RANGE),
-                    |data| ServiceReply { data, ..ServiceReply::default() },
-                ))
+                abbreviation[..zone.abbreviation.len()]
+                    .copy_from_slice(zone.abbreviation.as_bytes());
+                Ok(
+                    to_calendar(posix_argument(request)?, zone.offset, abbreviation).map_or_else(
+                        || failure(RESULT_TIME_OUT_OF_RANGE),
+                        |data| ServiceReply {
+                            data,
+                            ..ServiceReply::default()
+                        },
+                    ),
+                )
             }
             // SetDeviceLocationName needs time:s-level permission and
             // persistent settings, which are not implemented.
-            command => Err(ServiceError::UnsupportedCommand { service: "ITimeZoneService", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "ITimeZoneService",
+                command,
+            }),
         }
     }
 }

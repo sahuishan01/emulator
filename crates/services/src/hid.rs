@@ -2,10 +2,10 @@
 //! Provides controller connection states, button inputs, touch screen events,
 //! and six-axis motion sensor readings.
 
+use crate::event::EventHandle;
 use emulator_ipc::Request;
 use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
 use emulator_kernel::Object;
-use crate::event::EventHandle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -74,7 +74,7 @@ fn lifo(mem: &mut [u8], at: usize, state: &[u8]) {
     put(mem, at + 8, &LIFO_ENTRIES.to_le_bytes());
     put(mem, at + 0x10, &0u64.to_le_bytes()); // tail: entry 0
     put(mem, at + 0x18, &1u64.to_le_bytes()); // one sample
-    // Entry 0: u64 sampling number, then the state.
+                                              // Entry 0: u64 sampling number, then the state.
     put(mem, at + LIFO_HEADER_SIZE + 8, state);
 }
 
@@ -84,7 +84,12 @@ fn lifo(mem: &mut [u8], at: usize, state: &[u8]) {
 /// sampling numbers do not advance until host input is wired in.
 pub fn create_hid_shared_memory() -> Rc<RefCell<Vec<u8>>> {
     let mut mem = vec![0u8; HID_SHARED_MEMORY_SIZE];
-    for device in [DEBUG_PAD_OFFSET, TOUCH_SCREEN_OFFSET, MOUSE_OFFSET, KEYBOARD_OFFSET] {
+    for device in [
+        DEBUG_PAD_OFFSET,
+        TOUCH_SCREEN_OFFSET,
+        MOUSE_OFFSET,
+        KEYBOARD_OFFSET,
+    ] {
         lifo(&mut mem, device, &[]);
     }
     for entry in 0..NPAD_COUNT {
@@ -96,7 +101,11 @@ pub fn create_hid_shared_memory() -> Rc<RefCell<Vec<u8>>> {
             if handheld && index == HANDHELD_LIFO {
                 state[0x20..0x24].copy_from_slice(&NPAD_ATTRIBUTES_HANDHELD.to_le_bytes());
             }
-            lifo(&mut mem, base + NPAD_COMMON_LIFOS + index * NPAD_COMMON_LIFO_SIZE, &state);
+            lifo(
+                &mut mem,
+                base + NPAD_COMMON_LIFOS + index * NPAD_COMMON_LIFO_SIZE,
+                &state,
+            );
         }
         for index in 0..6 {
             // SixAxisSensorState: delta time, sampling number, acceleration,
@@ -110,17 +119,32 @@ pub fn create_hid_shared_memory() -> Rc<RefCell<Vec<u8>>> {
                 }
                 state[0x58..0x5c].copy_from_slice(&1u32.to_le_bytes()); // IsConnected
             }
-            lifo(&mut mem, base + NPAD_SIX_AXIS_LIFOS + index * NPAD_SIX_AXIS_LIFO_SIZE, &state);
+            lifo(
+                &mut mem,
+                base + NPAD_SIX_AXIS_LIFOS + index * NPAD_SIX_AXIS_LIFO_SIZE,
+                &state,
+            );
         }
         if !handheld {
             continue;
         }
-        put(&mut mem, base + NPAD_STYLE_SET, &NPAD_STYLE_HANDHELD.to_le_bytes());
-        put(&mut mem, base + NPAD_JOY_ASSIGNMENT_MODE, &0u32.to_le_bytes()); // Dual
-        // Colors: attribute Ok (0), then main/sub RGBA for the pad and each half.
+        put(
+            &mut mem,
+            base + NPAD_STYLE_SET,
+            &NPAD_STYLE_HANDHELD.to_le_bytes(),
+        );
+        put(
+            &mut mem,
+            base + NPAD_JOY_ASSIGNMENT_MODE,
+            &0u32.to_le_bytes(),
+        ); // Dual
+           // Colors: attribute Ok (0), then main/sub RGBA for the pad and each half.
         for (at, words) in [
             (NPAD_FULL_KEY_COLOR, &[0u32, 0xff32_3232, 0xff0f_0f0f][..]),
-            (NPAD_JOY_COLOR, &[0u32, 0xff82_8282, 0xff0f_0f0f, 0xff82_8282, 0xff0f_0f0f][..]),
+            (
+                NPAD_JOY_COLOR,
+                &[0u32, 0xff82_8282, 0xff0f_0f0f, 0xff82_8282, 0xff0f_0f0f][..],
+            ),
         ] {
             for (i, word) in words.iter().enumerate() {
                 put(&mut mem, base + at + i * 4, &word.to_le_bytes());
@@ -130,11 +154,23 @@ pub fn create_hid_shared_memory() -> Rc<RefCell<Vec<u8>>> {
         put(&mut mem, base + NPAD_DEVICE_TYPE, &0x0cu32.to_le_bytes());
         // Powered left/right, ABXY oriented, plus/minus/d-pad available.
         let properties: u64 = (1 << 4) | (1 << 5) | (1 << 11) | (1 << 13) | (1 << 14) | (1 << 15);
-        put(&mut mem, base + NPAD_SYSTEM_PROPERTIES, &properties.to_le_bytes());
+        put(
+            &mut mem,
+            base + NPAD_SYSTEM_PROPERTIES,
+            &properties.to_le_bytes(),
+        );
         // Unintended home button input protection enabled.
-        put(&mut mem, base + NPAD_SYSTEM_BUTTON_PROPERTIES, &1u32.to_le_bytes());
+        put(
+            &mut mem,
+            base + NPAD_SYSTEM_BUTTON_PROPERTIES,
+            &1u32.to_le_bytes(),
+        );
         for i in 0..3 {
-            put(&mut mem, base + NPAD_BATTERY_LEVELS + i * 4, &4u32.to_le_bytes()); // full
+            put(
+                &mut mem,
+                base + NPAD_BATTERY_LEVELS + i * 4,
+                &4u32.to_le_bytes(),
+            ); // full
         }
     }
     Rc::new(RefCell::new(mem))
@@ -211,7 +247,7 @@ struct NpadConfig {
 impl Default for NpadConfig {
     fn default() -> Self {
         Self {
-            style_set: 0x1f, // FullKey | Handheld | JoyDual | JoyLeft | JoyRight
+            style_set: 0x1f,  // FullKey | Handheld | JoyDual | JoyLeft | JoyRight
             joy_hold_type: 1, // Horizontal
             handheld_activation_mode: 0,
             communication_mode: 0,
@@ -403,7 +439,9 @@ impl Service for HidService {
                 let width = u32::from_le_bytes(request.data[0..4].try_into().expect("validated"));
                 let height = u32::from_le_bytes(request.data[4..8].try_into().expect("validated"));
                 if width == 0 || height == 0 {
-                    return Err(ServiceError::DeviceFault(format!("touch screen resolution {width}x{height}")));
+                    return Err(ServiceError::DeviceFault(format!(
+                        "touch screen resolution {width}x{height}"
+                    )));
                 }
                 config.touch_resolution = (width, height);
                 Ok(ServiceReply::default())

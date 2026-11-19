@@ -88,13 +88,22 @@ fn method_census(writes: &[MethodWrite]) -> String {
         if w.method_word == 0 {
             binds.push(format!("s{}={:#x}", w.subchannel, w.data));
         }
-        *counts.entry((w.subchannel, w.method_byte_offset())).or_default() += 1;
+        *counts
+            .entry((w.subchannel, w.method_byte_offset()))
+            .or_default() += 1;
     }
     binds.dedup();
     let first: Vec<String> = writes
         .iter()
         .take(12)
-        .map(|w| format!("s{}:{:#x}={:#x}", w.subchannel, w.method_byte_offset(), w.data))
+        .map(|w| {
+            format!(
+                "s{}:{:#x}={:#x}",
+                w.subchannel,
+                w.method_byte_offset(),
+                w.data
+            )
+        })
         .collect();
     let mut top: Vec<_> = counts.into_iter().collect();
     top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -138,14 +147,17 @@ impl ChannelProcessor {
         queue.methods = self.methods.clone();
         let id = queue.submit(space, entries).map_err(|e| e.to_string())?;
         if let Some(class) = class {
-            if queue
+            if let Some(bad) = queue
                 .front()
                 .expect("submitted batch")
                 .writes()
                 .iter()
-                .any(|w| w.method_word == 0 && w.data != class)
+                .find(|w| w.method_word == 0 && !crate::methods::class_allowed(class, w.data))
             {
-                return Err("method class does not match allocated context".into());
+                return Err(format!(
+                    "method class {:#x} on subchannel {} does not match allocated context {class:#x}",
+                    bad.data, bad.subchannel
+                ));
             }
         }
         let census = method_census(queue.front().expect("submitted batch").writes());

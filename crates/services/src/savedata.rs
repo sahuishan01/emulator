@@ -169,7 +169,10 @@ pub fn parse_path(bytes: &[u8]) -> Result<String, u32> {
         return Ok(path.to_owned());
     }
     let trimmed = path.strip_suffix('/').unwrap_or(path);
-    if trimmed[1..].split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+    if trimmed[1..]
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
         return Err(RESULT_FS_NOT_NORMALIZED);
     }
     Ok(trimmed.to_owned())
@@ -220,7 +223,11 @@ impl OpenGuard {
         } else {
             count.readers += 1;
         }
-        Rc::new(Self { mount: mount.clone(), path: path.to_owned(), write })
+        Rc::new(Self {
+            mount: mount.clone(),
+            path: path.to_owned(),
+            write,
+        })
     }
 }
 
@@ -259,35 +266,58 @@ impl PreparedServiceEffect for Deferred {
 }
 
 fn deferred(apply: impl FnOnce() + 'static) -> ServiceReply {
-    ServiceReply { effect: Some(Box::new(Deferred(Box::new(apply)))), ..ServiceReply::default() }
+    ServiceReply {
+        effect: Some(Box::new(Deferred(Box::new(apply)))),
+        ..ServiceReply::default()
+    }
 }
 
 fn reply(data: Vec<u8>) -> ServiceReply {
-    ServiceReply { data, ..ServiceReply::default() }
+    ServiceReply {
+        data,
+        ..ServiceReply::default()
+    }
 }
 
 fn failure(result: u32) -> ServiceReply {
-    ServiceReply { result, ..ServiceReply::default() }
+    ServiceReply {
+        result,
+        ..ServiceReply::default()
+    }
 }
 
 fn le_u32(request: &Request, at: usize) -> u32 {
-    u32::from_le_bytes(request.data[at..at + 4].try_into().expect("validated payload"))
+    u32::from_le_bytes(
+        request.data[at..at + 4]
+            .try_into()
+            .expect("validated payload"),
+    )
 }
 
 fn le_i64(request: &Request, at: usize) -> i64 {
-    i64::from_le_bytes(request.data[at..at + 8].try_into().expect("validated payload"))
+    i64::from_le_bytes(
+        request.data[at..at + 8]
+            .try_into()
+            .expect("validated payload"),
+    )
 }
 
 /// Opens the save named by an `OpenSaveDataFileSystem` payload:
 /// u8 space id, 7 bytes padding, 0x40-byte `SaveDataAttribute`.
-pub fn open_save_data(store: &SaveDataStore, request: &Request, writable: bool) -> Result<ServiceReply, ServiceError> {
+pub fn open_save_data(
+    store: &SaveDataStore,
+    request: &Request,
+    writable: bool,
+) -> Result<ServiceReply, ServiceError> {
     crate::payload(request, 0x48)?;
     let space = request.data[0];
     let attribute = &request.data[8..0x48];
     let user: [u8; 16] = attribute[8..24].try_into().expect("16 bytes");
     let save_type = attribute[0x20];
     if space != SAVE_DATA_SPACE_USER {
-        return Err(ServiceError::DeviceFault(format!("save data space {space} is not available")));
+        return Err(ServiceError::DeviceFault(format!(
+            "save data space {space} is not available"
+        )));
     }
     match save_type {
         SAVE_DATA_TYPE_ACCOUNT if user == DEFAULT_USER_ID => {}
@@ -295,7 +325,9 @@ pub fn open_save_data(store: &SaveDataStore, request: &Request, writable: bool) 
         SAVE_DATA_TYPE_DEVICE if user == [0; 16] => {}
         SAVE_DATA_TYPE_DEVICE => return Ok(failure(RESULT_FS_INVALID_ARGUMENT)),
         other => {
-            return Err(ServiceError::DeviceFault(format!("save data type {other} is not available")));
+            return Err(ServiceError::DeviceFault(format!(
+                "save data type {other} is not available"
+            )));
         }
     }
     let mut key = vec![space];
@@ -303,9 +335,17 @@ pub fn open_save_data(store: &SaveDataStore, request: &Request, writable: bool) 
     // An account or device save that was never committed is empty, as if
     // EnsureSaveData had just created it.
     let tree = store.borrow().get(&key).cloned().unwrap_or_default();
-    let mount = Mount { tree, writable, store: store.clone(), key, open: BTreeMap::new() };
+    let mount = Mount {
+        tree,
+        writable,
+        store: store.clone(),
+        key,
+        open: BTreeMap::new(),
+    };
     Ok(ServiceReply {
-        moved_objects: vec![Box::new(SaveFileSystem { mount: Rc::new(RefCell::new(mount)) })],
+        moved_objects: vec![Box::new(SaveFileSystem {
+            mount: Rc::new(RefCell::new(mount)),
+        })],
         ..ServiceReply::default()
     })
 }
@@ -327,12 +367,22 @@ fn path_count(command: u32) -> Option<usize> {
 }
 
 impl SaveFileSystem {
-    fn command(&mut self, request: &Request, paths: &[String]) -> Result<ServiceReply, ServiceError> {
+    fn command(
+        &mut self,
+        request: &Request,
+        paths: &[String],
+    ) -> Result<ServiceReply, ServiceError> {
         let Some(count) = path_count(request.command_id) else {
-            return Err(ServiceError::UnsupportedCommand { service: "IFileSystem (save data)", command: request.command_id });
+            return Err(ServiceError::UnsupportedCommand {
+                service: "IFileSystem (save data)",
+                command: request.command_id,
+            });
         };
         if paths.len() != count {
-            return Err(ServiceError::InvalidBufferCounts { send: 0, receive: 0 });
+            return Err(ServiceError::InvalidBufferCounts {
+                send: 0,
+                receive: 0,
+            });
         }
         let mutating = matches!(request.command_id, 0..=6 | 10 | 13);
         let state = self.mount.borrow();
@@ -389,7 +439,11 @@ impl SaveFileSystem {
                     return Ok(failure(RESULT_FS_PATH_NOT_FOUND));
                 }
                 Ok(deferred(move || {
-                    mount.borrow_mut().tree.entries.insert(path, Node::Directory);
+                    mount
+                        .borrow_mut()
+                        .tree
+                        .entries
+                        .insert(path, Node::Directory);
                 }))
             }
             // DeleteDirectory (3), DeleteDirectoryRecursively (4),
@@ -426,7 +480,11 @@ impl SaveFileSystem {
                 crate::payload(request, 0)?;
                 let (old, new) = (paths[0].clone(), paths[1].clone());
                 let directory = request.command_id == 6;
-                let found = if directory { old != "/" && tree.is_directory(&old) } else { tree.file(&old).is_some() };
+                let found = if directory {
+                    old != "/" && tree.is_directory(&old)
+                } else {
+                    tree.file(&old).is_some()
+                };
                 if !found {
                     return Ok(failure(RESULT_FS_PATH_NOT_FOUND));
                 }
@@ -445,7 +503,11 @@ impl SaveFileSystem {
                 if state.locked(&old) {
                     return Ok(failure(RESULT_FS_TARGET_LOCKED));
                 }
-                let moved = if directory { tree.descendants(&old) } else { Vec::new() };
+                let moved = if directory {
+                    tree.descendants(&old)
+                } else {
+                    Vec::new()
+                };
                 Ok(deferred(move || {
                     let entries = &mut mount.borrow_mut().tree.entries;
                     for path in std::iter::once(old.clone()).chain(moved) {
@@ -499,7 +561,8 @@ impl SaveFileSystem {
             9 => {
                 crate::payload(request, 4)?;
                 let mode = le_u32(request, 0);
-                let all = DIRECTORY_MODE_DIRECTORIES | DIRECTORY_MODE_FILES | DIRECTORY_MODE_NO_FILE_SIZE;
+                let all =
+                    DIRECTORY_MODE_DIRECTORIES | DIRECTORY_MODE_FILES | DIRECTORY_MODE_NO_FILE_SIZE;
                 if mode & !all != 0 {
                     return Ok(failure(RESULT_FS_INVALID_ARGUMENT));
                 }
@@ -510,13 +573,25 @@ impl SaveFileSystem {
                     .children(&paths[0])
                     .into_iter()
                     .filter(|(_, is_file, _)| {
-                        mode & if *is_file { DIRECTORY_MODE_FILES } else { DIRECTORY_MODE_DIRECTORIES } != 0
+                        mode & if *is_file {
+                            DIRECTORY_MODE_FILES
+                        } else {
+                            DIRECTORY_MODE_DIRECTORIES
+                        } != 0
                     })
                     .map(|(name, is_file, size)| {
                         let mut entry = vec![0u8; DIRECTORY_ENTRY_SIZE];
                         entry[..name.len()].copy_from_slice(name.as_bytes());
-                        entry[0x304] = if is_file { ENTRY_TYPE_FILE as u8 } else { ENTRY_TYPE_DIRECTORY as u8 };
-                        let size = if mode & DIRECTORY_MODE_NO_FILE_SIZE != 0 { 0 } else { size };
+                        entry[0x304] = if is_file {
+                            ENTRY_TYPE_FILE as u8
+                        } else {
+                            ENTRY_TYPE_DIRECTORY as u8
+                        };
+                        let size = if mode & DIRECTORY_MODE_NO_FILE_SIZE != 0 {
+                            0
+                        } else {
+                            size
+                        };
                         entry[0x308..0x310].copy_from_slice(&size.to_le_bytes());
                         entry
                     })
@@ -540,7 +615,11 @@ impl SaveFileSystem {
                 if !tree.exists(&paths[0]) {
                     return Ok(failure(RESULT_FS_PATH_NOT_FOUND));
                 }
-                let size = if request.command_id == 11 { SAVE_DATA_CAPACITY - tree.used() } else { SAVE_DATA_CAPACITY };
+                let size = if request.command_id == 11 {
+                    SAVE_DATA_CAPACITY - tree.used()
+                } else {
+                    SAVE_DATA_CAPACITY
+                };
                 Ok(reply(size.to_le_bytes().to_vec()))
             }
             _ => unreachable!("path_count covers every supported command"),
@@ -553,7 +632,11 @@ impl Service for SaveFileSystem {
         Box::new(self.clone())
     }
 
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         let Some(count) = path_count(request.command_id) else {
             return self.command(request, &[]);
@@ -595,7 +678,9 @@ fn file_range(request: &Request, buffer: usize) -> Result<Result<(u64, u64), u32
         return Ok(Err(RESULT_FS_INVALID_OFFSET));
     };
     match u64::try_from(size) {
-        Ok(size) if size <= buffer as u64 && offset.checked_add(size).is_some() => Ok(Ok((offset, size))),
+        Ok(size) if size <= buffer as u64 && offset.checked_add(size).is_some() => {
+            Ok(Ok((offset, size)))
+        }
         _ => Ok(Err(RESULT_FS_INVALID_SIZE)),
     }
 }
@@ -607,7 +692,9 @@ impl SaveFile {
             .tree
             .file(&self.guard.path)
             .map(|data| data.len() as u64)
-            .ok_or_else(|| ServiceError::DeviceFault(format!("open save file {} vanished", self.guard.path)))
+            .ok_or_else(|| {
+                ServiceError::DeviceFault(format!("open save file {} vanished", self.guard.path))
+            })
     }
 
     /// Space check for growing this file to `length` bytes.
@@ -642,7 +729,11 @@ impl Service for SaveFile {
         Box::new(self.clone())
     }
 
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         match request.command_id {
             // Read(u32 option, i64 offset, i64 size, B buffer) -> i64 read
@@ -726,7 +817,10 @@ impl Service for SaveFile {
                 crate::payload(request, 0)?;
                 Ok(reply((self.length()? as i64).to_le_bytes().to_vec()))
             }
-            command => Err(ServiceError::UnsupportedCommand { service: "IFile (save data)", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IFile (save data)",
+                command,
+            }),
         }
     }
 }
@@ -743,7 +837,11 @@ impl Service for SaveDirectory {
         Box::new(self.clone())
     }
 
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         if request.command_id != 0 {
             context.require_buffers(0, 0)?;
@@ -771,7 +869,10 @@ impl Service for SaveDirectory {
                 crate::payload(request, 0)?;
                 Ok(reply((self.entries.len() as i64).to_le_bytes().to_vec()))
             }
-            command => Err(ServiceError::UnsupportedCommand { service: "IDirectory (save data)", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "IDirectory (save data)",
+                command,
+            }),
         }
     }
 }

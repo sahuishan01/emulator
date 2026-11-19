@@ -195,7 +195,12 @@ impl Registers {
             0x192c => self.scale = Some(data),
             0x1a00 => self.mask = Some(data),
             0x121c => self.targets = Some(data),
-            0x840..=0x87c | 0x880..=0x8bc | 0x8c0..=0x8fc | 0x940..=0x97c | 0x980..=0x9bc | 0x9c0..=0x9fc => {
+            0x840..=0x87c
+            | 0x880..=0x8bc
+            | 0x8c0..=0x8fc
+            | 0x940..=0x97c
+            | 0x980..=0x9bc
+            | 0x9c0..=0x9fc => {
                 let rt = ((offset - 0x800) / 64) as usize;
                 let f = (((offset - 0x800) % 64) / 4) as usize;
                 if rt < 8 && f < 8 {

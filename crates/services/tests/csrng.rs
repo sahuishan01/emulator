@@ -7,7 +7,9 @@ use emulator_services::csrng::RandomService;
 #[test]
 fn random_bytes_fill_the_whole_buffer_and_differ() {
     let mut rig = Rig::new("csrng", Box::new(RandomService));
-    rig.m.map(0x30000, vec![0; 0x1000], Permissions::READ_WRITE).unwrap();
+    rig.m
+        .map(0x30000, vec![0; 0x1000], Permissions::READ_WRITE)
+        .unwrap();
     let mut draws = Vec::new();
     for _ in 0..2 {
         rig.call(0, &[], &[(0x30000, 0x100)], None, &[]);
@@ -20,6 +22,9 @@ fn random_bytes_fill_the_whole_buffer_and_differ() {
         draws.push(bytes);
     }
     assert_ne!(draws[0], draws[1]);
-    assert!(rig.try_call(0, &[], &[], None, &[]).is_err(), "output buffer required");
+    assert!(
+        rig.try_call(0, &[], &[], None, &[]).is_err(),
+        "output buffer required"
+    );
     assert!(rig.try_call(1, &[], &[], None, &[]).is_err());
 }

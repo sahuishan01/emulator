@@ -27,13 +27,21 @@ impl Rig {
         k.register_named_port(port, service).unwrap();
         c.tpidrro_el0 = TLS;
         c.x[1] = 0x1000;
-        k.dispatch(SVC_CONNECT_TO_NAMED_PORT, &mut c, &mut m).unwrap();
+        k.dispatch(SVC_CONNECT_TO_NAMED_PORT, &mut c, &mut m)
+            .unwrap();
         let session = c.x[1] as u32;
         Self { k, c, m, session }
     }
 
     /// CMIF request: `a` send / `b` receive alias buffers, optional C buffer.
-    pub fn call(&mut self, command: u32, a: &[(u64, u64)], b: &[(u64, u64)], c: Option<(u64, u64)>, data: &[u8]) {
+    pub fn call(
+        &mut self,
+        command: u32,
+        a: &[(u64, u64)],
+        b: &[(u64, u64)],
+        c: Option<(u64, u64)>,
+        data: &[u8],
+    ) {
         self.try_call(command, a, b, c, data).unwrap();
     }
 
@@ -60,7 +68,8 @@ impl Rig {
         data: &[u8],
     ) -> Result<(), emulator_kernel::KernelError> {
         let mut p = [0u8; 256];
-        let word0 = 4 | ((x.len() as u32) << 16) | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
+        let word0 =
+            4 | ((x.len() as u32) << 16) | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
         let raw_words = 8 + data.len().div_ceil(4) as u32;
         let word1 = raw_words | if c.is_some() { 2 << 10 } else { 0 };
         p[..4].copy_from_slice(&word0.to_le_bytes());
@@ -91,11 +100,20 @@ impl Rig {
         }
         self.m.write(TLS, &p).unwrap();
         self.c.x[0] = u64::from(self.session);
-        self.k.dispatch(SVC_SEND_SYNC_REQUEST, &mut self.c, &mut self.m).map(drop)
+        self.k
+            .dispatch(SVC_SEND_SYNC_REQUEST, &mut self.c, &mut self.m)
+            .map(drop)
     }
 
     /// [`Self::call`] on another session handle (an interface a reply moved).
-    pub fn call_on(&mut self, session: u32, command: u32, a: &[(u64, u64)], b: &[(u64, u64)], data: &[u8]) {
+    pub fn call_on(
+        &mut self,
+        session: u32,
+        command: u32,
+        a: &[(u64, u64)],
+        b: &[(u64, u64)],
+        data: &[u8],
+    ) {
         self.try_call_on(session, command, a, b, data).unwrap();
     }
 
@@ -114,7 +132,15 @@ impl Rig {
     }
 
     /// Request on `session` with X buffers; panics on a kernel-level error.
-    pub fn x_call_on(&mut self, session: u32, command: u32, x: &[(u64, u64)], a: &[(u64, u64)], b: &[(u64, u64)], data: &[u8]) {
+    pub fn x_call_on(
+        &mut self,
+        session: u32,
+        command: u32,
+        x: &[(u64, u64)],
+        a: &[(u64, u64)],
+        b: &[(u64, u64)],
+        data: &[u8],
+    ) {
         self.try_x_call_on(session, command, x, a, b, data).unwrap();
     }
 
@@ -183,4 +209,3 @@ impl Rig {
         bytes
     }
 }
-

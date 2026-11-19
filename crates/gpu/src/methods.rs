@@ -5,6 +5,56 @@ use emulator_memory::{Access, BackingRange};
 
 pub const MAXWELL_DMA_COPY_A: u32 = 0xb0b5;
 pub const MAXWELL_COMPUTE_B: u32 = 0xb1c0;
+/// Graphics-engine classes without an executor yet: binding is accepted,
+/// any class method written to them fails explicitly.
+pub const KEPLER_INLINE_TO_MEMORY_B: u32 = 0xa140;
+pub const FERMI_TWOD_A: u32 = 0x902d;
+const GRAPHICS_CLASSES: [u32; 4] = [
+    crate::MAXWELL_B,
+    MAXWELL_COMPUTE_B,
+    KEPLER_INLINE_TO_MEMORY_B,
+    FERMI_TWOD_A,
+];
+
+/// Whether a channel whose allocated object context is `context` may bind
+/// `class` with SET_OBJECT. A graphics context owns the whole graphics engine
+/// (3D, compute, inline-to-memory, 2D); whether a graphics channel may also
+/// reach the copy engine is unverified, so a mismatched copy bind is refused.
+pub fn class_allowed(context: u32, class: u32) -> bool {
+    if class == context {
+        return true;
+    }
+    GRAPHICS_CLASSES.contains(&context) && GRAPHICS_CLASSES.contains(&class)
+}
+
+/// Host (PFIFO) methods, byte offsets below 0x100, valid on every subchannel.
+const HOST_NOP: u32 = 0x08;
+const HOST_FB_FLUSH: u32 = 0x24;
+const HOST_MEM_OP_A: u32 = 0x28;
+const HOST_MEM_OP_B: u32 = 0x2c;
+const HOST_WFI: u32 = 0x78;
+/// MEM_OP_B operations (bits 31:27) that only maintain L2: L2_SYSMEM_INVALIDATE
+/// and L2_FLUSH_DIRTY. The reference model has no GPU cache, so they are exact.
+const MEM_OP_L2_SYSMEM_INVALIDATE: u32 = 0x0e;
+const MEM_OP_L2_FLUSH_DIRTY: u32 = 0x10;
+
+/// Execute a host method. Synchronous in-order execution makes NOP, WFI and
+/// flushes exact; semaphores, syncpoints and other host methods are not
+/// modelled yet and fail explicitly.
+fn host_method(subchannel: u8, offset: u32, data: u32) -> Result<(), ExecutionError> {
+    match offset {
+        HOST_NOP | HOST_FB_FLUSH | HOST_WFI | HOST_MEM_OP_A => Ok(()),
+        HOST_MEM_OP_B
+            if matches!(
+                data >> 27,
+                MEM_OP_L2_SYSMEM_INVALIDATE | MEM_OP_L2_FLUSH_DIRTY
+            ) =>
+        {
+            Ok(())
+        }
+        _ => Err(ExecutionError::UnsupportedMethod { subchannel, offset }),
+    }
+}
 /// NON_PIPELINED transfer, pitch source/destination, virtual addresses, one line.
 pub const LINEAR_DMA_LAUNCH: u32 = 0x182;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -77,6 +127,7 @@ pub(crate) struct MethodState {
 enum EngineState {
     Dma(DmaRegisters),
     Color(crate::clear::ColorRegisters, Box<crate::draw::Registers>),
+    Unimplemented,
 }
 #[derive(Debug)]
 enum CopyInput {
@@ -270,6 +321,7 @@ impl MethodState {
                     crate::MAXWELL_B | MAXWELL_COMPUTE_B => {
                         EngineState::Color(crate::clear::ColorRegisters::default(), Box::default())
                     }
+                    KEPLER_INLINE_TO_MEMORY_B | FERMI_TWOD_A => EngineState::Unimplemented,
                     _ => return Err(ExecutionError::UnsupportedClass(write.data)),
                 };
                 // This subset binds a class directly. NV object handles and
@@ -277,9 +329,19 @@ impl MethodState {
                 *channel = Some(engine);
                 continue;
             }
+            if offset < 0x100 {
+                host_method(write.subchannel, offset, write.data)?;
+                continue;
+            }
             let engine = channel
                 .as_mut()
                 .ok_or(ExecutionError::UnboundSubchannel(write.subchannel))?;
+            if let EngineState::Unimplemented = engine {
+                return Err(ExecutionError::UnsupportedMethod {
+                    subchannel: write.subchannel,
+                    offset,
+                });
+            }
             if let EngineState::Color(registers, draw_registers) = engine {
                 if offset == 0x19d0 && write.data == 1 {
                     let clear = draw_registers.depth_clear(registers)?;

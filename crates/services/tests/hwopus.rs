@@ -39,10 +39,16 @@ impl Rig {
             Permissions::READ_WRITE,
         )
         .unwrap();
-        m.map(INPUT, vec![0; 0x1000], Permissions::READ_WRITE).unwrap();
-        m.map(PARAMS, vec![0; 0x1000], Permissions::READ_WRITE).unwrap();
-        m.map(OUTPUT, vec![0; OUTPUT_SIZE as usize], Permissions::READ_WRITE)
+        m.map(INPUT, vec![0; 0x1000], Permissions::READ_WRITE)
             .unwrap();
+        m.map(PARAMS, vec![0; 0x1000], Permissions::READ_WRITE)
+            .unwrap();
+        m.map(
+            OUTPUT,
+            vec![0; OUTPUT_SIZE as usize],
+            Permissions::READ_WRITE,
+        )
+        .unwrap();
         c.x[1] = 0x10000;
         c.x[2] = TMEM_SIZE;
         c.x[3] = 0;
@@ -100,7 +106,13 @@ impl Rig {
 
     /// CMIF request on the current session with A (send) and B (receive)
     /// map-alias buffers and raw payload bytes.
-    fn buffers(&mut self, command: u32, a: &[(u64, u64)], b: &[(u64, u64)], data: &[u8]) -> Result<(), KernelError> {
+    fn buffers(
+        &mut self,
+        command: u32,
+        a: &[(u64, u64)],
+        b: &[(u64, u64)],
+        data: &[u8],
+    ) -> Result<(), KernelError> {
         let mut p = [0u8; 256];
         let word0 = 4 | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
         let raw_words = 8 + data.len().div_ceil(4) as u32;
@@ -136,7 +148,8 @@ impl Rig {
         data: &[u8],
     ) -> Result<(), KernelError> {
         let mut p = [0u8; 256];
-        let word0 = 4 | ((x.len() as u32) << 16) | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
+        let word0 =
+            4 | ((x.len() as u32) << 16) | ((a.len() as u32) << 20) | ((b.len() as u32) << 24);
         let raw_words = 8 + data.len().div_ceil(4) as u32;
         let word1 = raw_words | if handle.is_some() { 0x8000_0000 } else { 0 };
         p[..4].copy_from_slice(&word0.to_le_bytes());
@@ -192,7 +205,8 @@ impl Rig {
             large_frames: false,
         }
         .work_buffer_size();
-        self.request(0, Some(self.tmem), &[48_000, channels, size]).unwrap();
+        self.request(0, Some(self.tmem), &[48_000, channels, size])
+            .unwrap();
         let decoder = self.m.read_u32(0x200c).unwrap();
         self.session = decoder;
     }
@@ -209,7 +223,10 @@ impl Rig {
     fn pcm(&self, samples: usize) -> Vec<i16> {
         let mut bytes = vec![0u8; samples * 2];
         self.m.read(OUTPUT, &mut bytes).unwrap();
-        bytes.chunks(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect()
+        bytes
+            .chunks(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect()
     }
 
     /// Result word and first output word of a reply without handles.
@@ -281,7 +298,9 @@ fn open_retains_transfer_memory_and_unimplemented_commands_fail_explicitly() {
     // Decode commands need exactly one A and one B buffer.
     assert!(matches!(
         r.request(0, None, &[]),
-        Err(KernelError::Service(ServiceError::InvalidBufferCounts { .. }))
+        Err(KernelError::Service(
+            ServiceError::InvalidBufferCounts { .. }
+        ))
     ));
     r.c.x[0] = decoder as u64;
     r.k.dispatch(SVC_CLOSE_HANDLE, &mut r.c, &mut r.m).unwrap();
@@ -310,7 +329,9 @@ fn open_rejects_missing_handle_and_undersized_buffers() {
     // Multi-stream open needs its X parameter buffer.
     assert!(matches!(
         r.request(2, Some(r.tmem), &[0x1_0000]),
-        Err(KernelError::Service(ServiceError::InvalidBufferCounts { .. }))
+        Err(KernelError::Service(
+            ServiceError::InvalidBufferCounts { .. }
+        ))
     ));
 }
 
@@ -342,7 +363,10 @@ fn decode_interleaved_writes_pcm_and_reports_sizes() {
     r.buffers(8, &[a], &[(OUTPUT, OUTPUT_SIZE)], &[0]).unwrap();
     let (result, out) = r.reply(16);
     assert_eq!(result, 0);
-    assert_eq!(u32::from_le_bytes(out[..4].try_into().unwrap()), packet.len() as u32 + 8);
+    assert_eq!(
+        u32::from_le_bytes(out[..4].try_into().unwrap()),
+        packet.len() as u32 + 8
+    );
     assert_eq!(u32::from_le_bytes(out[4..8].try_into().unwrap()), 960);
     let micros = u64::from_le_bytes(out[8..16].try_into().unwrap());
     assert_eq!(micros, 200, "modelled cost: 1% of 20 ms");
@@ -382,11 +406,13 @@ fn decode_errors_are_reported_with_hwopus_results() {
     let packet = celt_packet(5);
     // Input must be larger than the 8-byte header.
     r.m.write(INPUT, &[0; 8]).unwrap();
-    r.buffers(8, &[(INPUT, 8)], &[(OUTPUT, OUTPUT_SIZE)], &[0]).unwrap();
+    r.buffers(8, &[(INPUT, 8)], &[(OUTPUT, OUTPUT_SIZE)], &[0])
+        .unwrap();
     assert_eq!(r.reply(4).0, RESULT_OPUS_INPUT_TOO_SMALL);
     // Header size beyond the input buffer.
     let (address, size) = r.put_packet(&packet, 0);
-    r.buffers(8, &[(address, size - 1)], &[(OUTPUT, OUTPUT_SIZE)], &[0]).unwrap();
+    r.buffers(8, &[(address, size - 1)], &[(OUTPUT, OUTPUT_SIZE)], &[0])
+        .unwrap();
     assert_eq!(r.reply(4).0, RESULT_OPUS_BUFFER_TOO_SMALL);
     // Output buffer smaller than one 20 ms stereo frame.
     let a = r.put_packet(&packet, 0);
@@ -476,7 +502,11 @@ fn multistream_work_buffer_size_reads_x_parameters() {
     for params in bad {
         let x = r.put_params(&params, false);
         r.full(3, None, &[x], &[], &[], &[]).unwrap();
-        assert_eq!(r.plain_reply().0, RESULT_OPUS_INVALID_ARGUMENT, "{params:?}");
+        assert_eq!(
+            r.plain_reply().0,
+            RESULT_OPUS_INVALID_ARGUMENT,
+            "{params:?}"
+        );
     }
     // A truncated parameter buffer is rejected too.
     r.full(3, None, &[(PARAMS, 0x20)], &[], &[], &[]).unwrap();
@@ -484,7 +514,9 @@ fn multistream_work_buffer_size_reads_x_parameters() {
     // Without the X buffer the request is malformed.
     assert!(matches!(
         r.request(3, None, &[]),
-        Err(KernelError::Service(ServiceError::InvalidBufferCounts { .. }))
+        Err(KernelError::Service(
+            ServiceError::InvalidBufferCounts { .. }
+        ))
     ));
 }
 
@@ -496,11 +528,20 @@ fn multistream_decoder_matches_the_library_and_rejects_single_stream_commands() 
     assert!(u64::from(size) <= TMEM_SIZE);
     // Undersized work buffer.
     let x = r.put_params(&params, false);
-    r.full(2, Some(r.tmem), &[x], &[], &[], &(size - 0x1000).to_le_bytes()).unwrap();
+    r.full(
+        2,
+        Some(r.tmem),
+        &[x],
+        &[],
+        &[],
+        &(size - 0x1000).to_le_bytes(),
+    )
+    .unwrap();
     assert_eq!(r.m.read_u32(0x2018).unwrap(), RESULT_OPUS_INVALID_ARGUMENT);
     // OpenHardwareOpusDecoderForMultiStreamEx.
     let x = r.put_params(&params, true);
-    r.full(6, Some(r.tmem), &[x], &[], &[], &size.to_le_bytes()).unwrap();
+    r.full(6, Some(r.tmem), &[x], &[], &[], &size.to_le_bytes())
+        .unwrap();
     assert_ne!(r.m.read_u32(0x2004).unwrap() & 0x8000_0000, 0);
     r.session = r.m.read_u32(0x200c).unwrap();
 
@@ -520,10 +561,14 @@ fn multistream_decoder_matches_the_library_and_rejects_single_stream_commands() 
         } else {
             &[]
         };
-        r.buffers(command, &[a], &[(OUTPUT, OUTPUT_SIZE)], data).unwrap();
+        r.buffers(command, &[a], &[(OUTPUT, OUTPUT_SIZE)], data)
+            .unwrap();
         let (result, out) = r.reply(8);
         assert_eq!(result, 0, "command {command}");
-        assert_eq!(u32::from_le_bytes(out[..4].try_into().unwrap()), packet.len() as u32 + 8);
+        assert_eq!(
+            u32::from_le_bytes(out[..4].try_into().unwrap()),
+            packet.len() as u32 + 8
+        );
         assert_eq!(u32::from_le_bytes(out[4..8].try_into().unwrap()), 960);
         assert_eq!(r.pcm(960 * 6), want, "command {command}");
     }

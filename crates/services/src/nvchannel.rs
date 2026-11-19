@@ -149,15 +149,16 @@ impl Channel {
                 if count == 0 || !count.is_power_of_two() || count > MAX_GPFIFO_ENTRIES {
                     return Err(BAD_PARAMETER);
                 }
-                if word(input, 4) > 1 || word(input, 8) > 1 || input[20..].iter().any(|b| *b != 0)
-                {
+                if word(input, 4) > 1 || word(input, 8) > 1 || input[20..].iter().any(|b| *b != 0) {
                     return Err(NOT_SUPPORTED);
                 }
                 self.capacity = Some(count);
                 output[12..16].copy_from_slice(&self.syncpoint.to_le_bytes());
                 output[16..20].copy_from_slice(&completed.to_le_bytes());
             }
-            SET_USER_DATA => self.user_data = u64::from_le_bytes(input[..8].try_into().expect("8 bytes")),
+            SET_USER_DATA => {
+                self.user_data = u64::from_le_bytes(input[..8].try_into().expect("8 bytes"))
+            }
             GET_USER_DATA => output.copy_from_slice(&self.user_data.to_le_bytes()),
             SET_TIMEOUT => {
                 let timeout = word(input, 0);

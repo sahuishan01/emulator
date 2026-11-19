@@ -20,12 +20,12 @@ pub use address_space::{
     AddressSpaceId, GpuAddressSpace, GpuMemoryError, GpuMemoryRange, MappingId,
 };
 pub use methods::{
-    ExecutionError, ExecutionLimits, ExecutionStats, LINEAR_DMA_LAUNCH, MAXWELL_COMPUTE_B,
-    MAXWELL_DMA_COPY_A,
+    class_allowed, ExecutionError, ExecutionLimits, ExecutionStats, FERMI_TWOD_A,
+    KEPLER_INLINE_TO_MEMORY_B, LINEAR_DMA_LAUNCH, MAXWELL_COMPUTE_B, MAXWELL_DMA_COPY_A,
 };
 pub use submission::{
-    CENSUS_SEPARATOR, ChannelProcessor, PreparedSubmission, QueueError, QueueLimits, QueueStats, Submission,
-    SubmissionId, SubmissionQueue,
+    ChannelProcessor, PreparedSubmission, QueueError, QueueLimits, QueueStats, Submission,
+    SubmissionId, SubmissionQueue, CENSUS_SEPARATOR,
 };
 
 pub const MAX_PUSHBUFFER_WORDS: usize = 16 * 1024;

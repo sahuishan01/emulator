@@ -44,14 +44,12 @@ impl Service for ApmService {
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
             // OpenSession (command 0) -> returns ISession
-            0 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: vec![Box::new(ApmSession::default())],
-                    effect: None,
-                })
-            }
+            0 => Ok(ServiceReply {
+                result: 0,
+                data: Vec::new(),
+                moved_objects: vec![Box::new(ApmSession::default())],
+                effect: None,
+            }),
             // GetPerformanceMode (command 1) -> returns 0 (Handheld) or 1 (Docked)
             1 => {
                 let mode = 0u32; // Handheld mode

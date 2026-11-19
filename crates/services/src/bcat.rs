@@ -44,7 +44,10 @@ impl Service for BcatServiceCreator {
                 })
             }
             // Other applications' caches (2) are not reachable.
-            command => Err(ServiceError::UnsupportedCommand { service: "bcat:u", command }),
+            command => Err(ServiceError::UnsupportedCommand {
+                service: "bcat:u",
+                command,
+            }),
         }
     }
 }
@@ -57,14 +60,21 @@ impl Service for DeliveryCacheStorage {
     fn clone_for_request(&self) -> Box<dyn Service> {
         Box::new(self.clone())
     }
-    fn prepare(&mut self, request: &Request, context: &ServiceContext<'_>) -> Result<ServiceReply, ServiceError> {
+    fn prepare(
+        &mut self,
+        request: &Request,
+        context: &ServiceContext<'_>,
+    ) -> Result<ServiceReply, ServiceError> {
         context.require_copy_handles(0)?;
         if request.command_id == 10 {
             // EnumerateDeliveryCacheDirectory(B: DirectoryName[]) -> i32 count.
             // No directories: the output buffer is left untouched.
             payload(request, 0)?;
             context.require_exact_buffers(0, 1, 0, 0)?;
-            return Ok(ServiceReply { data: 0i32.to_le_bytes().to_vec(), ..ServiceReply::default() });
+            return Ok(ServiceReply {
+                data: 0i32.to_le_bytes().to_vec(),
+                ..ServiceReply::default()
+            });
         }
         context.require_buffers(0, 0)?;
         self.dispatch(request)
@@ -90,6 +100,9 @@ impl Service for BcatService {
         Box::new(self.clone())
     }
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
-        Err(ServiceError::UnsupportedCommand { service: "IBcatService", command: request.command_id })
+        Err(ServiceError::UnsupportedCommand {
+            service: "IBcatService",
+            command: request.command_id,
+        })
     }
 }

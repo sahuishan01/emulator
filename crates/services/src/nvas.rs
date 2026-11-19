@@ -88,7 +88,12 @@ fn occupied(regions: &[Region], reserved: &[(u64, u64)]) -> Vec<(u64, u64)> {
     all
 }
 /// First `align`-aligned gap of `length` bytes inside `window`.
-fn free_range(occupied: Vec<(u64, u64)>, window: (u64, u64), length: u64, align: u64) -> Result<u64, u32> {
+fn free_range(
+    occupied: Vec<(u64, u64)>,
+    window: (u64, u64),
+    length: u64,
+    align: u64,
+) -> Result<u64, u32> {
     let aligned = |value: u64| {
         value
             .checked_add(align - 1)
@@ -167,7 +172,8 @@ impl NvAddressSpace {
                 None
             } else {
                 let page_aligned = [start, end, split].iter().all(|v| v % 4096 == 0);
-                if !page_aligned || start == 0 || !(start <= split && split <= end) || end > VA_END {
+                if !page_aligned || start == 0 || !(start <= split && split <= end) || end > VA_END
+                {
                     return Err(BAD_PARAMETER);
                 }
                 Some((start, end, split))
@@ -225,7 +231,11 @@ impl NvAddressSpace {
                     .position(|&r| r == (at, length))
                     .ok_or(BAD_PARAMETER)?;
                 // Mappings inside must be unmapped first; nothing is implicit.
-                if self.regions.iter().any(|r| r.address < at + length && at < r.address + r.length as u64) {
+                if self
+                    .regions
+                    .iter()
+                    .any(|r| r.address < at + length && at < r.address + r.length as u64)
+                {
                     return Err(BAD_PARAMETER);
                 }
                 self.reserved.remove(index);
@@ -233,12 +243,16 @@ impl NvAddressSpace {
             GET_VA_REGIONS => {
                 // Small-page region below the split, big-page region above.
                 output[8..12].copy_from_slice(&48u32.to_le_bytes());
-                let regions = [(va_base, 4096u32, split - va_base), (split, 65536, va_end - split)];
+                let regions = [
+                    (va_base, 4096u32, split - va_base),
+                    (split, 65536, va_end - split),
+                ];
                 for (i, (offset, page, bytes)) in regions.into_iter().enumerate() {
                     let at = 16 + i * 24;
                     output[at..at + 8].copy_from_slice(&offset.to_le_bytes());
                     output[at + 8..at + 16].copy_from_slice(&u64::from(page).to_le_bytes());
-                    output[at + 16..at + 24].copy_from_slice(&(bytes / u64::from(page)).to_le_bytes());
+                    output[at + 16..at + 24]
+                        .copy_from_slice(&(bytes / u64::from(page)).to_le_bytes());
                 }
             }
             MAP_BUFFER if word(input, 0) & MAP_REMAP != 0 => {
@@ -256,10 +270,19 @@ impl NvAddressSpace {
                 if word(input, 8) != 0 {
                     return Err(NOT_SUPPORTED);
                 }
-                let (buffer_offset, size, base) = (wide(input, 16), wide(input, 24), wide(input, 32));
-                let region = self.regions.iter().find(|r| r.address == base).ok_or(BAD_PARAMETER)?;
+                let (buffer_offset, size, base) =
+                    (wide(input, 16), wide(input, 24), wide(input, 32));
+                let region = self
+                    .regions
+                    .iter()
+                    .find(|r| r.address == base)
+                    .ok_or(BAD_PARAMETER)?;
                 let end = buffer_offset.checked_add(size).ok_or(BAD_PARAMETER)?;
-                if size == 0 || buffer_offset % 4096 != 0 || size % 4096 != 0 || end > region.length as u64 {
+                if size == 0
+                    || buffer_offset % 4096 != 0
+                    || size % 4096 != 0
+                    || end > region.length as u64
+                {
                     return Err(BAD_PARAMETER);
                 }
             }
@@ -291,7 +314,8 @@ impl NvAddressSpace {
                 // cover the VA up to the next big page; only the buffer's own
                 // pages are backed, the tail stays unbacked GPU VA.
                 let big_page = u64::from(page_size) > 4096;
-                let rounded = (available as u64).div_ceil(u64::from(page_size.max(4096))) * u64::from(page_size.max(4096));
+                let rounded = (available as u64).div_ceil(u64::from(page_size.max(4096)))
+                    * u64::from(page_size.max(4096));
                 if length == 0
                     || length % 4096 != 0
                     || (length > available && !(big_page && length as u64 <= rounded))
@@ -303,7 +327,11 @@ impl NvAddressSpace {
                     return Err(BAD_PARAMETER);
                 }
                 // The last field is the alignment, or the GPU VA when fixed.
-                let align = if flags & MAP_FIXED_OFFSET != 0 { 0 } else { wide(input, 32) };
+                let align = if flags & MAP_FIXED_OFFSET != 0 {
+                    0
+                } else {
+                    wide(input, 32)
+                };
                 if align != 0 && (!align.is_power_of_two() || align > IMPORT_BYTES as u64) {
                     return Err(BAD_PARAMETER);
                 }
@@ -463,22 +491,35 @@ mod tests {
     #[test]
     fn kind_remaps_keep_the_backing_and_reject_foreign_ranges() {
         let mut m = AddressSpace::default();
-        m.map(0x8000, vec![0; 8192], Permissions::READ_WRITE).unwrap();
+        m.map(0x8000, vec![0; 8192], Permissions::READ_WRITE)
+            .unwrap();
         m.write_u64(0x9000, 42).unwrap();
         let view = m.pin(0x8000, 8192, Permissions::READ_WRITE).unwrap();
         let mut a = init();
         map(&mut a, &view, &[0, u32::MAX, 1, 0, 0, 0, 0, 0, 0, 0]).unwrap();
         let (lo, hi) = (VA_BASE as u32, (VA_BASE >> 32) as u32);
         // Re-kind the second page of the mapping: nothing moves.
-        let out = map(&mut a, &view, &[0x101, 0xdb, 0, 0, 4096, 0, 4096, 0, lo, hi]).unwrap();
+        let out = map(
+            &mut a,
+            &view,
+            &[0x101, 0xdb, 0, 0, 4096, 0, 4096, 0, lo, hi],
+        )
+        .unwrap();
         assert_eq!(wide(&out, 32), VA_BASE);
         assert_eq!(a.regions.len(), 1);
         let mut actual = [0; 8];
-        a.space.as_ref().unwrap().read(GpuVa(VA_BASE + 4096), &mut actual).unwrap();
+        a.space
+            .as_ref()
+            .unwrap()
+            .read(GpuVa(VA_BASE + 4096), &mut actual)
+            .unwrap();
         assert_eq!(u64::from_le_bytes(actual), 42);
         for (args, error) in [
             // Not the start of a mapping.
-            ([0x101, 0xdb, 0, 0, 0, 0, 4096, 0, lo + 4096, hi], BAD_PARAMETER),
+            (
+                [0x101, 0xdb, 0, 0, 0, 0, 4096, 0, lo + 4096, hi],
+                BAD_PARAMETER,
+            ),
             // Past the end of the mapping.
             ([0x101, 0xdb, 0, 0, 4096, 0, 8192, 0, lo, hi], BAD_PARAMETER),
             ([0x101, 0xdb, 0, 0, 0, 0, 0, 0, lo, hi], BAD_PARAMETER),
@@ -544,7 +585,12 @@ mod tests {
             args
         };
         assert_eq!(
-            pending.ioctl(INITIALIZE, &ranged(1 << 26, 1 << 30, 1 << 34), budget(), |_| Err(4)),
+            pending.ioctl(
+                INITIALIZE,
+                &ranged(1 << 26, 1 << 30, 1 << 34),
+                budget(),
+                |_| Err(4)
+            ),
             Err(4)
         );
         assert!(pending.space.is_none());
@@ -564,26 +610,52 @@ mod tests {
         }
         a.ioctl(INITIALIZE, &args, budget(), |_| Err(4)).unwrap();
         let mut m = AddressSpace::default();
-        m.map(0x10000, vec![0; 0xd000], Permissions::READ_WRITE).unwrap();
+        m.map(0x10000, vec![0; 0xd000], Permissions::READ_WRITE)
+            .unwrap();
         m.write_u64(0x1c000, 0x5157).unwrap();
         let view = m.pin(0x10000, 0xd000, Permissions::READ_WRITE).unwrap();
         let at = 0x0401_0000u64;
-        let fixed = |size: u32, at: u64| [5, 0, 1, 65536, 0, 0, size, 0, at as u32, (at >> 32) as u32];
+        let fixed =
+            |size: u32, at: u64| [5, 0, 1, 65536, 0, 0, size, 0, at as u32, (at >> 32) as u32];
         // Beyond the rounded big page, or a small-page map past the buffer: rejected.
         assert_eq!(map(&mut a, &view, &fixed(0x20000, at)), Err(4));
-        assert_eq!(map(&mut a, &view, &[1, 0, 1, 4096, 0, 0, 0x10000, 0, at as u32, 0]), Err(4));
+        assert_eq!(
+            map(
+                &mut a,
+                &view,
+                &[1, 0, 1, 4096, 0, 0, 0x10000, 0, at as u32, 0]
+            ),
+            Err(4)
+        );
         assert_eq!(a.usage(), (0, 0));
         let out = map(&mut a, &view, &fixed(0x10000, at)).unwrap();
         assert_eq!(wide(&out, 32), at);
         // Only the buffer is backed; the rounded tail is reserved VA.
         assert_eq!(a.usage().0, 0xd000);
         let mut word8 = [0; 8];
-        a.space.as_ref().unwrap().read(GpuVa(at + 0xc000), &mut word8).unwrap();
+        a.space
+            .as_ref()
+            .unwrap()
+            .read(GpuVa(at + 0xc000), &mut word8)
+            .unwrap();
         assert_eq!(u64::from_le_bytes(word8), 0x5157);
-        assert!(a.space.as_ref().unwrap().read(GpuVa(at + 0xd000), &mut word8).is_err());
+        assert!(a
+            .space
+            .as_ref()
+            .unwrap()
+            .read(GpuVa(at + 0xd000), &mut word8)
+            .is_err());
         // The whole 64 KiB stays occupied for later fixed maps.
-        assert_eq!(map(&mut a, &view, &[5, 0, 1, 4096, 0, 0, 0x1000, 0, (at + 0xe000) as u32, 0]), Err(4));
-        a.ioctl(UNMAP_BUFFER, &at.to_le_bytes(), budget(), |_| Err(4)).unwrap();
+        assert_eq!(
+            map(
+                &mut a,
+                &view,
+                &[5, 0, 1, 4096, 0, 0, 0x1000, 0, (at + 0xe000) as u32, 0]
+            ),
+            Err(4)
+        );
+        a.ioctl(UNMAP_BUFFER, &at.to_le_bytes(), budget(), |_| Err(4))
+            .unwrap();
         assert_eq!(a.usage(), (0, 0));
     }
     #[test]
@@ -596,12 +668,21 @@ mod tests {
         a.ioctl(INITIALIZE, &args, budget(), |_| Err(4)).unwrap();
         let mut query = vec![0u8; 0x40];
         query[8..12].copy_from_slice(&48u32.to_le_bytes());
-        let out = a.ioctl(GET_VA_REGIONS, &query, budget(), |_| Err(4)).unwrap();
+        let out = a
+            .ioctl(GET_VA_REGIONS, &query, budget(), |_| Err(4))
+            .unwrap();
         assert_eq!(word(&out, 8), 48);
-        assert_eq!((wide(&out, 16), word(&out, 24), wide(&out, 32)), (1 << 26, 4096, ((1 << 34) - (1 << 26)) >> 12));
-        assert_eq!((wide(&out, 40), word(&out, 48), wide(&out, 56)), (1 << 34, 65536, ((1 << 37) - (1 << 34)) >> 16));
+        assert_eq!(
+            (wide(&out, 16), word(&out, 24), wide(&out, 32)),
+            (1 << 26, 4096, ((1 << 34) - (1 << 26)) >> 12)
+        );
+        assert_eq!(
+            (wide(&out, 40), word(&out, 48), wide(&out, 56)),
+            (1 << 34, 65536, ((1 << 37) - (1 << 34)) >> 16)
+        );
         let mut m = AddressSpace::default();
-        m.map(0x8000, vec![0; 4096], Permissions::READ_WRITE).unwrap();
+        m.map(0x8000, vec![0; 4096], Permissions::READ_WRITE)
+            .unwrap();
         let view = m.pin(0x8000, 4096, Permissions::READ_WRITE).unwrap();
         let out = map(&mut a, &view, &[0, 0, 1, 0, 0, 0, 0, 0, 0, 0]).unwrap();
         assert_eq!(wide(&out, 32), 1 << 26);

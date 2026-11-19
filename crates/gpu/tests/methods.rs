@@ -336,3 +336,73 @@ fn owned_preparation_can_cancel_or_commit_once_without_early_writes() {
     rig.cpu.read(0x3010, &mut before).unwrap();
     assert_eq!(before, [55; 8]);
 }
+#[test]
+fn host_methods_run_on_any_subchannel_without_a_bound_class() {
+    let mut rig = Rig::new();
+    // NOP with a marker payload, L2 maintenance, FB flush and WFI on an unbound
+    // subchannel, then a copy on subchannel 0 that still executes.
+    let mut methods = vec![
+        (6, 0x2c, 0x8000_0000),
+        (6, 0x2c, 0x7000_0000),
+        (0, 0x08, 0x110e),
+        (3, 0x24, 0),
+        (5, 0x78, 0),
+    ];
+    methods.extend(copy(0, DATA, DATA + 16, 8));
+    let id = rig.submit(&methods);
+    rig.execute(id).unwrap();
+    assert_eq!(&rig.bytes()[16..24], &(0..8).collect::<Vec<u8>>()[..]);
+}
+#[test]
+fn unmodelled_host_methods_fail_explicitly_and_roll_back() {
+    for (sub, offset, data) in [
+        (6, 0x2c, 0x4800_0000), // MEM_OP_B MMU TLB invalidate
+        (0, 0x1c, 0x2),         // semaphore release
+        (0, 0x70, 0),           // syncpoint payload
+        (2, 0x20, 0),           // non-stall interrupt
+    ] {
+        let mut rig = Rig::new();
+        let mut methods = copy(0, DATA, DATA + 16, 8);
+        methods.push((sub, offset, data));
+        let id = rig.submit(&methods);
+        let before = rig.bytes();
+        assert_eq!(
+            rig.execute(id),
+            Err(ExecutionError::UnsupportedMethod {
+                subchannel: sub,
+                offset
+            })
+        );
+        assert_eq!(rig.bytes(), before);
+    }
+}
+#[test]
+fn graphics_engine_classes_bind_but_unimplemented_methods_fail() {
+    for class in [KEPLER_INLINE_TO_MEMORY_B, FERMI_TWOD_A] {
+        let mut rig = Rig::new();
+        let id = rig.submit(&[(2, 0, class), (2, 0x08, 0)]);
+        rig.execute(id).unwrap();
+        let id = rig.submit(&[(2, 0x180, 1)]);
+        assert_eq!(
+            rig.execute(id),
+            Err(ExecutionError::UnsupportedMethod {
+                subchannel: 2,
+                offset: 0x180
+            })
+        );
+    }
+}
+#[test]
+fn graphics_context_binds_graphics_classes_only() {
+    for class in [
+        MAXWELL_B,
+        MAXWELL_COMPUTE_B,
+        KEPLER_INLINE_TO_MEMORY_B,
+        FERMI_TWOD_A,
+    ] {
+        assert!(class_allowed(MAXWELL_B, class));
+    }
+    assert!(!class_allowed(MAXWELL_B, MAXWELL_DMA_COPY_A));
+    assert!(!class_allowed(MAXWELL_DMA_COPY_A, MAXWELL_B));
+    assert!(class_allowed(MAXWELL_DMA_COPY_A, MAXWELL_DMA_COPY_A));
+}

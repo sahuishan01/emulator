@@ -739,7 +739,10 @@ fn gpu_mapping_quota_is_shared_by_address_space_devices_and_unmap_reclaims_it() 
         .unwrap();
     let h = r.import_object(nv, 0x100000, QUOTA_OBJECT as u32);
     for n in 0..32 {
-        assert_eq!(r.map_object(as1, h), (0, (1 << 32) + n * QUOTA_OBJECT as u64));
+        assert_eq!(
+            r.map_object(as1, h),
+            (0, (1 << 32) + n * QUOTA_OBJECT as u64)
+        );
     }
     assert_eq!(r.map_object(as2, h).0, 6);
     assert_eq!(r.ioctl(as1, AS_UNMAP, &[0, 1], 1), 0);
@@ -819,7 +822,10 @@ fn test_nv_ctrl_gpu_and_characteristics() {
     r.m.read(0x6000, &mut out).unwrap();
     let word = |at: usize| u32::from_le_bytes(out[at..at + 4].try_into().unwrap());
     assert_eq!(u64::from_le_bytes(out[0..8].try_into().unwrap()), 0xa0);
-    assert_eq!(u64::from_le_bytes(out[8..16].try_into().unwrap()), 0x1234_5678);
+    assert_eq!(
+        u64::from_le_bytes(out[8..16].try_into().unwrap()),
+        0x1234_5678
+    );
     let c = 16;
     assert_eq!(word(c), 0x120); // arch
     assert_eq!(word(c + 4), 0x0b); // impl
@@ -835,12 +841,7 @@ fn test_nv_ctrl_gpu_and_characteristics() {
     // Test GET_TPC_MASKS
     let tpc_code = 0x800c4706u32;
     r.m.write(0x6000, &[0u8; 12]).unwrap();
-    let tpc_reply = r.call(&message(
-        1,
-        &[ctrl_fd, tpc_code],
-        None,
-        Some((0x6000, 12)),
-    ));
+    let tpc_reply = r.call(&message(1, &[ctrl_fd, tpc_code], None, Some((0x6000, 12))));
     assert!(tpc_reply.is_ok());
     let mut tpc_out = [0u8; 12];
     r.m.read(0x6000, &mut tpc_out).unwrap();
@@ -861,18 +862,36 @@ fn test_nv_ctrl_gpu_and_characteristics() {
 
     // Read initial syncpoint 1 value
     r.m.write(0x6000, &[1u8, 0, 0, 0, 0, 0, 0, 0]).unwrap();
-    r.call(&message(1, &[ctrl_sync_fd, sync_read_code], Some((0x6000, 8)), Some((0x6000, 8)))).unwrap();
+    r.call(&message(
+        1,
+        &[ctrl_sync_fd, sync_read_code],
+        Some((0x6000, 8)),
+        Some((0x6000, 8)),
+    ))
+    .unwrap();
     let mut sync_buf = [0u8; 8];
     r.m.read(0x6000, &mut sync_buf).unwrap();
     let val_before = u32::from_le_bytes(sync_buf[4..8].try_into().unwrap());
 
     // Increment syncpoint 1
     r.m.write(0x6000, &[1u8, 0, 0, 0]).unwrap();
-    r.call(&message(1, &[ctrl_sync_fd, sync_incr_code], Some((0x6000, 4)), Some((0x6000, 4)))).unwrap();
+    r.call(&message(
+        1,
+        &[ctrl_sync_fd, sync_incr_code],
+        Some((0x6000, 4)),
+        Some((0x6000, 4)),
+    ))
+    .unwrap();
 
     // Read new syncpoint 1 value
     r.m.write(0x6000, &[1u8, 0, 0, 0, 0, 0, 0, 0]).unwrap();
-    r.call(&message(1, &[ctrl_sync_fd, sync_read_code], Some((0x6000, 8)), Some((0x6000, 8)))).unwrap();
+    r.call(&message(
+        1,
+        &[ctrl_sync_fd, sync_read_code],
+        Some((0x6000, 8)),
+        Some((0x6000, 8)),
+    ))
+    .unwrap();
     r.m.read(0x6000, &mut sync_buf).unwrap();
     let val_after = u32::from_le_bytes(sync_buf[4..8].try_into().unwrap());
     assert_eq!(val_after, val_before + 1);
@@ -898,7 +917,9 @@ fn test_nv_query_event_and_extended_commands() {
     assert!(margin_reply.is_ok());
 
     // Command 11 is Ioctl2: it validates its buffers like Ioctl.
-    assert!(r.call(&message(11, &[gpu_fd, 0x8004_4801], None, None)).is_err());
+    assert!(r
+        .call(&message(11, &[gpu_fd, 0x8004_4801], None, None))
+        .is_err());
 
     // Invalid FD query event should return BAD_PARAMETER
     let bad_q = r.call(&message(4, &[9999, 1], None, None));
@@ -923,12 +944,14 @@ fn ctrl_gpu_time_reads_the_guest_clock() {
     let fd = r.open_device(b"/dev/nvhost-ctrl-gpu", 0).0;
     r.m.write(0x6000, &[0xee; 8]).unwrap();
     // _IOR: output-only argument buffer.
-    r.call(&message(1, &[fd, 0x80084714], None, Some((0x6000, 8)))).unwrap();
+    r.call(&message(1, &[fd, 0x80084714], None, Some((0x6000, 8))))
+        .unwrap();
     assert_eq!(r.m.read_u32(0x2020).unwrap(), 0);
     let time = r.m.read_u64(0x6000).unwrap();
     assert_ne!(time, 0xeeee_eeee_eeee_eeee, "timestamp written");
     // A wrong-sized argument is rejected.
-    r.call(&message(1, &[fd, 0x80044714], None, Some((0x6000, 4)))).unwrap();
+    r.call(&message(1, &[fd, 0x80044714], None, Some((0x6000, 4))))
+        .unwrap();
     assert_ne!(r.m.read_u32(0x2020).unwrap(), 0);
 }
 
@@ -945,12 +968,14 @@ fn timeslice_groups_bind_each_channel_once() {
     };
     let bind = |r: &mut Rig, group: u32, fd: u32| {
         r.m.write(0x6000, &fd.to_le_bytes()).unwrap();
-        r.call(&message(1, &[group, 0x40045401], Some((0x6000, 4)), None)).unwrap();
+        r.call(&message(1, &[group, 0x40045401], Some((0x6000, 4)), None))
+            .unwrap();
         r.m.read_u32(0x2020).unwrap()
     };
     let set = |r: &mut Rig, code: u32, value: u32| {
         r.m.write(0x6000, &words(&[value, 0])).unwrap();
-        r.call(&message(1, &[tsg, code], Some((0x6000, 8)), None)).unwrap();
+        r.call(&message(1, &[tsg, code], Some((0x6000, 8)), None))
+            .unwrap();
         r.m.read_u32(0x2020).unwrap()
     };
     assert_eq!(bind(&mut r, tsg, channel), 0);
@@ -971,7 +996,8 @@ fn timeslice_groups_bind_each_channel_once() {
     let channel = r.open_device(b"/dev/nvhost-gpu", 0).0;
     assert_eq!(bind(&mut r, other, channel), 0);
     r.m.write(0x6000, &channel.to_le_bytes()).unwrap();
-    r.call(&message(1, &[other, 0x40045402], Some((0x6000, 4)), None)).unwrap();
+    r.call(&message(1, &[other, 0x40045402], Some((0x6000, 4)), None))
+        .unwrap();
     assert_eq!(r.m.read_u32(0x2020).unwrap(), 0, "unbind");
     assert_eq!(bind(&mut r, tsg, channel), 0);
 }
@@ -1004,7 +1030,11 @@ fn vsms_mapping_fills_the_ioctl3_inline_buffer() {
     assert_eq!(ioctl3(&mut r, 8), 0);
     let mut inline = [0u8; 8];
     r.m.read(0x6200, &mut inline).unwrap();
-    assert_eq!(inline, [0, 0, 0, 1, 0xee, 0xee, 0xee, 0xee], "one (gpc, tpc) pair per SM");
+    assert_eq!(
+        inline,
+        [0, 0, 0, 1, 0xee, 0xee, 0xee, 0xee],
+        "one (gpc, tpc) pair per SM"
+    );
     assert_eq!(r.m.read_u64(0x6100).unwrap(), 0, "argument echoed");
     // A short inline buffer gets a prefix.
     assert_eq!(ioctl3(&mut r, 2), 0);

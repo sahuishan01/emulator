@@ -27,51 +27,41 @@ impl Service for SetSysService {
             }
             // GetRegionCode: returns RegionCode (u32)
             // 1 = USA, 2 = Europe, 0 = Japan
-            1 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: 1u32.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
+            1 => Ok(ServiceReply {
+                result: 0,
+                data: 1u32.to_le_bytes().to_vec(),
+                moved_objects: Vec::new(),
+                effect: None,
+            }),
             // GetSystemLanguage: returns SystemLanguage (u32)
             // 1 = AmericanEnglish
-            2 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: 1u32.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
+            2 => Ok(ServiceReply {
+                result: 0,
+                data: 1u32.to_le_bytes().to_vec(),
+                moved_objects: Vec::new(),
+                effect: None,
+            }),
             // GetColorSetId: 0 = BasicBlack (Dark Theme), 1 = BasicWhite
-            3 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: 0u32.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
+            3 => Ok(ServiceReply {
+                result: 0,
+                data: 0u32.to_le_bytes().to_vec(),
+                moved_objects: Vec::new(),
+                effect: None,
+            }),
             // GetPrimaryAlbumStorage: 1 = SdCard
-            5 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: 1u32.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
+            5 => Ok(ServiceReply {
+                result: 0,
+                data: 1u32.to_le_bytes().to_vec(),
+                moved_objects: Vec::new(),
+                effect: None,
+            }),
             // GetProductModel: 1 = Erista / Switch
-            8 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: 1u32.to_le_bytes().to_vec(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
+            8 => Ok(ServiceReply {
+                result: 0,
+                data: 1u32.to_le_bytes().to_vec(),
+                moved_objects: Vec::new(),
+                effect: None,
+            }),
             // GetDeviceNickName: returns 0x80 bytes UTF-8 device name ("Switch")
             11 => {
                 let mut name = vec![0u8; 0x80];
@@ -97,11 +87,11 @@ impl Service for SetSysService {
             14 => {
                 let mut fw = vec![0u8; 0x100];
                 fw[0] = 18; // major
-                fw[1] = 1;  // minor
-                fw[2] = 0;  // micro
+                fw[1] = 1; // minor
+                fw[2] = 0; // micro
                 fw[3] = 0;
-                fw[4] = 0;  // revision_major
-                fw[5] = 0;  // revision_minor
+                fw[4] = 0; // revision_major
+                fw[5] = 0; // revision_minor
                 fw[0x08..0x08 + 2].copy_from_slice(b"NX");
                 fw[0x28..0x28 + 6].copy_from_slice(b"18.1.0");
                 fw[0x68..0x68 + 15].copy_from_slice(b"Nintendo Switch");

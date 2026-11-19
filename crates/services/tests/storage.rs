@@ -6,7 +6,9 @@ use emulator_kernel::{Kernel, SVC_CONNECT_TO_NAMED_PORT, SVC_SEND_SYNC_REQUEST};
 use emulator_loader::romfs::build_romfs_image;
 use emulator_loader::RomFsArchive;
 use emulator_memory::{AddressSpace, Permissions};
-use emulator_services::fspsrv::{StorageProxy, RESULT_FS_OUT_OF_RANGE, RESULT_FS_UNSUPPORTED_WRITE};
+use emulator_services::fspsrv::{
+    StorageProxy, RESULT_FS_OUT_OF_RANGE, RESULT_FS_UNSUPPORTED_WRITE,
+};
 
 const MESSAGE: u64 = 0x2000;
 const OUTPUT: u64 = 0x4000;
@@ -26,17 +28,31 @@ impl Rig {
         let mut kernel = Kernel::default();
         let mut cpu = Cpu::new(0, 0);
         let mut memory = AddressSpace::default();
-        memory.map(0x1000, b"st:\0".to_vec(), Permissions::READ).unwrap();
-        memory.map(MESSAGE, vec![0; 256], Permissions::READ_WRITE).unwrap();
-        memory.map(OUTPUT, vec![0xee; 4096], Permissions::READ_WRITE).unwrap();
+        memory
+            .map(0x1000, b"st:\0".to_vec(), Permissions::READ)
+            .unwrap();
+        memory
+            .map(MESSAGE, vec![0; 256], Permissions::READ_WRITE)
+            .unwrap();
+        memory
+            .map(OUTPUT, vec![0xee; 4096], Permissions::READ_WRITE)
+            .unwrap();
         kernel
             .register_named_port("st:", Box::new(StorageProxy::new(std::rc::Rc::new(romfs))))
             .unwrap();
         cpu.tpidrro_el0 = MESSAGE;
         cpu.x[1] = 0x1000;
-        kernel.dispatch(SVC_CONNECT_TO_NAMED_PORT, &mut cpu, &mut memory).unwrap();
+        kernel
+            .dispatch(SVC_CONNECT_TO_NAMED_PORT, &mut cpu, &mut memory)
+            .unwrap();
         let session = cpu.x[1] as u32;
-        Self { kernel, cpu, memory, session, image }
+        Self {
+            kernel,
+            cpu,
+            memory,
+            session,
+            image,
+        }
     }
 
     /// CMIF request with an optional B buffer and a 16-byte payload.
@@ -61,7 +77,10 @@ impl Rig {
             .dispatch(SVC_SEND_SYNC_REQUEST, &mut self.cpu, &mut self.memory)
             .map_err(|error| eprintln!("command {command}: {error:?}"))
             .ok()?;
-        self.kernel.ipc_trace().last().and_then(|trace| trace.result)
+        self.kernel
+            .ipc_trace()
+            .last()
+            .and_then(|trace| trace.result)
     }
 
     fn output(&self, length: usize) -> Vec<u8> {
@@ -77,17 +96,30 @@ fn read_copies_romfs_image_bytes_into_the_receive_buffer() {
     let size = rig.image.len() as u64;
     assert_eq!(rig.call(0, [8, 32], Some((OUTPUT, 64))), Some(0));
     assert_eq!(rig.output(32), rig.image[8..40]);
-    assert_eq!(rig.output(64)[32..], [0xee; 32], "only `size` bytes are written");
+    assert_eq!(
+        rig.output(64)[32..],
+        [0xee; 32],
+        "only `size` bytes are written"
+    );
 
     // Exactly up to the end is fine; one byte further is OutOfRange and writes nothing.
     assert_eq!(rig.call(0, [size - 4, 4], Some((OUTPUT, 64))), Some(0));
     assert_eq!(rig.output(4), rig.image[size as usize - 4..]);
     rig.memory.write(OUTPUT, &[0xee; 8]).unwrap();
-    assert_eq!(rig.call(0, [size - 4, 5], Some((OUTPUT, 64))), Some(RESULT_FS_OUT_OF_RANGE));
+    assert_eq!(
+        rig.call(0, [size - 4, 5], Some((OUTPUT, 64))),
+        Some(RESULT_FS_OUT_OF_RANGE)
+    );
     assert_eq!(rig.output(8), [0xee; 8]);
     // Size larger than the guest buffer, and offset overflow, are rejected.
-    assert_eq!(rig.call(0, [0, 65], Some((OUTPUT, 64))), Some(RESULT_FS_OUT_OF_RANGE));
-    assert_eq!(rig.call(0, [u64::MAX, 2], Some((OUTPUT, 64))), Some(RESULT_FS_OUT_OF_RANGE));
+    assert_eq!(
+        rig.call(0, [0, 65], Some((OUTPUT, 64))),
+        Some(RESULT_FS_OUT_OF_RANGE)
+    );
+    assert_eq!(
+        rig.call(0, [u64::MAX, 2], Some((OUTPUT, 64))),
+        Some(RESULT_FS_OUT_OF_RANGE)
+    );
     // Read without its B buffer is a malformed request.
     assert_eq!(rig.call(0, [0, 4], None), None);
 }

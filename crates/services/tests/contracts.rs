@@ -163,15 +163,32 @@ fn test_vi_and_applet_services() {
     assert!(display.dispatch(&request(1102, &[], None)).is_err());
     let mut name = [0u8; 0x40];
     name[..7].copy_from_slice(b"Default");
-    assert_eq!(display.dispatch(&request(1010, &name, None)).unwrap().data, 0u64.to_le_bytes());
+    assert_eq!(
+        display.dispatch(&request(1010, &name, None)).unwrap().data,
+        0u64.to_le_bytes()
+    );
     name[..7].copy_from_slice(b"Externa");
-    assert!(display.dispatch(&request(1010, &name, None)).is_err(), "only the Default display exists");
-    assert_eq!(display.dispatch(&request(1011, &[], None)).unwrap().data, 0u64.to_le_bytes());
+    assert!(
+        display.dispatch(&request(1010, &name, None)).is_err(),
+        "only the Default display exists"
+    );
+    assert_eq!(
+        display.dispatch(&request(1011, &[], None)).unwrap().data,
+        0u64.to_le_bytes()
+    );
     // Sub-services are distinct interfaces that fail unknown commands explicitly.
-    let mut system = display.dispatch(&request(101, &[], None)).unwrap().moved_objects.remove(0);
+    let mut system = display
+        .dispatch(&request(101, &[], None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
     assert_eq!(system.name(), "ISystemDisplayService");
     assert!(system.dispatch(&request(1200, &[], None)).is_err());
-    let manager = display.dispatch(&request(102, &[], None)).unwrap().moved_objects.remove(0);
+    let manager = display
+        .dispatch(&request(102, &[], None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
     assert_eq!(manager.name(), "IManagerDisplayService");
 
     // Relay service (IHOSBinderDriver)
@@ -181,13 +198,18 @@ fn test_vi_and_applet_services() {
     let mut binder = relay_reply.moved_objects.remove(0);
     assert_eq!(binder.name(), "IHOSBinderDriver");
     // Parcel transactions need their A/B buffers (see vi_layer / binder tests).
-    assert!(binder.dispatch(&request(0, &[1, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0], None)).is_err());
+    assert!(binder
+        .dispatch(&request(0, &[1, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0], None))
+        .is_err());
 
     // DisplayService layer and vsync commands
     // The vsync event arms a kernel timer, so it needs the request context
     // (see tests/vi_vsync.rs); bare dispatch rejects it.
     assert!(display.dispatch(&request(5202, &[0; 8], None)).is_err());
-    assert!(display.dispatch(&request(2201, &[], None)).is_err(), "unimplemented commands fail");
+    assert!(
+        display.dispatch(&request(2201, &[], None)).is_err(),
+        "unimplemented commands fail"
+    );
 
     // Account Service (acc:u0)
     let mut acc = sm
@@ -196,13 +218,23 @@ fn test_vi_and_applet_services() {
         .moved_objects
         .remove(0);
     let user_count_reply = acc.dispatch(&request(0, &[], None)).unwrap();
-    assert_eq!(i32::from_le_bytes(user_count_reply.data.try_into().unwrap()), 1);
+    assert_eq!(
+        i32::from_le_bytes(user_count_reply.data.try_into().unwrap()),
+        1
+    );
     let user = emulator_services::acc::DEFAULT_USER_ID;
     assert_eq!(acc.dispatch(&request(1, &user, None)).unwrap().data, [1]);
     assert_eq!(acc.dispatch(&request(1, &[0; 16], None)).unwrap().data, [0]);
     assert_eq!(acc.dispatch(&request(4, &[], None)).unwrap().data, user);
-    assert_eq!(acc.dispatch(&request(51, &[0; 8], None)).unwrap().data, user);
-    assert_eq!(acc.dispatch(&request(160, &[0; 8], None)).unwrap().result, 0, "InitializeApplicationInfoV2");
+    assert_eq!(
+        acc.dispatch(&request(51, &[0; 8], None)).unwrap().data,
+        user
+    );
+    assert_eq!(
+        acc.dispatch(&request(160, &[0; 8], None)).unwrap().result,
+        0,
+        "InitializeApplicationInfoV2"
+    );
     assert_eq!(
         acc.dispatch(&request(5, &[9; 16], None)).unwrap().result,
         emulator_services::acc::RESULT_ACCOUNT_USER_NOT_FOUND
@@ -213,10 +245,20 @@ fn test_vi_and_applet_services() {
     let profile_base = profile.dispatch(&request(1, &[], None)).unwrap();
     assert_eq!(&profile_base.data[..16], &user);
     assert_eq!(&profile_base.data[0x18..0x18 + 6], b"Player");
-    assert!(profile.dispatch(&request(10, &[], None)).is_err(), "no profile image yet");
+    assert!(
+        profile.dispatch(&request(10, &[], None)).is_err(),
+        "no profile image yet"
+    );
     // The BaaS manager exists, but the user has no network service account.
-    let mut manager = acc.dispatch(&request(101, &user, None)).unwrap().moved_objects.remove(0);
-    assert!(manager.dispatch(&request(0, &[], None)).is_err(), "no network service account");
+    let mut manager = acc
+        .dispatch(&request(101, &user, None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    assert!(
+        manager.dispatch(&request(0, &[], None)).is_err(),
+        "no network service account"
+    );
 
     // Performance Management Service (apm)
     let mut apm = sm
@@ -225,7 +267,10 @@ fn test_vi_and_applet_services() {
         .moved_objects
         .remove(0);
     let perf_mode_reply = apm.dispatch(&request(1, &[], None)).unwrap();
-    assert_eq!(u32::from_le_bytes(perf_mode_reply.data.try_into().unwrap()), 0); // Handheld
+    assert_eq!(
+        u32::from_le_bytes(perf_mode_reply.data.try_into().unwrap()),
+        0
+    ); // Handheld
 
     // Audio Renderer Service (audren:u)
     let mut audren = sm
@@ -234,7 +279,10 @@ fn test_vi_and_applet_services() {
         .moved_objects
         .remove(0);
     let buf_size_reply = audren.dispatch(&request(1, &[], None)).unwrap();
-    assert_eq!(u64::from_le_bytes(buf_size_reply.data.try_into().unwrap()), 0x40000);
+    assert_eq!(
+        u64::from_le_bytes(buf_size_reply.data.try_into().unwrap()),
+        0x40000
+    );
 
     // Audio Output Service (audout:u)
     let mut audout = sm
@@ -269,11 +317,15 @@ fn test_vi_and_applet_services() {
         .moved_objects
         .remove(0);
 
-    let applet_res_reply = hid.dispatch(&request(0, &[1, 0, 0, 0, 0, 0, 0, 0], None)).unwrap();
+    let applet_res_reply = hid
+        .dispatch(&request(0, &[1, 0, 0, 0, 0, 0, 0, 0], None))
+        .unwrap();
     assert_eq!(applet_res_reply.result, 0);
     assert_eq!(applet_res_reply.moved_objects.len(), 1);
 
-    let npad_reply = hid.dispatch(&request(100, &[1, 0, 0, 0, 0, 0, 0, 0], None)).unwrap();
+    let npad_reply = hid
+        .dispatch(&request(100, &[1, 0, 0, 0, 0, 0, 0, 0], None))
+        .unwrap();
     assert_eq!(npad_reply.result, 0);
 }
 
@@ -329,7 +381,10 @@ fn test_applet_subcontrollers_and_extended_services() {
     assert_eq!(user_clock_reply.result, 0);
     let mut user_clock = user_clock_reply.moved_objects.remove(0);
     let cur_time = user_clock.dispatch(&request(0, &[], None)).unwrap();
-    assert_eq!(u64::from_le_bytes(cur_time.data.try_into().unwrap()), 1767225600);
+    assert_eq!(
+        u64::from_le_bytes(cur_time.data.try_into().unwrap()),
+        1767225600
+    );
 
     let mut steady_clock_reply = timesys.dispatch(&request(2, &[], None)).unwrap();
     let mut steady_clock = steady_clock_reply.moved_objects.remove(0);
@@ -337,9 +392,16 @@ fn test_applet_subcontrollers_and_extended_services() {
     assert_eq!(pt.data.len(), 0x18);
 
     // Local clock (4) is an ISystemClock too; unknown commands fail explicitly.
-    let mut local = timesys.dispatch(&request(4, &[], None)).unwrap().moved_objects.remove(0);
+    let mut local = timesys
+        .dispatch(&request(4, &[], None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
     assert_eq!(local.dispatch(&request(0, &[], None)).unwrap().result, 0);
-    assert_eq!(timesys.dispatch(&request(100, &[], None)).unwrap().data, vec![0]);
+    assert_eq!(
+        timesys.dispatch(&request(100, &[], None)).unwrap().data,
+        vec![0]
+    );
     assert!(timesys.dispatch(&request(6, &[], None)).is_err());
 
     let mut tz_reply = timesys.dispatch(&request(3, &[], None)).unwrap();
@@ -398,8 +460,14 @@ fn test_applet_subcontrollers_and_extended_services() {
     assert_eq!(u64::from_le_bytes(layer_reply.data.try_into().unwrap()), 1);
     let separable = sc.dispatch(&request(44, &[], None)).unwrap();
     assert_eq!(separable.data.len(), 16);
-    assert_eq!(u64::from_le_bytes(separable.data[..8].try_into().unwrap()), 1);
-    assert_eq!(u64::from_le_bytes(separable.data[8..].try_into().unwrap()), 2);
+    assert_eq!(
+        u64::from_le_bytes(separable.data[..8].try_into().unwrap()),
+        1
+    );
+    assert_eq!(
+        u64::from_le_bytes(separable.data[8..].try_into().unwrap()),
+        2
+    );
     // IsSystemBufferSharingEnabled is not implemented and must fail explicitly.
     assert!(sc.dispatch(&request(41, &[], None)).is_err());
 
@@ -455,8 +523,13 @@ fn vi_service_and_hos_binder_buffer_queue_lifecycle() {
         Err(ServiceError::MissingMemoryContext)
     ));
     // AdjustRefcount(id, delta, type) and GetNativeHandle(id, type).
-    assert_eq!(binder.dispatch(&request(1, &[0; 12], None)).unwrap().result, 0);
-    let handle = binder.dispatch(&request(2, &[1, 0, 0, 0, 0x0f, 0, 0, 0], None)).unwrap();
+    assert_eq!(
+        binder.dispatch(&request(1, &[0; 12], None)).unwrap().result,
+        0
+    );
+    let handle = binder
+        .dispatch(&request(2, &[1, 0, 0, 0, 0x0f, 0, 0, 0], None))
+        .unwrap();
     assert_eq!(handle.moved_objects.len(), 1);
     assert!(binder.dispatch(&request(2, &[0; 4], None)).is_err());
 }
@@ -471,7 +544,10 @@ fn manager_accepts_tipc_registration_without_a_pid_placeholder() {
     padded.tipc = true;
     assert!(matches!(
         sm.dispatch(&padded),
-        Err(ServiceError::InvalidPayload { expected: 0, actual: 8 })
+        Err(ServiceError::InvalidPayload {
+            expected: 0,
+            actual: 8
+        })
     ));
     let mut anonymous = request(0, &[], None);
     anonymous.tipc = true;
@@ -496,27 +572,53 @@ fn hid_server_command_table_round_trips_npad_configuration() {
         .remove(0);
     let mut revision = 3u32.to_le_bytes().to_vec();
     revision.extend_from_slice(&[0; 12]);
-    assert_eq!(hid.dispatch(&request(109, &revision, None)).unwrap().result, 0);
+    assert_eq!(
+        hid.dispatch(&request(109, &revision, None)).unwrap().result,
+        0
+    );
 
-    hid.dispatch(&request(100, &0x3u32.to_le_bytes(), None)).unwrap();
-    assert_eq!(hid.dispatch(&request(101, &[], None)).unwrap().data, 0x3u32.to_le_bytes());
+    hid.dispatch(&request(100, &0x3u32.to_le_bytes(), None))
+        .unwrap();
+    assert_eq!(
+        hid.dispatch(&request(101, &[], None)).unwrap().data,
+        0x3u32.to_le_bytes()
+    );
 
-    hid.dispatch(&request(120, &[0, 0, 0, 0, 0, 0, 0, 0], None)).unwrap();
-    assert_eq!(hid.dispatch(&request(121, &[], None)).unwrap().data, 0u64.to_le_bytes());
+    hid.dispatch(&request(120, &[0, 0, 0, 0, 0, 0, 0, 0], None))
+        .unwrap();
+    assert_eq!(
+        hid.dispatch(&request(121, &[], None)).unwrap().data,
+        0u64.to_le_bytes()
+    );
 
     hid.dispatch(&request(128, &[2, 0, 0, 0], None)).unwrap();
-    assert_eq!(hid.dispatch(&request(129, &[], None)).unwrap().data, 2u64.to_le_bytes());
+    assert_eq!(
+        hid.dispatch(&request(129, &[], None)).unwrap().data,
+        2u64.to_le_bytes()
+    );
 
     hid.dispatch(&request(1000, &[1, 0, 0, 0], None)).unwrap();
-    assert_eq!(hid.dispatch(&request(1001, &[], None)).unwrap().data, 1u64.to_le_bytes());
+    assert_eq!(
+        hid.dispatch(&request(1001, &[], None)).unwrap().data,
+        1u64.to_le_bytes()
+    );
 
     let style_event = hid.dispatch(&request(106, &[0; 24], None)).unwrap();
     assert_eq!(style_event.moved_objects.len(), 1);
 
-    let info = hid.dispatch(&request(200, &0x0100_0000u32.to_le_bytes(), None)).unwrap();
+    let info = hid
+        .dispatch(&request(200, &0x0100_0000u32.to_le_bytes(), None))
+        .unwrap();
     assert_eq!(info.data, [1, 0, 0, 0, 2, 0, 0, 0]);
-    let mut devices = hid.dispatch(&request(203, &[], None)).unwrap().moved_objects.remove(0);
-    assert_eq!(devices.dispatch(&request(0, &[0; 4], None)).unwrap().result, 0);
+    let mut devices = hid
+        .dispatch(&request(203, &[], None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    assert_eq!(
+        devices.dispatch(&request(0, &[0; 4], None)).unwrap().result,
+        0
+    );
     assert!(devices.dispatch(&request(1, &[], None)).is_err());
 
     hid.dispatch(&request(204, &[0], None)).unwrap();
@@ -534,7 +636,10 @@ fn audio_device_reports_stereo_unit_volume_and_rejects_out_of_range_volume() {
     let mut request = |id: u32, data: Vec<u8>| device.dispatch(&request(id, &data, None));
     assert_eq!(request(5, vec![]).unwrap().data, 2u32.to_le_bytes());
     assert_eq!(request(2, vec![]).unwrap().data, 1.0f32.to_le_bytes());
-    assert_eq!(request(1, 0.25f32.to_le_bytes().to_vec()).unwrap().result, 0);
+    assert_eq!(
+        request(1, 0.25f32.to_le_bytes().to_vec()).unwrap().result,
+        0
+    );
     assert_eq!(request(8, vec![]).unwrap().data, 0.25f32.to_le_bytes());
     assert_ne!(request(7, 1.5f32.to_le_bytes().to_vec()).unwrap().result, 0);
     assert_eq!(request(2, vec![]).unwrap().data, 0.25f32.to_le_bytes());
@@ -547,32 +652,75 @@ fn audio_device_reports_stereo_unit_volume_and_rejects_out_of_range_volume() {
 fn shared_font_service_serves_the_bundled_system_font() {
     use emulator_kernel::service::Service;
     use emulator_services::plu::{
-        decode_font, encode_font, SharedFontService, FONT_LOAD_STATE_LOADED, SHARED_FONT_REGION_SIZE, SYSTEM_FONT,
+        decode_font, encode_font, SharedFontService, FONT_LOAD_STATE_LOADED,
+        SHARED_FONT_REGION_SIZE, SYSTEM_FONT,
     };
     let mut pl = SharedFontService::default();
-    let word = |r: emulator_kernel::service::ServiceReply| u32::from_le_bytes(r.data[..4].try_into().unwrap());
-    assert_eq!(pl.dispatch(&request(0, &[0, 0, 0, 0], None)).unwrap().result, 0, "RequestLoad accepted");
-    assert_eq!(word(pl.dispatch(&request(1, &[0, 0, 0, 0], None)).unwrap()), FONT_LOAD_STATE_LOADED);
+    let word = |r: emulator_kernel::service::ServiceReply| {
+        u32::from_le_bytes(r.data[..4].try_into().unwrap())
+    };
+    assert_eq!(
+        pl.dispatch(&request(0, &[0, 0, 0, 0], None))
+            .unwrap()
+            .result,
+        0,
+        "RequestLoad accepted"
+    );
+    assert_eq!(
+        word(pl.dispatch(&request(1, &[0, 0, 0, 0], None)).unwrap()),
+        FONT_LOAD_STATE_LOADED
+    );
     let size = word(pl.dispatch(&request(2, &[6, 0, 0, 0], None)).unwrap());
     let offset = word(pl.dispatch(&request(3, &[6, 0, 0, 0], None)).unwrap());
     assert_eq!(size as usize, SYSTEM_FONT.len());
     assert_eq!(offset, 8, "data follows the 8-byte header");
     // Font type 7 does not exist; missing payload is a protocol error.
-    assert_ne!(pl.dispatch(&request(1, &[7, 0, 0, 0], None)).unwrap().result, 0);
-    assert_ne!(pl.dispatch(&request(2, &[7, 0, 0, 0], None)).unwrap().result, 0);
-    assert_ne!(pl.dispatch(&request(0, &[7, 0, 0, 0], None)).unwrap().result, 0);
+    assert_ne!(
+        pl.dispatch(&request(1, &[7, 0, 0, 0], None))
+            .unwrap()
+            .result,
+        0
+    );
+    assert_ne!(
+        pl.dispatch(&request(2, &[7, 0, 0, 0], None))
+            .unwrap()
+            .result,
+        0
+    );
+    assert_ne!(
+        pl.dispatch(&request(0, &[7, 0, 0, 0], None))
+            .unwrap()
+            .result,
+        0
+    );
     assert!(pl.dispatch(&request(1, &[], None)).is_err());
-    let shm = pl.dispatch(&request(4, &[], None)).unwrap().moved_objects.remove(0);
+    let shm = pl
+        .dispatch(&request(4, &[], None))
+        .unwrap()
+        .moved_objects
+        .remove(0);
     match shm.as_handle() {
         Some(emulator_kernel::Object::SharedMemory(m)) => {
             let region = m.borrow();
             assert_eq!(region.len(), SHARED_FONT_REGION_SIZE);
-            assert_eq!(&region[0..4], &[0x7f, 0x9a, 0x02, 0x18], "plain header magic");
+            assert_eq!(
+                &region[0..4],
+                &[0x7f, 0x9a, 0x02, 0x18],
+                "plain header magic"
+            );
             // The reported offset points at a plain sfnt that font engines accept.
             assert_eq!(&region[8..12], &[0, 1, 0, 0], "TrueType sfnt version");
             assert_eq!(&region[8..8 + SYSTEM_FONT.len()], SYSTEM_FONT);
-            assert_eq!(decode_font(&region, offset as usize, emulator_services::plu::FONT_KEY).unwrap(), SYSTEM_FONT);
-            assert!(decode_font(&region, offset as usize + 4, emulator_services::plu::FONT_KEY).is_none());
+            assert_eq!(
+                decode_font(&region, offset as usize, emulator_services::plu::FONT_KEY).unwrap(),
+                SYSTEM_FONT
+            );
+            assert!(decode_font(
+                &region,
+                offset as usize + 4,
+                emulator_services::plu::FONT_KEY
+            )
+            .is_none());
         }
         other => panic!("expected shared memory, got {other:?}"),
     }
@@ -584,7 +732,10 @@ fn shared_font_service_serves_the_bundled_system_font() {
     assert!(encode_font(&mut small, 2, &[0; 4], 1).is_none());
     let at = encode_font(&mut small, 4, b"abcdefghij", 0xdead_beef).unwrap();
     assert_eq!(decode_font(&small, at, 0xdead_beef).unwrap(), b"abcdefghij");
-    assert!(decode_font(&small, at, 0).is_none(), "size word needs the key");
+    assert!(
+        decode_font(&small, at, 0).is_none(),
+        "size word needs the key"
+    );
     assert!(SharedFontService::with_font(&vec![0; SHARED_FONT_REGION_SIZE]).is_none());
 }
 
@@ -609,15 +760,38 @@ fn aoc_reports_no_add_on_content_for_the_calling_process() {
 fn bcat_delivery_cache_is_empty_and_sync_is_unavailable() {
     use emulator_services::bcat::BcatServiceCreator;
     let mut creator = BcatServiceCreator;
-    let mut storage = creator.dispatch(&request(1, &[0; 8], Some(0x51))).unwrap().moved_objects.remove(0);
-    assert!(creator.dispatch(&request(1, &[0; 8], None)).is_err(), "process id required");
-    let mut sync = creator.dispatch(&request(0, &[0; 8], Some(0x51))).unwrap().moved_objects.remove(0);
-    assert!(sync.dispatch(&request(10100, &[], None)).is_err(), "no delivery server");
-    assert!(creator.dispatch(&request(0, &[0; 8], None)).is_err(), "process id required");
-    assert!(creator.dispatch(&request(2, &[0; 8], None)).is_err(), "other applications");
+    let mut storage = creator
+        .dispatch(&request(1, &[0; 8], Some(0x51)))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    assert!(
+        creator.dispatch(&request(1, &[0; 8], None)).is_err(),
+        "process id required"
+    );
+    let mut sync = creator
+        .dispatch(&request(0, &[0; 8], Some(0x51)))
+        .unwrap()
+        .moved_objects
+        .remove(0);
+    assert!(
+        sync.dispatch(&request(10100, &[], None)).is_err(),
+        "no delivery server"
+    );
+    assert!(
+        creator.dispatch(&request(0, &[0; 8], None)).is_err(),
+        "process id required"
+    );
+    assert!(
+        creator.dispatch(&request(2, &[0; 8], None)).is_err(),
+        "other applications"
+    );
     // Enumeration needs its output buffer (prepare); bare dispatch is rejected.
     assert!(storage.dispatch(&request(10, &[], None)).is_err());
-    assert!(storage.dispatch(&request(0, &[], None)).is_err(), "nothing to open");
+    assert!(
+        storage.dispatch(&request(0, &[], None)).is_err(),
+        "nothing to open"
+    );
 }
 
 #[test]
@@ -628,10 +802,23 @@ fn hid_touch_screen_resolution_is_stored() {
     let mut payload = 1920u32.to_le_bytes().to_vec();
     payload.extend_from_slice(&1080u32.to_le_bytes());
     payload.extend_from_slice(&0x51u64.to_le_bytes());
-    assert_eq!(hid.dispatch(&request(1004, &payload, Some(0x51))).unwrap().result, 0);
+    assert_eq!(
+        hid.dispatch(&request(1004, &payload, Some(0x51)))
+            .unwrap()
+            .result,
+        0
+    );
     assert_eq!(hid.touch_resolution(), (1920, 1080));
-    assert!(hid.dispatch(&request(1004, &payload, None)).is_err(), "process id required");
-    assert!(hid.dispatch(&request(1004, &[0; 16], Some(0x51))).is_err(), "zero size");
-    assert!(hid.dispatch(&request(1004, &payload[..8], Some(0x51))).is_err());
+    assert!(
+        hid.dispatch(&request(1004, &payload, None)).is_err(),
+        "process id required"
+    );
+    assert!(
+        hid.dispatch(&request(1004, &[0; 16], Some(0x51))).is_err(),
+        "zero size"
+    );
+    assert!(hid
+        .dispatch(&request(1004, &payload[..8], Some(0x51)))
+        .is_err());
     assert_eq!(hid.touch_resolution(), (1920, 1080));
 }

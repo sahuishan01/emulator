@@ -117,7 +117,10 @@ fn describe_entries(entries: &[u8]) -> String {
     format!(
         "entries={} words={} zero_len={} sync={} subroutine={} priv={} conditional={} first=[{}]",
         pairs.len(),
-        pairs.iter().map(|(_, high)| u64::from((high >> 10) & 0x1f_ffff)).sum::<u64>(),
+        pairs
+            .iter()
+            .map(|(_, high)| u64::from((high >> 10) & 0x1f_ffff))
+            .sum::<u64>(),
         count(&|(_, high)| (high >> 10) & 0x1f_ffff == 0),
         count(&|(_, high)| high & 0x8000_0000 != 0),
         count(&|(_, high)| high & 0x200 != 0),
@@ -130,14 +133,26 @@ fn describe_entries(entries: &[u8]) -> String {
 /// Distinct GPU errors behind rejected GPFIFO submits on this thread:
 /// (error, (count, first occurrence's entries)). Diagnostics only.
 pub fn nv_submit_errors() -> Vec<(String, (u64, String))> {
-    SUBMIT_ERRORS.with(|errors| errors.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+    SUBMIT_ERRORS.with(|errors| {
+        errors
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    })
 }
 
 /// nvdrv requests on this thread that returned a non-zero nv error:
 /// ((device or "open <path>", ioctl code, error), (count, first arguments)).
 /// Diagnostics only.
 pub fn nv_failures() -> Vec<((String, u32, u32), Failure)> {
-    FAILURES.with(|failures| failures.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+    FAILURES.with(|failures| {
+        failures
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    })
 }
 
 pub(crate) const ZCULL_GET_CTX_SIZE: u32 = 0x80044701;
@@ -295,7 +310,12 @@ impl NvDriver {
             b"/dev/nvhost-ctrl" | b"/dev/nvhost-ctrl-gpu" => 3,
             b"/dev/nvhost-tsg-gpu" => 4,
             _ => {
-                record_failure(format!("open {}", String::from_utf8_lossy(&bytes)), 0, NOT_SUPPORTED, &[]);
+                record_failure(
+                    format!("open {}", String::from_utf8_lossy(&bytes)),
+                    0,
+                    NOT_SUPPORTED,
+                    &[],
+                );
                 return Ok(reply(&[0, NOT_SUPPORTED]));
             }
         };
@@ -360,9 +380,14 @@ impl NvDriver {
             })
         };
         let is_channel = |devices: &[Device], fd: u32| {
-            devices.iter().any(|d| d.fd == fd && matches!(d.object, DeviceObject::Channel(_)))
+            devices
+                .iter()
+                .any(|d| d.fd == fd && matches!(d.object, DeviceObject::Channel(_)))
         };
-        if code == TSG_BIND_CHANNEL && (!is_channel(&self.devices, argument()) || bound_elsewhere(&self.devices, argument())) {
+        if code == TSG_BIND_CHANNEL
+            && (!is_channel(&self.devices, argument())
+                || bound_elsewhere(&self.devices, argument()))
+        {
             return Err(BAD_PARAMETER);
         }
         let DeviceObject::Tsg(group) = &mut self.devices[at].object else {
@@ -381,7 +406,11 @@ impl NvDriver {
             }
             TSG_UNBIND_CHANNEL => {
                 let fd = argument();
-                let index = group.channels.iter().position(|&c| c == fd).ok_or(BAD_PARAMETER)?;
+                let index = group
+                    .channels
+                    .iter()
+                    .position(|&c| c == fd)
+                    .ok_or(BAD_PARAMETER)?;
                 group.channels.remove(index);
             }
             TSG_ENABLE => group.enabled = true,
@@ -517,7 +546,9 @@ impl NvDriver {
                 // GM20B zcull geometry: width/height align, pixel squares per
                 // aliquot, aliquot total, region byte multiplier, region and
                 // subregion header sizes, subregion width/height align, count.
-                let info = [0x20u32, 0x20, 0x400, 0x800, 0x20, 0x20, 0xc0, 0x20, 0x40, 0x10];
+                let info = [
+                    0x20u32, 0x20, 0x400, 0x800, 0x20, 0x20, 0xc0, 0x20, 0x40, 0x10,
+                ];
                 for (i, v) in info.iter().enumerate() {
                     output[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
                 }
@@ -584,7 +615,8 @@ impl NvDriver {
             }
         }
         let point = channel.syncpoint as usize - 1;
-        let (next, mut bytes, work, value) = channel.submit(input, space, self.syncpoints[point])?;
+        let (next, mut bytes, work, value) =
+            channel.submit(input, space, self.syncpoints[point])?;
         // Entries passed inline (Ioctl2) are not echoed: the reply is the
         // argument buffer only.
         bytes.truncate(output.len());
@@ -660,7 +692,10 @@ impl NvDriver {
         // Ioctl3 forms implemented here copy the payload after a 16-byte
         // header into the inline output buffer.
         let inline_capable = match self.devices[at].object {
-            DeviceObject::Control => matches!(code, GET_CHARACTERISTICS | GET_TPC_MASKS_INLINE | VSMS_MAPPING),
+            DeviceObject::Control => matches!(
+                code,
+                GET_CHARACTERISTICS | GET_TPC_MASKS_INLINE | VSMS_MAPPING
+            ),
             DeviceObject::AddressSpace => code == GET_VA_REGIONS,
             _ => false,
         };
@@ -698,7 +733,11 @@ impl NvDriver {
                 GET_CHARACTERISTICS => Some(16 + CHARACTERISTICS_SIZE),
                 GET_TPC_MASKS_INLINE => Some(0x18),
                 GET_TPC_MASKS | 0x800c4706 | 0xc00c4706 => {
-                    Some(if code & 0x3fff_0000 == 0x0004_0000 { 4 } else { 12 })
+                    Some(if code & 0x3fff_0000 == 0x0004_0000 {
+                        4
+                    } else {
+                        12
+                    })
                 }
                 _ => None,
             },
@@ -807,7 +846,11 @@ impl NvDriver {
                 if let Some(view) = inline_output {
                     // The inline copy is the payload after the 16-byte
                     // header, or the SM mapping for VSMS_MAPPING.
-                    let payload = if code == VSMS_MAPPING { &VSM_MAPPING[..] } else { &bytes[16..] };
+                    let payload = if code == VSMS_MAPPING {
+                        &VSM_MAPPING[..]
+                    } else {
+                        &bytes[16..]
+                    };
                     let len = view.len().min(payload.len());
                     if len > 0 {
                         let view = view.slice(0, len).map_err(ServiceError::Memory)?;
@@ -836,7 +879,10 @@ struct BufferWrites {
 }
 impl BufferWrites {
     fn new(writes: Vec<BufferWrite>) -> Self {
-        let ranges = writes.iter().flat_map(|w| w.ranges.iter().cloned()).collect();
+        let ranges = writes
+            .iter()
+            .flat_map(|w| w.ranges.iter().cloned())
+            .collect();
         Self { writes, ranges }
     }
 }
@@ -863,7 +909,7 @@ fn gpu_characteristics() -> [u8; CHARACTERISTICS_SIZE] {
     put32(0x08, 0xa1); // rev
     put32(0x0c, 1); // num_gpc
     put32(0x10, 0x40000); // L2 cache size (u64)
-    // 0x18: on-board video memory size (u64) = 0, unified memory.
+                          // 0x18: on-board video memory size (u64) = 0, unified memory.
     put32(0x20, 2); // num_tpc_per_gpc
     put32(0x24, 0x20); // bus_type: AXI
     put32(0x28, 0x20000); // big_page_size
@@ -875,10 +921,10 @@ fn gpu_characteristics() -> [u8; CHARACTERISTICS_SIZE] {
     put32(0x40, 0x503); // sm_arch_spa_version
     put32(0x44, 0x80); // sm_arch_warp_count
     put32(0x48, 0x28); // gpu_va_bit_count
-    // 0x4c reserved.
-    // flags (u64): partial mappings (0), sync fence fds (2), cycle stats
-    // snapshot (4), timeslice groups (6). Bit 8 stays clear: NvRm then
-    // creates channels without a TSG backend.
+                       // 0x4c reserved.
+                       // flags (u64): partial mappings (0), sync fence fds (2), cycle stats
+                       // snapshot (4), timeslice groups (6). Bit 8 stays clear: NvRm then
+                       // creates channels without a TSG backend.
     put32(0x50, 0x55);
     put32(0x58, 0x902d); // twod_class: FERMI_TWOD_A
     put32(0x5c, 0xb197); // threed_class: MAXWELL_B
@@ -895,7 +941,7 @@ fn gpu_characteristics() -> [u8; CHARACTERISTICS_SIZE] {
     put32(0x88, 0x21d70); // rop_l2_en_mask_0
     put32(0x8c, 0); // rop_l2_en_mask_1
     c[0x90..0x96].copy_from_slice(b"gm20b\0"); // chipname (u64)
-    // 0x98: gr_compbit_store_base_hw (u64) = 0.
+                                               // 0x98: gr_compbit_store_base_hw (u64) = 0.
     c
 }
 
@@ -933,20 +979,32 @@ impl Service for NvDriver {
                         11 => Inline::Input,
                         _ => Inline::Output,
                     };
-                    let target = (request.data.len() >= 8).then(|| (input_word(request, 0), input_word(request, 4)));
+                    let target = (request.data.len() >= 8)
+                        .then(|| (input_word(request, 0), input_word(request, 4)));
                     let device = target.map_or("?", |(fd, _)| self.device_name(fd));
                     // The argument buffer as sent (A or X descriptor, slot 0).
                     let arguments = match context.auto_send(0) {
                         Ok(Some(view)) => {
                             let mut bytes = vec![0u8; view.len().min(64)];
-                            view.read(0, &mut bytes).ok().map(|_| bytes).unwrap_or_default()
+                            view.read(0, &mut bytes)
+                                .ok()
+                                .map(|_| bytes)
+                                .unwrap_or_default()
                         }
                         _ => Vec::new(),
                     };
                     let response = self.ioctl(request, context, inline)?;
-                    let error = response.data.get(..4).map_or(0, |w| u32::from_le_bytes(w.try_into().expect("4 bytes")));
+                    let error = response
+                        .data
+                        .get(..4)
+                        .map_or(0, |w| u32::from_le_bytes(w.try_into().expect("4 bytes")));
                     if error != 0 {
-                        record_failure(device.to_owned(), target.map_or(0, |(_, code)| code), error, &arguments);
+                        record_failure(
+                            device.to_owned(),
+                            target.map_or(0, |(_, code)| code),
+                            error,
+                            &arguments,
+                        );
                     }
                     Ok(response)
                 }

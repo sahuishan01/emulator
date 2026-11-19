@@ -77,7 +77,9 @@ impl<'a> ParcelReader<'a> {
                 .ok_or(BinderError::MalformedParcel)
         };
         let (size, offset) = (word(0)?, word(4)?);
-        let end = offset.checked_add(size).ok_or(BinderError::MalformedParcel)?;
+        let end = offset
+            .checked_add(size)
+            .ok_or(BinderError::MalformedParcel)?;
         if offset < PARCEL_HEADER || end > parcel.len() {
             return Err(BinderError::MalformedParcel);
         }
@@ -87,13 +89,21 @@ impl<'a> ParcelReader<'a> {
         })
     }
     fn take(&mut self, length: usize) -> Result<&'a [u8], BinderError> {
-        let end = self.at.checked_add(length).ok_or(BinderError::MalformedParcel)?;
-        let bytes = self.data.get(self.at..end).ok_or(BinderError::MalformedParcel)?;
+        let end = self
+            .at
+            .checked_add(length)
+            .ok_or(BinderError::MalformedParcel)?;
+        let bytes = self
+            .data
+            .get(self.at..end)
+            .ok_or(BinderError::MalformedParcel)?;
         self.at = end.next_multiple_of(4);
         Ok(bytes)
     }
     pub fn i32(&mut self) -> Result<i32, BinderError> {
-        Ok(i32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
+        Ok(i32::from_le_bytes(
+            self.take(4)?.try_into().expect("4 bytes"),
+        ))
     }
     pub fn u32(&mut self) -> Result<u32, BinderError> {
         Ok(self.i32()? as u32)
@@ -363,7 +373,12 @@ impl BufferQueue {
                             && self.slots[index].buffer.is_some() =>
                     {
                         self.slots[index].requested = true;
-                        let raw = self.slots[index].buffer.as_ref().expect("checked").raw.clone();
+                        let raw = self.slots[index]
+                            .buffer
+                            .as_ref()
+                            .expect("checked")
+                            .raw
+                            .clone();
                         reply.i32(1).flattenable(&raw).i32(STATUS_OK);
                     }
                     _ => {
@@ -379,7 +394,10 @@ impl BufferQueue {
                         self.frames_queued += 1;
                         let frame = QueuedFrame {
                             slot: index,
-                            buffer: self.slots[index].buffer.clone().expect("dequeued slot has a buffer"),
+                            buffer: self.slots[index]
+                                .buffer
+                                .clone()
+                                .expect("dequeued slot has a buffer"),
                             frame_number: self.frames_queued,
                         };
                         present(&frame);
@@ -451,7 +469,13 @@ mod tests {
     fn connected() -> BufferQueue {
         let mut queue = BufferQueue::new(1280, 720);
         let reply = queue
-            .transact(code::CONNECT, &producer_request(|w| { w.i32(0).i32(2).i32(0); }), |_| {})
+            .transact(
+                code::CONNECT,
+                &producer_request(|w| {
+                    w.i32(0).i32(2).i32(0);
+                }),
+                |_| {},
+            )
             .unwrap();
         assert_eq!(read_words(&reply), [1280, 720, 0, 0, STATUS_OK]);
         queue
@@ -461,7 +485,11 @@ mod tests {
         let request = producer_request(|w| {
             w.i32(0).u32(1280).u32(720).u32(1).u32(0xb00);
         });
-        read_words(&queue.transact(code::DEQUEUE_BUFFER, &request, |_| {}).unwrap())
+        read_words(
+            &queue
+                .transact(code::DEQUEUE_BUFFER, &request, |_| {})
+                .unwrap(),
+        )
     }
 
     #[test]
@@ -471,7 +499,9 @@ mod tests {
             let request = producer_request(|w| {
                 w.i32(slot).i32(1).flattenable(&graphic_buffer(1280, 720));
             });
-            let reply = queue.transact(code::SET_PREALLOCATED_BUFFER, &request, |_| {}).unwrap();
+            let reply = queue
+                .transact(code::SET_PREALLOCATED_BUFFER, &request, |_| {})
+                .unwrap();
             assert_eq!(read_words(&reply), [STATUS_OK]);
         }
         let words = dequeue(&mut queue);
@@ -481,7 +511,13 @@ mod tests {
         assert_eq!(*words.last().unwrap(), BUFFER_NEEDS_REALLOCATION);
 
         let reply = queue
-            .transact(code::REQUEST_BUFFER, &producer_request(|w| { w.i32(0); }), |_| {})
+            .transact(
+                code::REQUEST_BUFFER,
+                &producer_request(|w| {
+                    w.i32(0);
+                }),
+                |_| {},
+            )
             .unwrap();
         let words = read_words(&reply);
         assert_eq!(words[..3], [1, 28, 0]);
@@ -512,23 +548,36 @@ mod tests {
         let mut queue = connected();
         // Second connect is refused.
         let reply = queue
-            .transact(code::CONNECT, &producer_request(|w| { w.i32(0).i32(2).i32(0); }), |_| {})
+            .transact(
+                code::CONNECT,
+                &producer_request(|w| {
+                    w.i32(0).i32(2).i32(0);
+                }),
+                |_| {},
+            )
             .unwrap();
         assert_eq!(*read_words(&reply).last().unwrap(), STATUS_BAD_VALUE);
         // No buffers yet: dequeue fails, no slot changes state.
-        assert_eq!(*dequeue(&mut queue).last().unwrap(), STATUS_INVALID_OPERATION);
+        assert_eq!(
+            *dequeue(&mut queue).last().unwrap(),
+            STATUS_INVALID_OPERATION
+        );
         assert!(queue.slots.iter().all(|s| s.state == SlotState::Free));
         // Queue of a slot that was never dequeued.
         let request = producer_request(|w| {
             w.i32(3).flattenable(&[0; 0x54]);
         });
-        let reply = queue.transact(code::QUEUE_BUFFER, &request, |_| panic!("no present")).unwrap();
+        let reply = queue
+            .transact(code::QUEUE_BUFFER, &request, |_| panic!("no present"))
+            .unwrap();
         assert_eq!(*read_words(&reply).last().unwrap(), STATUS_BAD_VALUE);
         // Out-of-range slot.
         let request = producer_request(|w| {
             w.i32(64).i32(1).flattenable(&graphic_buffer(1, 1));
         });
-        let reply = queue.transact(code::SET_PREALLOCATED_BUFFER, &request, |_| {}).unwrap();
+        let reply = queue
+            .transact(code::SET_PREALLOCATED_BUFFER, &request, |_| {})
+            .unwrap();
         assert_eq!(read_words(&reply), [STATUS_BAD_VALUE]);
         // Unknown transaction codes and wrong interfaces fail explicitly.
         assert_eq!(
@@ -547,7 +596,13 @@ mod tests {
         );
         // Disconnect with the wrong API keeps the connection.
         let reply = queue
-            .transact(code::DISCONNECT, &producer_request(|w| { w.i32(1); }), |_| {})
+            .transact(
+                code::DISCONNECT,
+                &producer_request(|w| {
+                    w.i32(1);
+                }),
+                |_| {},
+            )
             .unwrap();
         assert_eq!(read_words(&reply), [STATUS_BAD_VALUE]);
         assert_eq!(queue.connected_api, Some(2));
@@ -557,7 +612,17 @@ mod tests {
     fn query_reports_geometry_and_rejects_unknown_keys() {
         let mut queue = connected();
         let ask = |queue: &mut BufferQueue, what| {
-            read_words(&queue.transact(code::QUERY, &producer_request(|w| { w.i32(what); }), |_| {}).unwrap())
+            read_words(
+                &queue
+                    .transact(
+                        code::QUERY,
+                        &producer_request(|w| {
+                            w.i32(what);
+                        }),
+                        |_| {},
+                    )
+                    .unwrap(),
+            )
         };
         assert_eq!(ask(&mut queue, query::WIDTH), [1280, STATUS_OK]);
         assert_eq!(ask(&mut queue, query::DEFAULT_HEIGHT), [720, STATUS_OK]);

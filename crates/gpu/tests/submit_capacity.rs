@@ -19,7 +19,8 @@ fn setup() -> (AddressSpace, GpuAddressSpace, Vec<u8>) {
     let mut gpu = GpuAddressSpace::new(1 << 20).unwrap();
     gpu.map(
         GpuVa(BASE),
-        cpu.pin(0x10000, words * 4, Permissions::READ_WRITE).unwrap(),
+        cpu.pin(0x10000, words * 4, Permissions::READ_WRITE)
+            .unwrap(),
     )
     .unwrap();
     let mut entries = Vec::new();

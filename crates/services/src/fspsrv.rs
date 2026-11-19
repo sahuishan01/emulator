@@ -242,7 +242,10 @@ impl Service for FileSystemProxy {
                     .unwrap_or("")
                     .trim_matches('\0');
                 let file_bytes = if let Some(ref archive) = self.romfs {
-                    archive.get_file(path_str).map(|s| s.to_vec()).unwrap_or_default()
+                    archive
+                        .get_file(path_str)
+                        .map(|s| s.to_vec())
+                        .unwrap_or_default()
                 } else {
                     Vec::new()
                 };
@@ -268,13 +271,21 @@ impl Service for FileSystemProxy {
                             let sub = if dir_prefix.is_empty() {
                                 trimmed
                             } else {
-                                trimmed.strip_prefix(dir_prefix).unwrap_or(trimmed).trim_start_matches('/')
+                                trimmed
+                                    .strip_prefix(dir_prefix)
+                                    .unwrap_or(trimmed)
+                                    .trim_start_matches('/')
                             };
                             let item_name = sub.split('/').next().unwrap_or(sub);
-                            if !item_name.is_empty() && !entries.iter().any(|e: &DirectoryEntry| e.name == item_name) {
+                            if !item_name.is_empty()
+                                && !entries.iter().any(|e: &DirectoryEntry| e.name == item_name)
+                            {
                                 let is_file = !sub.contains('/');
                                 let size = if is_file {
-                                    archive.get_file(&file_name).map(|b| b.len() as u64).unwrap_or(0)
+                                    archive
+                                        .get_file(&file_name)
+                                        .map(|b| b.len() as u64)
+                                        .unwrap_or(0)
                                 } else {
                                     0
                                 };
@@ -334,7 +345,11 @@ impl Service for FileSystemProxy {
                 let path_str = std::str::from_utf8(&request.data)
                     .unwrap_or("")
                     .trim_matches('\0');
-                let is_file = self.romfs.as_ref().map(|a| a.contains_file(path_str)).unwrap_or(false);
+                let is_file = self
+                    .romfs
+                    .as_ref()
+                    .map(|a| a.contains_file(path_str))
+                    .unwrap_or(false);
                 let entry_type: u32 = if is_file { 2 } else { 1 };
                 Ok(ServiceReply {
                     result: 0,
@@ -360,12 +375,25 @@ pub struct FspSrvService {
 
 impl FspSrvService {
     pub fn with_romfs(romfs: Option<RomFsArchive>) -> Self {
-        let data_storage = romfs.clone().map(|romfs| std::rc::Rc::new(romfs) as crate::DataStorage);
-        Self { romfs, data_storage, ..Self::default() }
+        let data_storage = romfs
+            .clone()
+            .map(|romfs| std::rc::Rc::new(romfs) as crate::DataStorage);
+        Self {
+            romfs,
+            data_storage,
+            ..Self::default()
+        }
     }
 
-    pub fn with_storage(romfs: Option<RomFsArchive>, data_storage: Option<crate::DataStorage>) -> Self {
-        Self { romfs, data_storage, ..Self::default() }
+    pub fn with_storage(
+        romfs: Option<RomFsArchive>,
+        data_storage: Option<crate::DataStorage>,
+    ) -> Self {
+        Self {
+            romfs,
+            data_storage,
+            ..Self::default()
+        }
     }
 
     /// Save data shared with every other fsp-srv session of the process.
@@ -383,35 +411,36 @@ impl Service for FspSrvService {
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
             // Initialize: Set program identity / process ID
-            1 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: Vec::new(),
-                    effect: None,
-                })
-            }
+            1 => Ok(ServiceReply {
+                result: 0,
+                data: Vec::new(),
+                moved_objects: Vec::new(),
+                effect: None,
+            }),
             // OpenDataFileSystemByCurrentProcess (RomFS mount)
             // Returns an IFileSystem session object
-            2 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: vec![Box::new(FileSystemProxy::new(self.romfs.clone()))],
-                    effect: None,
-                })
-            }
+            2 => Ok(ServiceReply {
+                result: 0,
+                data: Vec::new(),
+                moved_objects: vec![Box::new(FileSystemProxy::new(self.romfs.clone()))],
+                effect: None,
+            }),
             // OpenSaveDataFileSystem (51) / OpenReadOnlySaveDataFileSystem (53).
             // The SD card (18) and system saves by id (52) are not available.
-            51 | 53 => crate::savedata::open_save_data(&self.save_data, request, request.command_id == 51),
+            51 | 53 => {
+                crate::savedata::open_save_data(&self.save_data, request, request.command_id == 51)
+            }
             // OpenDataStorageByCurrentProcess -> IStorage over the RomFS image.
             // Other titles' data storages are not available and fail explicitly.
             200 => {
                 crate::payload(request, 0)?;
-                let storage = self.data_storage.clone().ok_or(ServiceError::UnsupportedCommand {
-                    service: "fsp-srv (no data storage loaded)",
-                    command: 200,
-                })?;
+                let storage =
+                    self.data_storage
+                        .clone()
+                        .ok_or(ServiceError::UnsupportedCommand {
+                            service: "fsp-srv (no data storage loaded)",
+                            command: 200,
+                        })?;
                 Ok(ServiceReply {
                     moved_objects: vec![Box::new(StorageProxy::new(storage))],
                     ..ServiceReply::default()

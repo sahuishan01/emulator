@@ -1,10 +1,10 @@
 //! Original `vi:m` (Visual Interface) service implementation.
 //! Provides display creation, layer management, and buffer presentation endpoints.
 
-use emulator_ipc::Request;
-use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
 use crate::binder::{BinderError, BufferQueue, QueuedFrame};
+use emulator_ipc::Request;
 use emulator_kernel::service::PreparedServiceEffect;
+use emulator_kernel::service::{Service, ServiceContext, ServiceError, ServiceReply};
 use emulator_kernel::TimerQueue;
 use emulator_memory::BackingRange;
 use std::cell::Cell;
@@ -69,7 +69,10 @@ impl HosBinderDriver {
     }
 
     pub fn queue(&self, binder_id: u32) -> Option<&BufferQueue> {
-        self.queues.iter().find(|(id, _)| *id == binder_id).map(|(_, q)| q)
+        self.queues
+            .iter()
+            .find(|(id, _)| *id == binder_id)
+            .map(|(_, q)| q)
     }
 
     /// TransactParcel (0, A/B buffers) and TransactParcelAuto (3, auto-select).
@@ -91,9 +94,15 @@ impl HosBinderDriver {
                 _ => return Ok(error_reply(RESULT_INVALID_ARGUMENT)),
             }
         };
-        let word = |at: usize| u32::from_le_bytes(request.data[at..at + 4].try_into().expect("checked"));
+        let word =
+            |at: usize| u32::from_le_bytes(request.data[at..at + 4].try_into().expect("checked"));
         let (binder_id, code) = (word(0), word(4));
-        let Some(queue) = self.queues.iter_mut().find(|(id, _)| *id == binder_id).map(|(_, q)| q) else {
+        let Some(queue) = self
+            .queues
+            .iter_mut()
+            .find(|(id, _)| *id == binder_id)
+            .map(|(_, q)| q)
+        else {
             return Ok(error_reply(RESULT_INVALID_ARGUMENT));
         };
         let mut parcel = vec![0; input.len()];
@@ -239,8 +248,8 @@ pub fn native_window_parcel(binder_id: u32) -> Vec<u8> {
     let mut parcel = Vec::with_capacity(0x10 + object.len() + 4);
     parcel.extend_from_slice(&(object.len() as u32).to_le_bytes()); // data size
     parcel.extend_from_slice(&0x10u32.to_le_bytes()); // data offset
-    // The guest's Parcel::readObject only accepts a flat object whose data
-    // position is listed in the objects table, so list offset 0.
+                                                      // The guest's Parcel::readObject only accepts a flat object whose data
+                                                      // position is listed in the objects table, so list offset 0.
     parcel.extend_from_slice(&4u32.to_le_bytes()); // objects size
     parcel.extend_from_slice(&(0x10 + object.len() as u32).to_le_bytes()); // objects offset
     parcel.extend_from_slice(&object);
@@ -258,7 +267,11 @@ fn words(values: &[u64]) -> ServiceReply {
 }
 
 fn read_u64(request: &Request, offset: usize) -> u64 {
-    u64::from_le_bytes(request.data[offset..offset + 8].try_into().expect("length checked"))
+    u64::from_le_bytes(
+        request.data[offset..offset + 8]
+            .try_into()
+            .expect("length checked"),
+    )
 }
 
 /// Accepts only the "Default" display name (NUL-padded, 0x40 bytes).
@@ -294,7 +307,10 @@ impl DisplayService {
         context.require_copy_handles(0)?;
         crate::payload(request, 8)?;
         if read_u64(request, 0) != DEFAULT_DISPLAY_ID {
-            return Err(ServiceError::InvalidPayload { expected: 8, actual: request.data.len() });
+            return Err(ServiceError::InvalidPayload {
+                expected: 8,
+                actual: request.data.len(),
+            });
         }
         Ok(ServiceReply {
             moved_objects: vec![Box::new(crate::event::EventHandle(self.vsync.clone()))],
@@ -335,7 +351,10 @@ impl DisplayService {
                 if !default_display_name(&request.data[..0x40])
                     || !matches!(layer, DEFAULT_LAYER_ID | RECORDING_LAYER_ID)
                 {
-                    return Err(ServiceError::InvalidPayload { expected: 0x50, actual: request.data.len() });
+                    return Err(ServiceError::InvalidPayload {
+                        expected: 0x50,
+                        actual: request.data.len(),
+                    });
                 }
                 // Each layer gets its own binder object, numbered like the layer.
                 let parcel = native_window_parcel(layer as u32);
@@ -345,7 +364,10 @@ impl DisplayService {
             2030 => {
                 crate::payload(request, 16)?;
                 if read_u64(request, 8) != DEFAULT_DISPLAY_ID {
-                    return Err(ServiceError::InvalidPayload { expected: 16, actual: request.data.len() });
+                    return Err(ServiceError::InvalidPayload {
+                        expected: 16,
+                        actual: request.data.len(),
+                    });
                 }
                 let parcel = native_window_parcel(LAYER_BINDER_ID);
                 (words(&[DEFAULT_LAYER_ID, parcel.len() as u64]), parcel)
@@ -353,7 +375,10 @@ impl DisplayService {
             _ => unreachable!("routed by prepare"),
         };
         if bytes.len() > output.len() {
-            return Err(ServiceError::InvalidPayload { expected: bytes.len(), actual: output.len() });
+            return Err(ServiceError::InvalidPayload {
+                expected: bytes.len(),
+                actual: output.len(),
+            });
         }
         let mut reply = reply;
         reply.effect = Some(Box::new(crate::BufferWrite::new(output, bytes)));
@@ -394,7 +419,9 @@ impl Service for DisplayService {
                 Ok(ServiceReply {
                     result: 0,
                     data: Vec::new(),
-                    moved_objects: vec![Box::new(HosBinderDriver::with_graphics(self.graphics.clone()))],
+                    moved_objects: vec![Box::new(HosBinderDriver::with_graphics(
+                        self.graphics.clone(),
+                    ))],
                     effect: None,
                 })
             }
@@ -418,7 +445,10 @@ impl Service for DisplayService {
             1010 => {
                 crate::payload(request, 0x40)?;
                 if !default_display_name(&request.data) {
-                    return Err(ServiceError::InvalidPayload { expected: 0x40, actual: request.data.len() });
+                    return Err(ServiceError::InvalidPayload {
+                        expected: 0x40,
+                        actual: request.data.len(),
+                    });
                 }
                 Ok(words(&[DEFAULT_DISPLAY_ID]))
             }
@@ -501,17 +531,15 @@ impl Service for ViManagerService {
     fn dispatch(&mut self, request: &Request) -> Result<ServiceReply, ServiceError> {
         match request.command_id {
             // GetDisplayService (e.g. 0 = Application display service)
-            0 | 1 | 2 => {
-                Ok(ServiceReply {
-                    result: 0,
-                    data: Vec::new(),
-                    moved_objects: vec![Box::new(DisplayService {
-                        graphics: self.graphics.clone(),
-                        vsync: self.vsync.clone(),
-                    })],
-                    effect: None,
-                })
-            }
+            0 | 1 | 2 => Ok(ServiceReply {
+                result: 0,
+                data: Vec::new(),
+                moved_objects: vec![Box::new(DisplayService {
+                    graphics: self.graphics.clone(),
+                    vsync: self.vsync.clone(),
+                })],
+                effect: None,
+            }),
             command => Err(ServiceError::UnsupportedCommand {
                 service: "vi:m",
                 command,
