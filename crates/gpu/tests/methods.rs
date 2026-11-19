@@ -393,7 +393,7 @@ fn graphics_engine_classes_bind_but_unimplemented_methods_fail() {
     }
 }
 #[test]
-fn graphics_context_binds_graphics_classes_only() {
+fn graphics_context_binds_graphics_and_copy_classes() {
     for class in [
         MAXWELL_B,
         MAXWELL_COMPUTE_B,
@@ -402,7 +402,7 @@ fn graphics_context_binds_graphics_classes_only() {
     ] {
         assert!(class_allowed(MAXWELL_B, class));
     }
-    assert!(!class_allowed(MAXWELL_B, MAXWELL_DMA_COPY_A));
+    assert!(class_allowed(MAXWELL_B, MAXWELL_DMA_COPY_A));
     assert!(!class_allowed(MAXWELL_DMA_COPY_A, MAXWELL_B));
     assert!(class_allowed(MAXWELL_DMA_COPY_A, MAXWELL_DMA_COPY_A));
 }

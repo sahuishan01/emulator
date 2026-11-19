@@ -1000,10 +1000,18 @@ pub fn run() -> Vec<CaseResult> {
             }
             r.verified += 640;
         }),
-        ("color-context-class-mismatch-rejected", |r| {
+        // Z-A binds the copy engine on subchannel 4 of its 3D channel.
+        ("color-context-binds-copy-engine", |r| {
             r.prepare_color(true);
             r.full_program();
-            assert_eq!(r.submit(2, 0, 0, 0, 14), 4);
+            assert_eq!(r.submit(2, 0, 0, 0, 14), 0);
+            assert_eq!(r.read(r.point), 1);
+        }),
+        ("copy-context-class-mismatch-rejected", |r| {
+            r.prepare(true, false);
+            assert_eq!(r.io(r.channel, ALLOC_CONTEXT, &[0xb0b5, 0, 0, 0]), 0);
+            r.program(&[0x20010000, 0xb197]);
+            assert_eq!(r.submit(2, 0, 0, 0, 2), 4);
             assert_eq!(r.read(r.point), 0);
         }),
         ("color-empty-rect-completes-without-writes", |r| {
@@ -1320,7 +1328,7 @@ mod tests {
     #[test]
     fn integrated_nv_protocol_cases_pass() {
         let cases = super::run();
-        assert_eq!(cases.len(), 53);
+        assert_eq!(cases.len(), 54);
         for case in cases {
             assert!(case.passed, "{}: {}", case.name, case.error)
         }

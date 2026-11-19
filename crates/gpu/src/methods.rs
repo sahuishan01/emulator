@@ -18,10 +18,11 @@ const GRAPHICS_CLASSES: [u32; 4] = [
 
 /// Whether a channel whose allocated object context is `context` may bind
 /// `class` with SET_OBJECT. A graphics context owns the whole graphics engine
-/// (3D, compute, inline-to-memory, 2D); whether a graphics channel may also
-/// reach the copy engine is unverified, so a mismatched copy bind is refused.
+/// (3D, compute, inline-to-memory, 2D) and may also bind the copy engine
+/// (Z-A's NVN binds 0xb0b5 on subchannel 4 of its 3D channel); a copy-only
+/// context binds only the copy class.
 pub fn class_allowed(context: u32, class: u32) -> bool {
-    if class == context {
+    if class == context || (class == MAXWELL_DMA_COPY_A && GRAPHICS_CLASSES.contains(&context)) {
         return true;
     }
     GRAPHICS_CLASSES.contains(&context) && GRAPHICS_CLASSES.contains(&class)
