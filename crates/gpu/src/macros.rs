@@ -217,13 +217,9 @@ impl MacroState {
                 .ok_or(MacroError::ProgramCounter(pc))?;
             let in_delay_slot = delay.is_some() || exiting;
             let mut next = pc.wrapping_add(1);
-            let exit_bit = word & 0x80 != 0;
+            let mut exit_bit = word & 0x80 != 0;
             match word & 7 {
                 7 => {
-                    if exit_bit {
-                        // Exit on a branch is not used by known drivers.
-                        return Err(MacroError::UnsupportedOperation { pc, word });
-                    }
                     if in_delay_slot {
                         return Err(MacroError::BranchInDelaySlot { pc });
                     }
@@ -232,9 +228,13 @@ impl MacroState {
                     let taken = (value != 0) == if_not_zero;
                     if taken {
                         let target = pc.wrapping_add(immediate(word) as u32);
+                        exit_bit = false;
                         if word & 0x20 != 0 {
                             next = target; // no delay slot
                         } else {
+                            // A taken branch does not exit; its exit bit
+                            // only ends a loop that falls through (NVN uses
+                            // "loop while rN != 0, else exit").
                             delay = Some(target);
                             pc = next;
                             continue;
@@ -497,6 +497,29 @@ mod tests {
                 (0x1400, 0),
                 (0x1400, 77)
             ]
+        );
+    }
+
+    #[test]
+    fn branch_with_exit_loops_then_exits_when_not_taken() {
+        let mut state = MacroState::default();
+        // Z-A pattern: send, decrement, "if r1 != 0 goto -2 (delay slot) else exit".
+        let delayed = |offset: i32| 7 | 1 << 4 | EXIT | 1 << 11 | ((offset as u32) << 14);
+        let mut writes = upload(
+            3,
+            &[
+                imm(SET_METHOD, 0, 0, 0x700),
+                imm(SEND, 1, 1, -1),
+                delayed(-1),
+                imm(SEND, 0, 0, 9),    // delay slot: runs on every iteration
+                imm(SEND, 0, 0, 0x55), // must not run
+            ],
+        );
+        writes.push(w(0x3818, 2));
+        let out = state.expand(&writes).unwrap();
+        assert_eq!(
+            data(&out),
+            [(0x1c00, 1), (0x1c00, 9), (0x1c00, 0), (0x1c00, 9)]
         );
     }
 
