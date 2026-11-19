@@ -29,12 +29,20 @@ pub fn class_allowed(context: u32, class: u32) -> bool {
 }
 
 /// Configuration ranges of classes without an executor: 2D surface, clip,
-/// ROP and pattern setup (below the solid-primitive, CPU-pixel and
-/// memory-blit trigger methods from 0x580) and inline-to-memory geometry
+/// ROP and pattern setup (below the solid-primitive methods from 0x580), CPU
+/// pixel and memory blit setup (their triggers 0x838 / 0x8fc excluded) and
+/// inline-to-memory geometry
 /// (below LAUNCH_DMA 0x1b0). Writes here change nothing observable on their own.
 fn configuration_only(class: u32, offset: u32) -> bool {
     match class {
-        FERMI_TWOD_A => offset == 0x100 || (0x200..0x580).contains(&offset),
+        FERMI_TWOD_A => {
+            offset == 0x100
+                || (0x200..0x580).contains(&offset)
+                // PIXELS_FROM_CPU setup (data trigger 0x838) and
+                // PIXELS_FROM_MEMORY setup (blit trigger SRC_Y0_INT 0x8fc).
+                || (0x800..0x838).contains(&offset)
+                || (0x860..0x8fc).contains(&offset)
+        }
         KEPLER_INLINE_TO_MEMORY_B => offset == 0x100 || (0x180..0x1b0).contains(&offset),
         _ => false,
     }

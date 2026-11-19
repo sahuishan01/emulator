@@ -387,6 +387,9 @@ fn graphics_engine_classes_bind_but_unimplemented_methods_fail() {
         };
         let id = rig.submit(&[(2, 0, class), (2, 0x08, 0), (2, config, 1)]);
         rig.execute(id).unwrap();
+        let extra = if class == FERMI_TWOD_A { 0x884 } else { 0x1ac };
+        let id = rig.submit(&[(2, extra, 1)]);
+        rig.execute(id).unwrap();
         let id = rig.submit(&[(2, trigger, 1)]);
         assert_eq!(
             rig.execute(id),
