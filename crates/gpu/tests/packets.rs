@@ -152,7 +152,7 @@ fn malformed_packet_prefixes_and_unsupported_forms_never_decode_as_success() {
 #[test]
 fn input_output_budgets_and_method_boundaries_are_checked_before_publication() {
     assert_eq!(
-        decode_pushbuffer(&vec![0; (MAX_PUSHBUFFER_WORDS + 1) * 4], 0),
+        decode_pushbuffer(&vec![0; (MAX_SUBMIT_WORDS + 1) * 4], 0),
         Err(DecodeError::TooLarge)
     );
     assert_eq!(

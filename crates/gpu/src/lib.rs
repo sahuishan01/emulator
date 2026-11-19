@@ -29,7 +29,10 @@ pub use submission::{
 };
 
 pub const MAX_PUSHBUFFER_WORDS: usize = 16 * 1024;
-pub const MAX_METHOD_WRITES: usize = MAX_PUSHBUFFER_WORDS;
+/// Words captured by one GPFIFO submit across all its entries (4 MiB). NVN
+/// submits hundreds of segments at once (Z-A: 587 entries, 19.8K words).
+pub const MAX_SUBMIT_WORDS: usize = 1 << 20;
+pub const MAX_METHOD_WRITES: usize = MAX_SUBMIT_WORDS;
 const GPU_ADDRESS_LIMIT: u64 = 1 << 40;
 
 fn allocate_identity(counter: &std::sync::atomic::AtomicU64) -> Option<u64> {
@@ -192,7 +195,7 @@ pub fn decode_pushbuffer(
     bytes: &[u8],
     write_budget: usize,
 ) -> Result<Vec<MethodWrite>, DecodeError> {
-    if bytes.len() > MAX_PUSHBUFFER_WORDS * 4 {
+    if bytes.len() > MAX_SUBMIT_WORDS * 4 {
         return Err(DecodeError::TooLarge);
     }
     if bytes.len() % 4 != 0 {

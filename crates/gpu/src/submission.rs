@@ -1,7 +1,7 @@
 use crate::address_space::MAX_BACKING_SPANS;
 use crate::{
     decode_pushbuffer, AddressSpaceId, DecodeError, GpEntry, GpuAddressSpace, GpuMemoryError,
-    GpuMemoryRange, MethodWrite, MAX_METHOD_WRITES, MAX_PUSHBUFFER_WORDS,
+    GpuMemoryRange, MethodWrite, MAX_METHOD_WRITES, MAX_SUBMIT_WORDS,
 };
 use emulator_memory::{Access, BackingRange};
 use std::{collections::VecDeque, sync::atomic::AtomicU64};
@@ -9,7 +9,7 @@ static NEXT_QUEUE_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_PENDING: usize = 16;
 /// A channel's GPFIFO holds at most 64K entries; one submit cannot exceed it.
 const MAX_ENTRIES: usize = 0x10000;
-const MAX_BYTES: usize = MAX_PENDING * MAX_PUSHBUFFER_WORDS * 4;
+const MAX_BYTES: usize = MAX_PENDING * MAX_SUBMIT_WORDS * 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SubmissionId {
@@ -246,7 +246,7 @@ impl SubmissionQueue {
             };
             let size = entry.word_count as usize * 4;
             let total = bytes.len() + size;
-            if total > MAX_PUSHBUFFER_WORDS * 4
+            if total > MAX_SUBMIT_WORDS * 4
                 || total > self.limits.bytes.saturating_sub(stats.captured_bytes)
             {
                 return Err(QueueError::Capacity);
