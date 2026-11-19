@@ -13,8 +13,10 @@ mod sampled_texture;
 pub use sampled_texture::SampledTexture;
 mod graphics;
 pub use graphics::{GraphicsBackend, GraphicsFrame};
+mod macros;
 mod methods;
 pub use clear::{ColorClear, BGRA8_UNORM, MAXWELL_B, RGBA8_UNORM};
+pub use macros::{MacroError, INSTRUCTION_WORDS, MACRO_BASE, MACRO_COUNT, STEP_LIMIT};
 mod submission;
 pub use address_space::{
     AddressSpaceId, GpuAddressSpace, GpuMemoryError, GpuMemoryRange, MappingId,

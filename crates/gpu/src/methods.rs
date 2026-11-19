@@ -104,6 +104,7 @@ pub enum ExecutionError {
     Capacity,
     OverlappingCopy,
     Memory(GpuMemoryError),
+    Macro(crate::macros::MacroError),
 }
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -123,6 +124,7 @@ struct DmaRegisters {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MethodState {
     channels: [Option<EngineState>; 8],
+    macros: crate::macros::MacroState,
 }
 #[derive(Clone, Debug)]
 enum EngineState {
@@ -312,6 +314,8 @@ impl MethodState {
                 ..ExecutionStats::default()
             },
         };
+        let expanded = batch.state.macros.expand(writes)?;
+        let writes = &expanded[..];
         let mut spans = 0;
         for write in writes {
             let channel = &mut batch.state.channels[usize::from(write.subchannel)];
