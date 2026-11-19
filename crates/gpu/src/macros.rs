@@ -19,6 +19,9 @@ const LOAD_INSTRUCTION: u32 = 0x118;
 const LOAD_START_POINTER: u32 = 0x11c;
 const LOAD_START: u32 = 0x120;
 const SHADOW_RAM_CONTROL: u32 = 0x124;
+const SHADOW_TRACK: u32 = 0;
+const SHADOW_PASSTHROUGH: u32 = 2;
+const SHADOW_REPLAY: u32 = 3;
 /// First macro call method (byte offset); 128 macros, two methods each.
 pub const MACRO_BASE: u32 = 0x3800;
 const MACRO_END: u32 = 0x4000;
@@ -46,7 +49,7 @@ pub enum MacroError {
     StepLimit(u32),
     EmitLimit,
     ParameterWithoutCall(u32),
-    ShadowReplay,
+    ShadowMode(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +61,7 @@ pub(crate) struct MacroState {
     instruction_pointer: u32,
     start_pointer: u32,
     registers: Box<[u32]>,
+    shadow_mode: u32,
 }
 impl Default for MacroState {
     fn default() -> Self {
@@ -68,6 +72,7 @@ impl Default for MacroState {
             instruction_pointer: 0,
             start_pointer: 0,
             registers: vec![0; REGISTER_WORDS].into(),
+            shadow_mode: SHADOW_TRACK,
         }
     }
 }
@@ -170,15 +175,25 @@ impl MacroState {
                 self.start_pointer += 1;
             }
             SHADOW_RAM_CONTROL => {
-                // 0 track, 1 track with filter, 2 passthrough: register reads
-                // return the last written value. Replay (3) is not modelled.
-                if write.data & 3 == 3 {
-                    return Err(macro_error(MacroError::ShadowReplay));
+                // 0 track: writes update the shadow; 2 passthrough: writes
+                // bypass it; 3 replay: writes send the shadowed value instead
+                // of their data. 1 (track with filter) has an unknown filter.
+                if !matches!(
+                    write.data,
+                    SHADOW_TRACK | SHADOW_PASSTHROUGH | SHADOW_REPLAY
+                ) {
+                    return Err(macro_error(MacroError::ShadowMode(write.data)));
                 }
+                self.shadow_mode = write.data;
             }
             _ => {
+                let mut write = write;
                 if let Some(slot) = self.registers.get_mut((offset / 4) as usize) {
-                    *slot = write.data;
+                    match self.shadow_mode {
+                        SHADOW_TRACK => *slot = write.data,
+                        SHADOW_REPLAY => write.data = *slot,
+                        _ => {}
+                    }
                 }
                 if out.len() >= EMIT_LIMIT {
                     return Err(macro_error(MacroError::EmitLimit));
@@ -196,7 +211,9 @@ impl MacroState {
         let start =
             self.starts[call.index as usize].ok_or(MacroError::UnloadedMacro(call.index))?;
         let code = &self.code;
+        let track = self.shadow_mode == SHADOW_TRACK;
         let mut machine = Machine {
+            track,
             registers: &mut self.registers,
             regs: [0; 8],
             carry: false,
@@ -262,6 +279,8 @@ impl MacroState {
 }
 
 struct Machine<'a> {
+    /// Whether sends update the shadow during the macro (track mode).
+    track: bool,
     registers: &'a mut [u32],
     regs: [u32; 8],
     carry: bool,
@@ -339,8 +358,10 @@ impl Machine<'_> {
         if method * 4 >= MACRO_BASE {
             return Err(MacroError::SendOutOfRange { pc, method });
         }
-        if let Some(slot) = self.registers.get_mut(method as usize) {
-            *slot = value;
+        if self.track {
+            if let Some(slot) = self.registers.get_mut(method as usize) {
+                *slot = value;
+            }
         }
         self.emitted.push(MethodWrite {
             subchannel: self.subchannel,
@@ -577,8 +598,8 @@ mod tests {
             ExecutionError::Macro(MacroError::ParameterWithoutCall(0x3804))
         );
         assert_eq!(
-            run(&exit, &[w(0x124, 3)]),
-            ExecutionError::Macro(MacroError::ShadowReplay)
+            run(&exit, &[w(0x124, 1)]),
+            ExecutionError::Macro(MacroError::ShadowMode(1))
         );
         assert_eq!(
             run(&[imm(MOVE, 0, 0, 0xe00) | 5 | EXIT, NOP], &[w(0x3800, 1)]),
@@ -594,5 +615,26 @@ mod tests {
         let mut state = MacroState::default();
         let writes = [w(0, crate::MAXWELL_COMPUTE_B), w(0x3800, 1), w(0x118, 2)];
         assert_eq!(state.expand(&writes).unwrap(), writes);
+    }
+
+    #[test]
+    fn shadow_ram_track_passthrough_and_replay() {
+        let mut state = MacroState::default();
+        let writes = [
+            w(0, crate::MAXWELL_B),
+            w(0x1000, 5),  // track: shadow 5
+            w(0x124, 2),   // passthrough
+            w(0x1000, 9),  // forwarded, shadow stays 5
+            w(0x124, 3),   // replay
+            w(0x1000, 77), // sends the shadowed 5
+            w(0x124, 0),
+            w(0x1000, 6),
+        ];
+        let out = state.expand(&writes).unwrap();
+        assert_eq!(
+            data(&out),
+            [(0x1000, 5), (0x1000, 9), (0x1000, 5), (0x1000, 6)]
+        );
+        assert_eq!(state.registers[0x400], 6);
     }
 }
