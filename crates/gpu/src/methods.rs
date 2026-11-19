@@ -148,8 +148,12 @@ pub enum ExecutionError {
     Memory(GpuMemoryError),
     Macro(crate::macros::MacroError),
     /// A draw or clear after a 3D state write the model does not interpret
-    /// (first such byte offset); rendering it would silently ignore state.
-    UnmodelledState(u32),
+    /// (first such byte offset, then every distinct one recorded, sorted and
+    /// capped at `UNMODELLED_CAP`); rendering it would silently ignore state.
+    UnmodelledState {
+        first: u32,
+        offsets: Vec<u32>,
+    },
     ConstantBuffer(&'static str),
     InlineToMemory(&'static str),
     InlineToMemoryLaunch(u32),
@@ -166,6 +170,17 @@ pub enum ExecutionError {
 }
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Self::UnmodelledState { first, offsets } = self {
+            write!(
+                f,
+                "GPU method execution error: UnmodelledState(first {first:#x}; {} offsets:",
+                offsets.len()
+            )?;
+            for offset in offsets {
+                write!(f, " {offset:#x}")?;
+            }
+            return write!(f, ")");
+        }
         write!(f, "GPU method execution error: {self:?}")
     }
 }
@@ -187,9 +202,22 @@ struct ThreedExtra {
     constant: [Option<u32>; 4],
     /// First recorded 3D state write that the draw/clear models ignore.
     unmodelled: Option<u32>,
+    /// Every distinct ignored 3D offset (at most `UNMODELLED_CAP`), for scoping.
+    unmodelled_all: std::collections::BTreeSet<u32>,
     i2m: crate::i2m::I2m,
 }
 
+/// Distinct unmodelled offsets kept per 3D engine for error reports.
+pub const UNMODELLED_CAP: usize = 512;
+impl ThreedExtra {
+    fn unmodelled_error(&self) -> Option<ExecutionError> {
+        self.unmodelled
+            .map(|first| ExecutionError::UnmodelledState {
+                first,
+                offsets: self.unmodelled_all.iter().copied().collect(),
+            })
+    }
+}
 const CB_SIZE: u32 = 0x2380;
 const CB_POS: u32 = 0x238c;
 const CB_DATA_FIRST: u32 = 0x2390;
@@ -556,10 +584,10 @@ impl MethodState {
                     }
                     continue;
                 }
-                if let Some(first) = extra.unmodelled {
+                if extra.unmodelled.is_some() {
                     let launches = offset == 0x19d0 || DRAW_TRIGGERS.contains(&offset);
                     if launches {
-                        return Err(ExecutionError::UnmodelledState(first));
+                        return Err(extra.unmodelled_error().expect("recorded"));
                     }
                 }
                 if offset == 0x19d0 && write.data == 1 {
@@ -583,6 +611,9 @@ impl MethodState {
                         if extra.threed && !THREED_ACTIONS.contains(&offset) =>
                     {
                         extra.unmodelled.get_or_insert(offset);
+                        if extra.unmodelled_all.len() < UNMODELLED_CAP {
+                            extra.unmodelled_all.insert(offset);
+                        }
                         None
                     }
                     Err(ExecutionError::UnsupportedMethod { offset, .. }) => {
@@ -741,11 +772,11 @@ impl MethodState {
         // A draw or clear anywhere in a batch whose 3D state includes ignored
         // writes (earlier or later in the batch) is rejected as a whole.
         if !(batch.draws.is_empty() && batch.clears.is_empty() && batch.depth_clears.is_empty()) {
-            if let Some(first) = batch.state.channels.iter().flatten().find_map(|e| match e {
-                EngineState::Color(_, _, extra) => extra.unmodelled,
+            if let Some(error) = batch.state.channels.iter().flatten().find_map(|e| match e {
+                EngineState::Color(_, _, extra) => extra.unmodelled_error(),
                 _ => None,
             }) {
-                return Err(ExecutionError::UnmodelledState(first));
+                return Err(error);
             }
         }
         Ok(batch)

@@ -471,13 +471,22 @@ fn constant_buffer_upload_errors_roll_back() {
 #[test]
 fn unmodelled_threed_state_is_recorded_but_blocks_draws_and_clears() {
     let mut rig = Rig::new();
-    let id = rig.submit(&[(0, 0, MAXWELL_B), (0, 0x3468, 7), (0, 0x0e04, 1)]);
+    let id = rig.submit(&[
+        (0, 0, MAXWELL_B),
+        (0, 0x346c, 2),
+        (0, 0x3468, 7),
+        (0, 0x3468, 8),
+        (0, 0x0e04, 1),
+    ]);
     rig.execute(id).unwrap();
     // The state persists: a later clear trigger in another submit is refused.
     let id = rig.submit(&[(0, 0x19d0, 0x3c)]);
     assert_eq!(
         rig.execute(id),
-        Err(ExecutionError::UnmodelledState(0x3468))
+        Err(ExecutionError::UnmodelledState {
+            first: 0x346c,
+            offsets: vec![0x3468, 0x346c],
+        })
     );
 }
 #[test]

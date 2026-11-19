@@ -98,7 +98,7 @@ fn unsupported_index_setup_is_explicit_and_does_not_publish_state() {
     assert!(channel
         .prepare(&gpu, &bad)
         .unwrap_err()
-        .contains("UnmodelledState(6104)")); // 0x17d8 recorded, the draw then refused
+        .contains("UnmodelledState(first 0x17d8; 1 offsets: 0x17d8)")); // 0x17d8 recorded, the draw then refused
     let (_, work) = channel.prepare(&gpu, &entry).unwrap();
     assert_eq!(work.draws()[0].indices.as_ref().unwrap().element_bytes, 1);
 }
