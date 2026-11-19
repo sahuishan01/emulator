@@ -78,7 +78,20 @@ impl I2m {
         }
     }
     fn reg(&self, offset: u32) -> Result<u32, ExecutionError> {
-        self.regs[((offset - FIRST) / 4) as usize].ok_or(ExecutionError::UninitializedRegister)
+        self.regs[((offset - FIRST) / 4) as usize].ok_or(error(match offset {
+            0x180 => "LINE_LENGTH_IN unset",
+            0x184 => "LINE_COUNT unset",
+            0x188 => "OFFSET_OUT_UPPER unset",
+            0x18c => "OFFSET_OUT unset",
+            _ => "PITCH_OUT unset",
+        }))
+    }
+    /// PITCH_OUT, needed only when more than one line is written.
+    fn pitch(&self) -> Result<u64, ExecutionError> {
+        if self.reg(0x184)? <= 1 {
+            return Ok(0);
+        }
+        self.reg(0x190).map(u64::from)
     }
     fn launch(&mut self, flags: u32) -> Result<(), ExecutionError> {
         // bit 0: destination layout (1 = pitch); bits 4-5 completion type
@@ -97,7 +110,7 @@ impl I2m {
         }
         let length = u64::from(self.reg(0x180)?);
         let count = u64::from(self.reg(0x184)?);
-        let pitch = u64::from(self.reg(0x190)?);
+        let pitch = self.pitch()?;
         let total = length * count;
         if total == 0 || total > MAX_BYTES || (count > 1 && pitch < length) {
             return Err(error("invalid line geometry"));
@@ -113,7 +126,7 @@ impl I2m {
     }
     fn lines(&self, bytes: Vec<u8>) -> Result<Vec<LineWrite>, ExecutionError> {
         let length = self.reg(0x180)? as usize;
-        let pitch = u64::from(self.reg(0x190)?);
+        let pitch = self.pitch()?;
         let base = u64::from(self.reg(0x188)?) << 32 | u64::from(self.reg(0x18c)?);
         if pitch == length as u64 || bytes.len() == length {
             return Ok(vec![(base, bytes)]);

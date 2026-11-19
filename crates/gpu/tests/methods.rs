@@ -530,7 +530,12 @@ fn inline_to_memory_writes_pitch_lines_from_3d_and_i2m_classes() {
     // I2M class, flush-only completion, one partial-word line.
     let mut rig = Rig::new();
     let mut methods = vec![(2, 0, KEPLER_INLINE_TO_MEMORY_B)];
-    methods.extend(i2m_setup(2, 5, 1, 0, 32));
+    // Single line: PITCH_OUT never written.
+    methods.extend(
+        i2m_setup(2, 5, 1, 0, 32)
+            .into_iter()
+            .filter(|m| m.1 != 0x190),
+    );
     methods.extend([
         (2, 0x1b0, 0x1051),
         (2, 0x1b4, 0xaabb_ccdd),
