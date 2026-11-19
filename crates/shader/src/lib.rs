@@ -4,6 +4,7 @@
 use std::fmt;
 pub mod census;
 mod header;
+pub mod maxwell;
 pub mod reference;
 mod spirv;
 pub use header::{decode_program, HEADER_BYTES};

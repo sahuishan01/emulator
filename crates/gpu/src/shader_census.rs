@@ -21,6 +21,12 @@ pub struct ShaderRecord {
     pub census: emulator_shader::census::Census,
     /// Bytes scanned; less than requested when memory ended early.
     pub code_bytes: usize,
+    /// Structured decode: instructions decoded, all-zero words, undecodable
+    /// words and the first one as (byte offset into code, word).
+    pub decoded: usize,
+    pub zero_words: usize,
+    pub undecoded: usize,
+    pub first_undecoded: Option<(usize, u64)>,
 }
 
 thread_local! {
@@ -68,6 +74,7 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                     break;
                 }
             }
+            let listing = emulator_shader::maxwell::list(&code);
             programs.insert(
                 base,
                 ShaderRecord {
@@ -76,6 +83,10 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                     header,
                     census: emulator_shader::census::scan(&code),
                     code_bytes: code.len(),
+                    decoded: listing.instructions.len(),
+                    zero_words: listing.zero_words,
+                    undecoded: listing.unsupported_count,
+                    first_undecoded: listing.unsupported,
                 },
             );
         });

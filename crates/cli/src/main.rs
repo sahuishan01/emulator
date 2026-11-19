@@ -1006,6 +1006,18 @@ fn print_run_report(
                 record.census.instructions,
                 record.census.unknown.values().sum::<usize>()
             );
+            println!(
+                "    decoder: {} decoded, {} zero words, {} undecoded{}",
+                record.decoded,
+                record.zero_words,
+                record.undecoded,
+                record
+                    .first_undecoded
+                    .map_or(String::new(), |(o, w)| format!(
+                        ", first at code+{o:#x}: {w:#018x} ({})",
+                        emulator_shader::census::identify(w).unwrap_or("?")
+                    ))
+            );
         }
     }
     let total: u64 = samples.values().sum();
