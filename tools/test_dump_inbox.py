@@ -213,7 +213,7 @@ class SmokeSandboxTest(unittest.TestCase):
                                            ((binary, "emulator-cli"), (game, "game.nsp"), (keys, "prod.keys"))))
             self.assertFalse(any(value.startswith(("BindPaths=", "ReadWritePaths=")) for value in properties))
             # The guest-facing command names sandbox paths only, never host paths.
-            self.assertEqual(inner, [f"{dump_inbox.SANDBOX_DIR}/emulator-cli", "run-nsp", f"{dump_inbox.SANDBOX_DIR}/game.nsp",
+            self.assertEqual(inner, ["/usr/bin/env", f"{dump_inbox.SANDBOX_DIR}/emulator-cli", "run-nsp", f"{dump_inbox.SANDBOX_DIR}/game.nsp",
                                      "--keys", f"{dump_inbox.SANDBOX_DIR}/prod.keys", "--max-steps", "1234",
                                      # The emulator stops itself inside RuntimeMaxSec (min 60 s).
                                      "--max-seconds", "60"])

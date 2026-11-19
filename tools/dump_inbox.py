@@ -688,7 +688,9 @@ def sandbox_command(binary: Path, game: Path, prod_keys: Path, title_keys: Path 
     """
     owner = game.stat()
     binds = [(binary, "emulator-cli"), (game, "game" + game.suffix.lower()), (prod_keys, "prod.keys")]
-    inner = [f"{SANDBOX_DIR}/emulator-cli", "run-nsp", f"{SANDBOX_DIR}/game{game.suffix.lower()}",
+    # systemd-run resolves the executable on the host before the sandbox binds
+    # it, so start through env, which exists on both sides.
+    inner = ["/usr/bin/env", f"{SANDBOX_DIR}/emulator-cli", "run-nsp", f"{SANDBOX_DIR}/game{game.suffix.lower()}",
              "--keys", f"{SANDBOX_DIR}/prod.keys", "--max-steps", str(max_steps),
              # Stop inside the sandbox's wall-clock limit so the run report
              # (printed on exit) survives; loading and the report need slack.
