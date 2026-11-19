@@ -22,7 +22,11 @@ impl emulator_gpu::GraphicsBackend for ProgramGraphicsBackend {
             if let Some(callback) = *cb.borrow() {
                 let width = frame.background.width;
                 let height = frame.background.height;
-                let format = if frame.background.format == 0xcf { 1 } else { 0 };
+                let format = if frame.background.format == 0xcf {
+                    1
+                } else {
+                    0
+                };
                 let status = callback(
                     width,
                     height,
@@ -90,16 +94,7 @@ impl MmapFile {
         let map_failed = !0usize as *mut std::ffi::c_void;
 
         let fd = file.as_raw_fd();
-        let ptr = unsafe {
-            mmap(
-                std::ptr::null_mut(),
-                len,
-                PROT_READ,
-                MAP_PRIVATE,
-                fd,
-                0,
-            )
-        };
+        let ptr = unsafe { mmap(std::ptr::null_mut(), len, PROT_READ, MAP_PRIVATE, fd, 0) };
         if ptr == map_failed {
             return Err(std::io::Error::last_os_error());
         }
@@ -420,7 +415,8 @@ pub extern "C" fn emulator_program_inspect_v1() -> EngineReport {
             return Err("Incomplete or already-started program".into());
         }
         if p.bytes.starts_with(b"PFS0") || p.bytes.starts_with(b"HFS0") {
-            let _nsp = emulator_loader::nsp::NspArchive::parse(&p.bytes).map_err(|e| e.to_string())?;
+            let _nsp =
+                emulator_loader::nsp::NspArchive::parse(&p.bytes).map_err(|e| e.to_string())?;
             return Ok(format!(
                 "{{\"ok\":true,\"state\":\"ready\",\"format\":\"NSP\",\"fileBytes\":{},\"memoryBytes\":{},\"mode\":\"package\",\"error\":\"\"}}",
                 p.expected, p.expected
@@ -468,7 +464,9 @@ pub extern "C" fn emulator_program_start_v1() -> EngineReport {
             );
             p.is_package = true;
         } else {
-            p.session = Some(Session::from_nro_with_graphics(&p.bytes, graphics).map_err(|e| e.to_string())?);
+            p.session = Some(
+                Session::from_nro_with_graphics(&p.bytes, graphics).map_err(|e| e.to_string())?,
+            );
             p.is_package = false;
         }
         p.bytes = ProgramBacking::Heap(Vec::new());
@@ -501,7 +499,9 @@ pub extern "C" fn emulator_program_step_v1(budget: u32) -> EngineReport {
         let (state, message) = match outcome {
             Ok(RunOutcome::Exited) => ("exited", String::new()),
             Ok(RunOutcome::Blocked) => ("waiting", String::new()),
-            Ok(RunOutcome::BudgetExhausted) if !is_package && s.instructions() >= MAX_INSTRUCTIONS => {
+            Ok(RunOutcome::BudgetExhausted)
+                if !is_package && s.instructions() >= MAX_INSTRUCTIONS =>
+            {
                 ("limit", "Execution limit reached".into())
             }
             Ok(RunOutcome::BudgetExhausted) => ("running", String::new()),
@@ -744,7 +744,10 @@ mod tests {
             }
         }
         assert!(result.contains("\"state\":\"exited\""), "{result}");
-        assert!(result.contains("Hello from original Switch homebrew!"), "{result}");
+        assert!(
+            result.contains("Hello from original Switch homebrew!"),
+            "{result}"
+        );
         assert_eq!(emulator_program_close_v1(), 0);
     }
 }

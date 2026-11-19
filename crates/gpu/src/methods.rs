@@ -83,6 +83,8 @@ pub struct ExecutionStats {
     pub cleared_bytes: usize,
     pub draw_launches: usize,
     pub drawn_bytes: usize,
+    /// LOAD_CONSTANT_BUFFER bytes (also counted in copied_bytes).
+    pub constant_bytes: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionError {
@@ -91,7 +93,10 @@ pub enum ExecutionError {
     NotFront,
     UnboundSubchannel(u8),
     UnsupportedClass(u32),
-    UnsupportedMethod { subchannel: u8, offset: u32 },
+    UnsupportedMethod {
+        subchannel: u8,
+        offset: u32,
+    },
     InvalidAddressUpper(u32),
     UnsupportedLaunch(u32),
     UnsupportedColorState,
@@ -105,6 +110,10 @@ pub enum ExecutionError {
     OverlappingCopy,
     Memory(GpuMemoryError),
     Macro(crate::macros::MacroError),
+    /// A draw or clear after a 3D state write the model does not interpret
+    /// (first such byte offset); rendering it would silently ignore state.
+    UnmodelledState(u32),
+    ConstantBuffer(&'static str),
 }
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -121,6 +130,51 @@ struct DmaRegisters {
     target_lower: Option<u32>,
     length: Option<u32>,
 }
+/// 3D-only state outside the draw/clear models.
+#[derive(Clone, Debug, Default)]
+struct ThreedExtra {
+    threed: bool,
+    /// CB_SIZE, CB_ADDRESS_HIGH, CB_ADDRESS_LOW, CB_POS (0x2380..=0x238c).
+    constant: [Option<u32>; 4],
+    /// First recorded 3D state write that the draw/clear models ignore.
+    unmodelled: Option<u32>,
+}
+
+const CB_SIZE: u32 = 0x2380;
+const CB_POS: u32 = 0x238c;
+const CB_DATA_FIRST: u32 = 0x2390;
+const CB_DATA_LAST: u32 = 0x23cc;
+/// 3D methods with effects beyond register state that are not modelled:
+/// inline-to-memory LAUNCH_DMA / LOAD_INLINE_DATA and the report semaphore
+/// trigger (SET_REPORT_SEMAPHORE_D). They fail instead of being recorded.
+/// Draw begin/end (VERTEX_BEGIN/END_GL 0x1614/0x1618) and report-counter reset
+/// (0x1530) are included so a draw outside the modelled triggers cannot be
+/// recorded as plain state.
+const THREED_ACTIONS: [u32; 6] = [0x1b0, 0x1b4, 0x1b0c, 0x1530, 0x1614, 0x1618];
+/// Methods the draw model turns into draws.
+const DRAW_TRIGGERS: [u32; 4] = [0x1214, 0x17e4, 0x17e8, 0x17ec];
+/// Bytes one constant-buffer upload run may hold (CB_SIZE is at most 64 KiB).
+const CB_MAX: u32 = 0x1_0000;
+
+/// Next LOAD_CONSTANT_BUFFER word address; advances CB_POS by 4.
+fn constant_upload(regs: &mut [Option<u32>; 4]) -> Result<u64, ExecutionError> {
+    let [Some(size), Some(high), Some(low), Some(pos)] = *regs else {
+        return Err(ExecutionError::ConstantBuffer(
+            "upload before CB_SIZE/ADDRESS/POS",
+        ));
+    };
+    if size > CB_MAX || pos % 4 != 0 || pos.checked_add(4).is_none_or(|end| end > size) {
+        return Err(ExecutionError::ConstantBuffer(
+            "upload outside the constant buffer",
+        ));
+    }
+    if high > 0xff || low % 4 != 0 {
+        return Err(ExecutionError::InvalidAddressUpper(high));
+    }
+    regs[3] = Some(pos + 4);
+    Ok((u64::from(high) << 32 | u64::from(low)) + u64::from(pos))
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MethodState {
     channels: [Option<EngineState>; 8],
@@ -129,7 +183,11 @@ pub(crate) struct MethodState {
 #[derive(Clone, Debug)]
 enum EngineState {
     Dma(DmaRegisters),
-    Color(crate::clear::ColorRegisters, Box<crate::draw::Registers>),
+    Color(
+        crate::clear::ColorRegisters,
+        Box<crate::draw::Registers>,
+        Box<ThreedExtra>,
+    ),
     Unimplemented,
 }
 #[derive(Debug)]
@@ -317,15 +375,28 @@ impl MethodState {
         let expanded = batch.state.macros.expand(writes)?;
         let writes = &expanded[..];
         let mut spans = 0;
+        // Contiguous LOAD_CONSTANT_BUFFER words not yet turned into a write.
+        let mut cb_run: Option<(u64, Vec<u8>)> = None;
         for write in writes {
+            let cb_data = (CB_DATA_FIRST..=CB_DATA_LAST).contains(&write.method_byte_offset());
+            if !cb_data {
+                if let Some(run) = cb_run.take() {
+                    batch.flush_constant(space, run, &mut spans)?;
+                }
+            }
             let channel = &mut batch.state.channels[usize::from(write.subchannel)];
             let offset = write.method_byte_offset();
             if offset == 0 {
                 let engine = match write.data {
                     MAXWELL_DMA_COPY_A => EngineState::Dma(DmaRegisters::default()),
-                    crate::MAXWELL_B | MAXWELL_COMPUTE_B => {
-                        EngineState::Color(crate::clear::ColorRegisters::default(), Box::default())
-                    }
+                    crate::MAXWELL_B | MAXWELL_COMPUTE_B => EngineState::Color(
+                        crate::clear::ColorRegisters::default(),
+                        Box::default(),
+                        Box::new(ThreedExtra {
+                            threed: write.data == crate::MAXWELL_B,
+                            ..ThreedExtra::default()
+                        }),
+                    ),
                     KEPLER_INLINE_TO_MEMORY_B | FERMI_TWOD_A => EngineState::Unimplemented,
                     _ => return Err(ExecutionError::UnsupportedClass(write.data)),
                 };
@@ -347,7 +418,28 @@ impl MethodState {
                     offset,
                 });
             }
-            if let EngineState::Color(registers, draw_registers) = engine {
+            if let EngineState::Color(registers, draw_registers, extra) = engine {
+                if extra.threed && (CB_SIZE..=CB_DATA_LAST).contains(&offset) {
+                    if offset <= CB_POS {
+                        extra.constant[((offset - CB_SIZE) / 4) as usize] = Some(write.data);
+                    } else {
+                        let address = constant_upload(&mut extra.constant)?;
+                        cb_run = batch.append_constant(
+                            space,
+                            cb_run.take(),
+                            address,
+                            write.data,
+                            &mut spans,
+                        )?;
+                    }
+                    continue;
+                }
+                if let Some(first) = extra.unmodelled {
+                    let launches = offset == 0x19d0 || DRAW_TRIGGERS.contains(&offset);
+                    if launches {
+                        return Err(ExecutionError::UnmodelledState(first));
+                    }
+                }
                 if offset == 0x19d0 && write.data == 1 {
                     let clear = draw_registers.depth_clear(registers)?;
                     batch.add_depth_clear(space, clear, limits, &mut spans)?;
@@ -360,17 +452,25 @@ impl MethodState {
                     }
                     continue;
                 }
-                let clear = registers
-                    .write(offset, write.data)
-                    .map_err(|error| match error {
-                        ExecutionError::UnsupportedMethod { offset, .. } => {
-                            ExecutionError::UnsupportedMethod {
-                                subchannel: write.subchannel,
-                                offset,
-                            }
-                        }
-                        error => error,
-                    })?;
+                let clear = match registers.write(offset, write.data) {
+                    Ok(clear) => clear,
+                    // Plain 3D state the models do not interpret is recorded
+                    // (the macro register file keeps its value); later draws
+                    // and clears then fail with UnmodelledState.
+                    Err(ExecutionError::UnsupportedMethod { offset, .. })
+                        if extra.threed && !THREED_ACTIONS.contains(&offset) =>
+                    {
+                        extra.unmodelled.get_or_insert(offset);
+                        None
+                    }
+                    Err(ExecutionError::UnsupportedMethod { offset, .. }) => {
+                        return Err(ExecutionError::UnsupportedMethod {
+                            subchannel: write.subchannel,
+                            offset,
+                        })
+                    }
+                    Err(error) => return Err(error),
+                };
                 if let Some(clear) = clear {
                     batch.add_clear(space, clear, limits, &mut spans)?;
                 }
@@ -506,11 +606,79 @@ impl MethodState {
         {
             return Err(ExecutionError::DrawInputFeedback);
         }
+        if let Some(run) = cb_run.take() {
+            batch.flush_constant(space, run, &mut spans)?;
+        }
+        // A draw or clear anywhere in a batch whose 3D state includes ignored
+        // writes (earlier or later in the batch) is rejected as a whole.
+        if !(batch.draws.is_empty() && batch.clears.is_empty() && batch.depth_clears.is_empty()) {
+            if let Some(first) = batch.state.channels.iter().flatten().find_map(|e| match e {
+                EngineState::Color(_, _, extra) => extra.unmodelled,
+                _ => None,
+            }) {
+                return Err(ExecutionError::UnmodelledState(first));
+            }
+        }
         Ok(batch)
     }
 }
 
 impl PreparedBatch {
+    /// Extend the pending constant-buffer run with one word, or flush it and
+    /// start a new run when `address` is not contiguous.
+    fn append_constant(
+        &mut self,
+        space: &GpuAddressSpace,
+        run: Option<(u64, Vec<u8>)>,
+        address: u64,
+        data: u32,
+        spans: &mut usize,
+    ) -> Result<Option<(u64, Vec<u8>)>, ExecutionError> {
+        let mut run = match run {
+            Some((start, bytes)) if start + bytes.len() as u64 == address => (start, bytes),
+            Some(other) => {
+                self.flush_constant(space, other, spans)?;
+                (address, Vec::new())
+            }
+            None => (address, Vec::new()),
+        };
+        run.1.extend_from_slice(&data.to_le_bytes());
+        Ok(Some(run))
+    }
+    /// Turn a constant-buffer run into an ordered prepared write.
+    fn flush_constant(
+        &mut self,
+        space: &GpuAddressSpace,
+        (start, bytes): (u64, Vec<u8>),
+        spans: &mut usize,
+    ) -> Result<(), ExecutionError> {
+        let total = self.stats.copied_bytes
+            + self.stats.cleared_bytes
+            + self.stats.drawn_bytes
+            + self.snapshot_bytes;
+        if bytes.len() > MAX_BYTES.saturating_sub(total) {
+            return Err(ExecutionError::Capacity);
+        }
+        let target = space
+            .pin(GpuVa(start), bytes.len(), Access::Write)
+            .map_err(ExecutionError::Memory)?;
+        *spans += target.backing_ranges().count();
+        if *spans > crate::address_space::MAX_BACKING_SPANS {
+            return Err(ExecutionError::Capacity);
+        }
+        self.copies
+            .try_reserve(1)
+            .map_err(|_| ExecutionError::Capacity)?;
+        self.stats.copied_bytes += bytes.len();
+        self.stats.constant_bytes += bytes.len();
+        self.copies.push(Copy {
+            depth: false,
+            source: CopyInput::Prepared,
+            target,
+            buffer: bytes,
+        });
+        Ok(())
+    }
     fn add_depth_clear(
         &mut self,
         space: &GpuAddressSpace,

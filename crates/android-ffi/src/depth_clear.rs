@@ -590,7 +590,7 @@ fn core(i: usize) -> Result<usize, String> {
         14 => {
             let mut p = PAGES[6].to_vec();
             let at = WORDS[6] as usize * 4;
-            p[at..at + 8].copy_from_slice(&[0x40, 2, 1, 0x20, 0, 0, 0, 0]);
+            p[at..at + 8].copy_from_slice(&[0xc3, 6, 1, 0x20, 0, 0, 0, 0]);
             rejected(p, WORDS[6] + 2)?;
             let mut m = only(0, [0, 0, 16, 8], 0);
             m.extend([(0xfe4, 0x3e00), (0x19d0, 1)]);

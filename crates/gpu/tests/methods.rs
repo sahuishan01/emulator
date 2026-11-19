@@ -406,3 +406,89 @@ fn graphics_context_binds_graphics_and_copy_classes() {
     assert!(!class_allowed(MAXWELL_DMA_COPY_A, MAXWELL_B));
     assert!(class_allowed(MAXWELL_DMA_COPY_A, MAXWELL_DMA_COPY_A));
 }
+fn cb_setup(size: u32, pos: u32) -> Vec<(u8, u32, u32)> {
+    vec![
+        (0, 0, MAXWELL_B),
+        (0, 0x2380, size),
+        (0, 0x2384, (DATA >> 32) as u32),
+        (0, 0x2388, DATA as u32),
+        (0, 0x238c, pos),
+    ]
+}
+#[test]
+fn constant_buffer_uploads_write_memory_in_order() {
+    let mut rig = Rig::new();
+    let mut methods = cb_setup(64, 8);
+    methods.extend([
+        (0, 0x2390, 0x0403_0201),
+        (0, 0x2394, 0x0807_0605),
+        (0, 0x238c, 32), // non-contiguous: new run
+        (0, 0x2390, 0xdead_beef),
+    ]);
+    let id = rig.submit(&methods);
+    let stats = rig.execute(id).unwrap();
+    assert_eq!(stats.constant_bytes, 12);
+    let bytes = rig.bytes();
+    assert_eq!(&bytes[8..16], &[1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(&bytes[32..36], &0xdead_beef_u32.to_le_bytes());
+    assert_eq!(bytes[16], 16, "untouched bytes keep their value");
+}
+#[test]
+fn constant_buffer_upload_errors_roll_back() {
+    for (methods, expected) in [
+        (
+            {
+                let mut m = cb_setup(8, 4);
+                m.extend([(0, 0x2390, 1), (0, 0x2390, 2)]); // second word past size
+                m
+            },
+            ExecutionError::ConstantBuffer("upload outside the constant buffer"),
+        ),
+        (
+            vec![(0, 0, MAXWELL_B), (0, 0x2390, 1)],
+            ExecutionError::ConstantBuffer("upload before CB_SIZE/ADDRESS/POS"),
+        ),
+    ] {
+        let mut rig = Rig::new();
+        let id = rig.submit(&methods);
+        let before = rig.bytes();
+        assert_eq!(rig.execute(id), Err(expected));
+        assert_eq!(rig.bytes(), before);
+    }
+}
+#[test]
+fn unmodelled_threed_state_is_recorded_but_blocks_draws_and_clears() {
+    let mut rig = Rig::new();
+    let id = rig.submit(&[(0, 0, MAXWELL_B), (0, 0x3468, 7), (0, 0x0e04, 1)]);
+    rig.execute(id).unwrap();
+    // The state persists: a later clear trigger in another submit is refused.
+    let id = rig.submit(&[(0, 0x19d0, 0x3c)]);
+    assert_eq!(
+        rig.execute(id),
+        Err(ExecutionError::UnmodelledState(0x3468))
+    );
+}
+#[test]
+fn threed_action_methods_fail_explicitly() {
+    for offset in [0x1b0, 0x1b4, 0x1b0c, 0x1530, 0x1614, 0x1618] {
+        let mut rig = Rig::new();
+        let id = rig.submit(&[(0, 0, MAXWELL_B), (0, offset, 0)]);
+        assert_eq!(
+            rig.execute(id),
+            Err(ExecutionError::UnsupportedMethod {
+                subchannel: 0,
+                offset
+            })
+        );
+    }
+    // Compute keeps strict method handling.
+    let mut rig = Rig::new();
+    let id = rig.submit(&[(1, 0, MAXWELL_COMPUTE_B), (1, 0x3468, 0)]);
+    assert_eq!(
+        rig.execute(id),
+        Err(ExecutionError::UnsupportedMethod {
+            subchannel: 1,
+            offset: 0x3468
+        })
+    );
+}
