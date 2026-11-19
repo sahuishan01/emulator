@@ -137,7 +137,7 @@ impl NvMap {
                 }
                 let address =
                     u64::from_le_bytes(input[24..32].try_into().expect("validated address"));
-                if word(4) != 0 || word(8) > 1 || input[16] != 0 || address == 0 {
+                if word(4) != 0 || word(8) > 3 || input[16] != 0 || address == 0 {
                     return Err(NOT_SUPPORTED);
                 }
                 let requested = word(12);
@@ -153,12 +153,19 @@ impl NvMap {
                 if object.size as usize > budget.bytes {
                     return Err(NO_MEMORY);
                 }
-                let permissions = if word(8) == 0 {
-                    Permissions::READ
-                } else {
-                    Permissions::READ_WRITE
+                // Flags 0-3 are cache attributes (uncached, write-combine,
+                // inner cacheable, cacheable); memory is coherent here, so
+                // they change nothing. GPU access follows the guest pages:
+                // writable pages give a writable object, read-only pages a
+                // read-only one (it can never gain write rights).
+                let size = object.size as usize;
+                let (view, permissions) = match pin(address, size, Permissions::READ_WRITE) {
+                    Some(view) => (view, Permissions::READ_WRITE),
+                    None => (
+                        pin(address, size, Permissions::READ).ok_or(BAD_PARAMETER)?,
+                        Permissions::READ,
+                    ),
                 };
-                let view = pin(address, object.size as usize, permissions).ok_or(BAD_PARAMETER)?;
                 // Validate supplied capabilities as well as caller arguments.
                 if view.len() != object.size as usize || view.permissions() != permissions {
                     return Err(BAD_PARAMETER);
@@ -285,17 +292,13 @@ mod tests {
         assert_eq!(m.resident_bytes(), 0);
     }
     #[test]
-    fn readonly_import_cannot_gain_write_rights_and_failed_import_leaves_object_unallocated() {
+    fn readonly_pages_import_read_only_objects_that_cannot_gain_write_rights() {
         let mut m = AddressSpace::default();
         m.map(0x8000, vec![42; 4096], Permissions::READ).unwrap();
         let mut n = object();
         assert_eq!(call(&mut n, &m, 0xc00c0109, &[1, 2, 0]), Err(INVALID_STATE));
-        assert_eq!(
-            call(&mut n, &m, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x8000, 0]),
-            Err(BAD_PARAMETER)
-        );
-        assert_eq!(n.imported_usage(), (0, 0));
-        call(&mut n, &m, 0xc0200104, &[1, 0, 0, 4096, 0, 0, 0x8000, 0]).unwrap();
+        // Write-combine on read-only pages imports a read-only object.
+        call(&mut n, &m, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x8000, 0]).unwrap();
         let kind = call(&mut n, &m, 0xc00c0109, &[1, 5, 99]).unwrap();
         assert_eq!(&kind[8..12], &[0; 4]);
         assert!(n.objects[&1]
@@ -318,7 +321,7 @@ mod tests {
         let mut n = object();
         for (args, error) in [
             ([1, 1, 1, 4096, 0, 0, 0x8000, 0], NOT_SUPPORTED),
-            ([1, 0, 2, 4096, 0, 0, 0x8000, 0], NOT_SUPPORTED),
+            ([1, 0, 4, 4096, 0, 0, 0x8000, 0], NOT_SUPPORTED),
             ([1, 0, 1, 4096, 1, 0, 0x8000, 0], NOT_SUPPORTED),
             ([1, 0, 1, 3, 0, 0, 0x8000, 0], BAD_PARAMETER),
             ([1, 0, 1, 4096, 0x100, 0, 0x8000, 0], BAD_PARAMETER),
@@ -378,5 +381,16 @@ mod tests {
         let lease = m.lend(0x8000, 4096, Permissions::NONE).unwrap();
         drop(lease);
         call(&mut n, &m, 0xc0200104, &[1, 0, 1, 4096, 0, 0, 0x8000, 0]).unwrap();
+    }
+    #[test]
+    fn uncached_import_of_writable_pages_is_gpu_writable() {
+        let mut m = AddressSpace::default();
+        m.map(0x8000, vec![0; 4096], Permissions::READ_WRITE)
+            .unwrap();
+        let mut n = object();
+        // Flags 0 (uncached) used to mean read-only; it is a cache attribute.
+        call(&mut n, &m, 0xc0200104, &[1, 0, 0, 4096, 0, 0, 0x8000, 0]).unwrap();
+        let view = &n.objects[&1].allocation.as_ref().unwrap().view;
+        view.write(0, &[7]).unwrap();
     }
 }
