@@ -76,6 +76,42 @@ impl Submission {
         self.sources.iter().flat_map(|s| s.backing_ranges())
     }
 }
+/// Separates a ChannelProcessor error from its method census (diagnostics).
+pub const CENSUS_SEPARATOR: &str = "\n    methods: ";
+
+/// Diagnostic summary of a batch's writes: SET_OBJECT classes per subchannel,
+/// then the most frequent (subchannel, byte offset) pairs.
+fn method_census(writes: &[MethodWrite]) -> String {
+    let mut binds = Vec::new();
+    let mut counts = std::collections::BTreeMap::<(u8, u32), usize>::new();
+    for w in writes {
+        if w.method_word == 0 {
+            binds.push(format!("s{}={:#x}", w.subchannel, w.data));
+        }
+        *counts.entry((w.subchannel, w.method_byte_offset())).or_default() += 1;
+    }
+    binds.dedup();
+    let first: Vec<String> = writes
+        .iter()
+        .take(12)
+        .map(|w| format!("s{}:{:#x}={:#x}", w.subchannel, w.method_byte_offset(), w.data))
+        .collect();
+    let mut top: Vec<_> = counts.into_iter().collect();
+    top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let top: Vec<String> = top
+        .iter()
+        .take(48)
+        .map(|((sub, off), n)| format!("s{sub}:{off:#x}x{n}"))
+        .collect();
+    format!(
+        "writes={} binds=[{}] first=[{}] top=[{}]",
+        writes.len(),
+        binds.join(" "),
+        first.join(" "),
+        top.join(" ")
+    )
+}
+
 /// Persistent method state for one synchronous guest channel. Preparation returns
 /// an isolated successor and a cancelable effect; neither writes memory.
 #[derive(Clone, Debug, Default)]
@@ -112,9 +148,10 @@ impl ChannelProcessor {
                 return Err("method class does not match allocated context".into());
             }
         }
+        let census = method_census(queue.front().expect("submitted batch").writes());
         let work = queue
             .prepare_front(space, id, crate::ExecutionLimits::default())
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e}{CENSUS_SEPARATOR}{census}"))?;
         let next = Self {
             methods: work.batch.next_state(),
         };

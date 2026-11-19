@@ -24,7 +24,7 @@ pub use methods::{
     MAXWELL_DMA_COPY_A,
 };
 pub use submission::{
-    ChannelProcessor, PreparedSubmission, QueueError, QueueLimits, QueueStats, Submission,
+    CENSUS_SEPARATOR, ChannelProcessor, PreparedSubmission, QueueError, QueueLimits, QueueStats, Submission,
     SubmissionId, SubmissionQueue,
 };
 

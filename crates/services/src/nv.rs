@@ -82,10 +82,21 @@ thread_local! {
 /// count, a census of GP entry control bits and the first entries of its
 /// first occurrence (diagnostics).
 pub(crate) fn record_submit_error(error: String, entries: &[u8]) {
+    let (key, census) = match error.split_once(emulator_gpu::CENSUS_SEPARATOR) {
+        Some((key, census)) => (key.to_owned(), Some(census.to_owned())),
+        None => (error, None),
+    };
     SUBMIT_ERRORS.with(|errors| {
         let mut errors = errors.borrow_mut();
-        if errors.len() < FAILURE_KINDS || errors.contains_key(&error) {
-            let entry = errors.entry(error).or_insert_with(|| (0, describe_entries(entries)));
+        if errors.len() < FAILURE_KINDS || errors.contains_key(&key) {
+            let entry = errors.entry(key).or_insert_with(|| {
+                let mut text = describe_entries(entries);
+                if let Some(census) = census {
+                    text.push_str(emulator_gpu::CENSUS_SEPARATOR);
+                    text.push_str(&census);
+                }
+                (0, text)
+            });
             entry.0 += 1;
         }
     });
