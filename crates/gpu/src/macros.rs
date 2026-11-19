@@ -20,6 +20,7 @@ const LOAD_START_POINTER: u32 = 0x11c;
 const LOAD_START: u32 = 0x120;
 const SHADOW_RAM_CONTROL: u32 = 0x124;
 const SHADOW_TRACK: u32 = 0;
+const SHADOW_TRACK_WITH_FILTER: u32 = 1;
 const SHADOW_PASSTHROUGH: u32 = 2;
 const SHADOW_REPLAY: u32 = 3;
 /// First macro call method (byte offset); 128 macros, two methods each.
@@ -177,14 +178,14 @@ impl MacroState {
             SHADOW_RAM_CONTROL => {
                 // 0 track: writes update the shadow; 2 passthrough: writes
                 // bypass it; 3 replay: writes send the shadowed value instead
-                // of their data. 1 (track with filter) has an unknown filter.
-                if !matches!(
-                    write.data,
-                    SHADOW_TRACK | SHADOW_PASSTHROUGH | SHADOW_REPLAY
-                ) {
-                    return Err(macro_error(MacroError::ShadowMode(write.data)));
-                }
-                self.shadow_mode = write.data;
+                // of their data. 1 track-with-filter is modelled as track:
+                // its filter (which methods skip the shadow) is not known,
+                // so a later READ of a filtered method could differ.
+                self.shadow_mode = match write.data {
+                    SHADOW_TRACK | SHADOW_TRACK_WITH_FILTER => SHADOW_TRACK,
+                    SHADOW_PASSTHROUGH | SHADOW_REPLAY => write.data,
+                    _ => return Err(macro_error(MacroError::ShadowMode(write.data))),
+                };
             }
             _ => {
                 let mut write = write;
@@ -598,8 +599,8 @@ mod tests {
             ExecutionError::Macro(MacroError::ParameterWithoutCall(0x3804))
         );
         assert_eq!(
-            run(&exit, &[w(0x124, 1)]),
-            ExecutionError::Macro(MacroError::ShadowMode(1))
+            run(&exit, &[w(0x124, 4)]),
+            ExecutionError::Macro(MacroError::ShadowMode(4))
         );
         assert_eq!(
             run(&[imm(MOVE, 0, 0, 0xe00) | 5 | EXIT, NOP], &[w(0x3800, 1)]),
