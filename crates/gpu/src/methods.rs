@@ -195,6 +195,9 @@ const CB_DATA_LAST: u32 = 0x23cc;
 /// (0x1530) are included so a draw outside the modelled triggers cannot be
 /// recorded as plain state.
 const THREED_ACTIONS: [u32; 4] = [0x1b0c, 0x1530, 0x1614, 0x1618];
+/// Compute methods with effects: LAUNCH (0x2bc) and the report semaphore
+/// trigger (0x1b0c).
+const COMPUTE_ACTIONS: [u32; 2] = [0x2bc, 0x1b0c];
 /// Methods the draw model turns into draws.
 const DRAW_TRIGGERS: [u32; 4] = [0x1214, 0x17e4, 0x17e8, 0x17ec];
 /// Bytes one constant-buffer upload run may hold (CB_SIZE is at most 64 KiB).
@@ -492,13 +495,24 @@ impl MethodState {
                 });
             }
             if let EngineState::Color(registers, draw_registers, extra) = engine {
-                if extra.threed && crate::i2m::I2m::handles(offset) {
+                if crate::i2m::I2m::handles(offset) {
                     for (address, bytes) in extra.i2m.write(offset, write.data)? {
                         batch.push_prepared(space, address, bytes, &mut spans, false)?;
                     }
                     continue;
                 }
                 extra.i2m.require_idle()?;
+                if !extra.threed {
+                    // Compute: state only matters at LAUNCH, which is not
+                    // modelled; the launch and report trigger fail explicitly.
+                    if COMPUTE_ACTIONS.contains(&offset) {
+                        return Err(ExecutionError::UnsupportedMethod {
+                            subchannel: write.subchannel,
+                            offset,
+                        });
+                    }
+                    continue;
+                }
                 if extra.threed && (CB_SIZE..=CB_DATA_LAST).contains(&offset) {
                     if offset <= CB_POS {
                         extra.constant[((offset - CB_SIZE) / 4) as usize] = Some(write.data);

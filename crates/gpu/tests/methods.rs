@@ -488,14 +488,18 @@ fn threed_action_methods_fail_explicitly() {
             })
         );
     }
-    // Compute keeps strict method handling.
+    // Compute records setup state (it never feeds 3D draws) and refuses LAUNCH.
     let mut rig = Rig::new();
-    let id = rig.submit(&[(1, 0, MAXWELL_COMPUTE_B), (1, 0x3468, 0)]);
+    let id = rig.submit(&[(1, 0, MAXWELL_COMPUTE_B), (1, 0x1528, 5), (1, 0x1214, 3)]);
+    rig.execute(id).unwrap();
+    let id = rig.submit(&[(0, 0, MAXWELL_B), (0, 0x0e04, 1)]);
+    rig.execute(id).unwrap();
+    let id = rig.submit(&[(1, 0x2bc, 0)]);
     assert_eq!(
         rig.execute(id),
         Err(ExecutionError::UnsupportedMethod {
             subchannel: 1,
-            offset: 0x3468
+            offset: 0x2bc
         })
     );
 }
