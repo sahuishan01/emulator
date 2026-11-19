@@ -8,6 +8,7 @@ pub mod exec;
 mod header;
 pub mod maxwell;
 pub mod reference;
+pub mod sph;
 mod spirv;
 pub use header::{decode_program, HEADER_BYTES};
 pub use spirv::{emit, emit_normalized_position};

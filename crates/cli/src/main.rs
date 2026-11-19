@@ -1028,6 +1028,37 @@ fn print_run_report(
                 Ok(blocks) => println!("    cfg: {blocks} reachable blocks"),
                 Err(e) => println!("    cfg: {e:?}"),
             }
+            if let Some(h) = &record.sph {
+                let outputs = h.fragment_outputs().map(|o| {
+                    let c: Vec<String> = o
+                        .colors
+                        .iter()
+                        .map(|c| {
+                            format!(
+                                "rt{}.{}=R{}",
+                                c.target, b"xyzw"[c.component as usize] as char, c.register
+                            )
+                        })
+                        .collect();
+                    format!(
+                        " outputs[{}] mask={:?} depth={:?}",
+                        c.join(" "),
+                        o.sample_mask,
+                        o.depth
+                    )
+                });
+                println!(
+                    "    sph: {:?} v{} sass{} mrt={} kills={} omap={:#x} w19={:#x}{}",
+                    h.kind(),
+                    h.version(),
+                    h.sass_version(),
+                    h.mrt_enable(),
+                    h.kills_pixels(),
+                    h.words[18],
+                    h.words[19],
+                    outputs.unwrap_or_default()
+                );
+            }
             match &record.exec {
                 Some(Ok(())) => println!("    exec (zero inputs): exits"),
                 Some(Err(e)) => println!("    exec (zero inputs): {e:?}"),

@@ -36,6 +36,8 @@ pub struct ShaderRecord {
     /// Reference executor with every constant and attribute reading zero:
     /// steps-free outcome, or the first explicit failure.
     pub exec: Option<Result<(), emulator_shader::exec::ExecError>>,
+    /// Full 80-byte header when readable.
+    pub sph: Option<emulator_shader::sph::Header>,
 }
 
 const MAX_FORMS: usize = 48;
@@ -109,6 +111,11 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                 .read(GpuVa(base), &mut header)
                 .ok()
                 .map(|_| u32::from_le_bytes(header));
+            let mut sph = [0u8; emulator_shader::sph::BYTES];
+            let sph = space
+                .read(GpuVa(base), &mut sph)
+                .ok()
+                .and_then(|_| emulator_shader::sph::Header::parse(&sph));
             let mut code = Vec::new();
             let mut bundle = [0u8; 32];
             while code.len() < MAX_CODE
@@ -151,6 +158,7 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                     cfg: graph.map(|g| g.blocks.len()),
                     forms: forms(&listing),
                     exec,
+                    sph,
                     undecoded_examples: listing.undecoded_examples,
                 },
             );
