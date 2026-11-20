@@ -27,6 +27,18 @@ pub trait Environment {
     ) -> Option<[f32; 4]> {
         None
     }
+    /// RGBA sample with implicit level of detail plus `bias` (TEX.LB).
+    /// One invocation has no derivatives, so environments define the level.
+    fn texture_2d_bias(
+        &self,
+        _handle: u16,
+        _x: f32,
+        _y: f32,
+        _bias: f32,
+        _offset: [i32; 2],
+    ) -> Option<[f32; 4]> {
+        None
+    }
 }
 
 /// TEXS component selection from memory of the public encoding (unverified):
@@ -560,6 +572,144 @@ fn step(at: usize, instr: Instr, env: &dyn Environment, s: &mut State) -> Result
                     target = target.saturating_add(1);
                 }
             }
+        }
+        // 2D with LOD bias (implicit level); bias in b, then AOFFI.
+        Instr::Tex {
+            d,
+            a,
+            b,
+            handle,
+            tex_type: 2,
+            mask,
+            dc: false,
+            aoffi,
+            blod: 2,
+            ndv: false,
+            ..
+        } if d != RZ && a != RZ && b != RZ => {
+            let bias = f(s.reg(b));
+            let offset = if aoffi {
+                let packed = s.reg(b.saturating_add(1));
+                let nibble = |v: u32| ((v & 0xf) as i32) << 28 >> 28;
+                [nibble(packed), nibble(packed >> 4)]
+            } else {
+                [0, 0]
+            };
+            let texel = env
+                .texture_2d_bias(
+                    handle,
+                    f(s.reg(a)),
+                    f(s.reg(a.saturating_add(1))),
+                    bias,
+                    offset,
+                )
+                .ok_or(ExecError::Texture { at, handle })?;
+            let mut target = d;
+            for (c, value) in texel.iter().enumerate() {
+                if mask & (1 << c) != 0 {
+                    s.set(target, value.to_bits());
+                    target = target.saturating_add(1);
+                }
+            }
+        }
+        Instr::I2f {
+            d,
+            b,
+            signed,
+            neg,
+            abs,
+        } => {
+            let mut v = operand(s, b, false)?;
+            if abs && signed {
+                v = (v as i32).unsigned_abs();
+            }
+            if neg {
+                v = v.wrapping_neg();
+            }
+            let x = if signed { v as i32 as f32 } else { v as f32 };
+            s.set(d, x.to_bits())
+        }
+        Instr::F2i {
+            d,
+            b,
+            signed,
+            round,
+            neg,
+            abs,
+        } => {
+            let x = modify(f(operand(s, b, true)?), abs, neg);
+            let r = match round {
+                0 => x.round_ties_even(),
+                1 => x.floor(),
+                2 => x.ceil(),
+                _ => x.trunc(),
+            };
+            // Saturating, NaN -> 0 (Rust `as` semantics).
+            let v = if signed { r as i32 as u32 } else { r as u32 };
+            s.set(d, v)
+        }
+        Instr::Iadd32i { d, a, imm } => s.set(d, s.reg(a).wrapping_add(imm)),
+        Instr::Fadd32i {
+            d,
+            a,
+            imm,
+            neg_a,
+            abs_a,
+            neg_b,
+            abs_b,
+        } => {
+            let x = modify(f(s.reg(a)), abs_a, neg_a);
+            let y = modify(f(imm), abs_b, neg_b);
+            s.set(d, (x + y).to_bits())
+        }
+        Instr::Shift {
+            d,
+            a,
+            b,
+            left,
+            signed,
+            wrap,
+        } => {
+            let x = s.reg(a);
+            let n = operand(s, b, false)?;
+            let n = if wrap { n & 31 } else { n };
+            let v = match (left, signed, n >= 32) {
+                (true, _, false) => x << n,
+                (true, _, true) => 0,
+                (false, false, false) => x >> n,
+                (false, false, true) => 0,
+                (false, true, false) => ((x as i32) >> n) as u32,
+                (false, true, true) => ((x as i32) >> 31) as u32,
+            };
+            s.set(d, v)
+        }
+        Instr::Lop32i {
+            d,
+            a,
+            imm,
+            op,
+            inv_a,
+        } => {
+            let x = if inv_a { !s.reg(a) } else { s.reg(a) };
+            let v = match op {
+                0 => x & imm,
+                1 => x | imm,
+                2 => x ^ imm,
+                _ => imm,
+            };
+            s.set(d, v)
+        }
+        Instr::Sel { d, a, b, pred } => {
+            let v = if s.pred(pred) {
+                s.reg(a)
+            } else {
+                operand(s, b, false)?
+            };
+            s.set(d, v)
+        }
+        Instr::Rro { d, b, neg, abs } => {
+            let x = modify(f(operand(s, b, true)?), abs, neg);
+            s.set(d, x.to_bits())
         }
         _ => return Err(ExecError::Unsupported { at, instr }),
     }

@@ -996,7 +996,23 @@ fn print_run_report(
             .map(|(t, (c, p))| format!("{t:04x}={c}/{p}"))
             .collect();
         println!("  unknown top16 (top 64): {}", line.join(" "));
-        for (address, record) in shaders.iter().take(24) {
+        let mut stages: std::collections::BTreeMap<&str, (usize, usize, usize)> =
+            Default::default();
+        for (_, record) in &shaders {
+            let e = stages.entry(record.stage).or_default();
+            e.0 += 1;
+            e.1 += usize::from(matches!(record.exec, Some(Ok(()))));
+            e.2 += usize::from(matches!(record.spirv, Some(Ok(_))));
+        }
+        let line: Vec<String> = stages
+            .iter()
+            .map(|(s, (n, e, v))| format!("{s}={n} (exec ok {e}, spirv {v})"))
+            .collect();
+        println!("  stages: {}", line.join(" "));
+        // Vertex-like stages first so they are never cut by the cap.
+        let mut ordered: Vec<_> = shaders.iter().collect();
+        ordered.sort_by_key(|(_, r)| r.stage == "Fragment");
+        for (address, record) in ordered.into_iter().take(32) {
             println!(
                 "  {address:#012x} {} draws={} sph0={} bytes={} words={} unknown={}",
                 record.stage,

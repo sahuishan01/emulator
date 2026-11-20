@@ -102,7 +102,16 @@ const OP_DECORATE: u32 = 71;
 const OP_MEMBER_DECORATE: u32 = 72;
 const OP_COMPOSITE_CONSTRUCT: u32 = 80;
 const OP_COMPOSITE_EXTRACT: u32 = 81;
+const OP_IMAGE_SAMPLE_IMPLICIT_LOD: u32 = 87;
 const OP_IMAGE_SAMPLE_EXPLICIT_LOD: u32 = 88;
+const OP_CONVERT_F_TO_U: u32 = 109;
+const OP_CONVERT_F_TO_S: u32 = 110;
+const OP_CONVERT_U_TO_F: u32 = 112;
+const OP_IS_NAN: u32 = 156;
+const OP_SHIFT_RIGHT_ARITHMETIC: u32 = 195;
+const OP_BITWISE_XOR: u32 = 198;
+const OP_NOT: u32 = 200;
+const OP_U_GREATER_THAN_EQUAL: u32 = 174;
 const OP_IMAGE: u32 = 100;
 const OP_IMAGE_QUERY_SIZE_LOD: u32 = 103;
 const OP_CONVERT_S_TO_F: u32 = 111;
@@ -137,7 +146,12 @@ const OP_RETURN: u32 = 253;
 const OP_UNREACHABLE: u32 = 255;
 
 // GLSL.std.450.
+const GLSL_ROUND_EVEN: u32 = 2;
+const GLSL_TRUNC: u32 = 3;
 const GLSL_FABS: u32 = 4;
+const GLSL_SABS: u32 = 5;
+const GLSL_FLOOR: u32 = 8;
+const GLSL_CEIL: u32 = 9;
 const GLSL_SIN: u32 = 13;
 const GLSL_COS: u32 = 14;
 const GLSL_EXP2: u32 = 29;
@@ -642,6 +656,17 @@ impl Module {
     /// RGBA sample at level 0; a dynamic texel offset is applied to the
     /// coordinates (Vulkan forbids a non-constant Offset outside gathers).
     fn sample_lz(&mut self, handle: u16, x: u32, y: u32, offset: Option<u32>) -> u32 {
+        self.sample(handle, x, y, offset, None)
+    }
+    /// `bias` Some: implicit level of detail plus bias; None: level 0.
+    fn sample(
+        &mut self,
+        handle: u16,
+        x: u32,
+        y: u32,
+        offset: Option<u32>,
+        bias: Option<u32>,
+    ) -> u32 {
         let image = self.texture(handle);
         let v2f = self.t.v2f;
         let mut coord = self.op(OP_COMPOSITE_CONSTRUCT, v2f, &[x, y]);
@@ -666,9 +691,14 @@ impl Module {
             let shift = self.op(OP_F_DIV, v2f, &[off, size]);
             coord = self.op(OP_F_ADD, v2f, &[coord, shift]);
         }
-        let lod = self.fconst(0.0);
         let v4f = self.t.v4f;
-        self.op(OP_IMAGE_SAMPLE_EXPLICIT_LOD, v4f, &[image, coord, 0x2, lod])
+        match bias {
+            Some(b) => self.op(OP_IMAGE_SAMPLE_IMPLICIT_LOD, v4f, &[image, coord, 0x1, b]),
+            None => {
+                let lod = self.fconst(0.0);
+                self.op(OP_IMAGE_SAMPLE_EXPLICIT_LOD, v4f, &[image, coord, 0x2, lod])
+            }
+        }
     }
     fn global_image_type(&mut self) -> u32 {
         // The image type is the operand of the sampled image type.
@@ -1255,6 +1285,203 @@ fn instruction(m: &mut Module, at: usize, instr: Instr) -> Result<(), TranslateE
                     target = target.saturating_add(1);
                 }
             }
+        }
+        Instr::Tex {
+            d,
+            a,
+            b,
+            handle,
+            tex_type: 2,
+            mask,
+            dc: false,
+            aoffi,
+            blod: 2,
+            ndv: false,
+            ..
+        } if d != RZ && a != RZ && b != RZ => {
+            let bias = m.freg(b);
+            let offset = if aoffi {
+                Some(m.reg(b.saturating_add(1)))
+            } else {
+                None
+            };
+            let x = m.freg(a);
+            let y = m.freg(a.saturating_add(1));
+            let texel = m.sample(handle, x, y, offset, Some(bias));
+            let mut target = d;
+            for c in 0..4u32 {
+                if mask & (1 << c) != 0 {
+                    let v = m.op(OP_COMPOSITE_EXTRACT, float, &[texel, c]);
+                    m.fset(target, v);
+                    target = target.saturating_add(1);
+                }
+            }
+        }
+        Instr::I2f {
+            d,
+            b,
+            signed,
+            neg,
+            abs,
+        } => {
+            let mut v = m.operand(at, b, false)?;
+            if abs && signed {
+                v = m.ext(uint, GLSL_SABS, &[v]);
+            }
+            if neg {
+                v = m.op(OP_S_NEGATE, uint, &[v]);
+            }
+            let op = if signed {
+                let int = m.t.int;
+                v = m.op(OP_BITCAST, int, &[v]);
+                OP_CONVERT_S_TO_F
+            } else {
+                OP_CONVERT_U_TO_F
+            };
+            let x = m.op(op, float, &[v]);
+            m.fset(d, x)
+        }
+        Instr::F2i {
+            d,
+            b,
+            signed,
+            round,
+            neg,
+            abs,
+        } => {
+            let x = m.foperand(at, b)?;
+            let x = m.modify(x, abs, neg);
+            let r = match round {
+                0 => m.ext(float, GLSL_ROUND_EVEN, &[x]),
+                1 => m.ext(float, GLSL_FLOOR, &[x]),
+                2 => m.ext(float, GLSL_CEIL, &[x]),
+                _ => m.ext(float, GLSL_TRUNC, &[x]),
+            };
+            // Clamp into the convertible range, then patch the saturated
+            // high end and NaN (both selects see defined values).
+            let (lo, hi_in, limit, top) = if signed {
+                (
+                    -2147483648.0f32,
+                    2147483520.0f32,
+                    2147483648.0f32,
+                    0x7fff_ffffu32,
+                )
+            } else {
+                (0.0, 4294967040.0, 4294967296.0, u32::MAX)
+            };
+            let lo_c = m.fconst(lo);
+            let hi_c = m.fconst(hi_in);
+            let clamped = m.ext(float, GLSL_NMAX, &[r, lo_c]);
+            let clamped = m.ext(float, GLSL_NMIN, &[clamped, hi_c]);
+            let converted = if signed {
+                let int = m.t.int;
+                let i = m.op(OP_CONVERT_F_TO_S, int, &[clamped]);
+                m.op(OP_BITCAST, uint, &[i])
+            } else {
+                m.op(OP_CONVERT_F_TO_U, uint, &[clamped])
+            };
+            let bool_ = m.t.bool_;
+            let limit_c = m.fconst(limit);
+            let over = m.op(190, bool_, &[r, limit_c]);
+            let top_c = m.uconst(top);
+            let v = m.op(OP_SELECT, uint, &[over, top_c, converted]);
+            let nan = m.op(OP_IS_NAN, bool_, &[r]);
+            let zero = m.uconst(0);
+            let v = m.op(OP_SELECT, uint, &[nan, zero, v]);
+            m.set(d, v)
+        }
+        Instr::Iadd32i { d, a, imm } => {
+            let x = m.reg(a);
+            let y = m.uconst(imm);
+            let v = m.op(OP_I_ADD, uint, &[x, y]);
+            m.set(d, v)
+        }
+        Instr::Fadd32i {
+            d,
+            a,
+            imm,
+            neg_a,
+            abs_a,
+            neg_b,
+            abs_b,
+        } => {
+            let x = m.freg(a);
+            let x = m.modify(x, abs_a, neg_a);
+            let y = m.fconst(f32::from_bits(imm));
+            let y = m.modify(y, abs_b, neg_b);
+            let v = m.op(OP_F_ADD, float, &[x, y]);
+            m.fset(d, v)
+        }
+        Instr::Shift {
+            d,
+            a,
+            b,
+            left,
+            signed,
+            wrap,
+        } => {
+            let x = m.reg(a);
+            let mut n = m.operand(at, b, false)?;
+            if wrap {
+                let mask = m.uconst(31);
+                n = m.op(OP_BITWISE_AND, uint, &[n, mask]);
+            }
+            // Shifts by >= 32 are undefined in SPIR-V: shift by n & 31 and
+            // select the saturated value.
+            let mask = m.uconst(31);
+            let safe = m.op(OP_BITWISE_AND, uint, &[n, mask]);
+            let op = match (left, signed) {
+                (true, _) => OP_SHIFT_LEFT_LOGICAL,
+                (false, false) => OP_SHIFT_RIGHT_LOGICAL,
+                (false, true) => OP_SHIFT_RIGHT_ARITHMETIC,
+            };
+            let shifted = m.op(op, uint, &[x, safe]);
+            let v = if wrap {
+                shifted
+            } else {
+                let saturated = if signed {
+                    m.op(OP_SHIFT_RIGHT_ARITHMETIC, uint, &[x, mask])
+                } else {
+                    m.uconst(0)
+                };
+                let bool_ = m.t.bool_;
+                let thirty_two = m.uconst(32);
+                let big = m.op(OP_U_GREATER_THAN_EQUAL, bool_, &[n, thirty_two]);
+                m.op(OP_SELECT, uint, &[big, saturated, shifted])
+            };
+            m.set(d, v)
+        }
+        Instr::Lop32i {
+            d,
+            a,
+            imm,
+            op,
+            inv_a,
+        } => {
+            let mut x = m.reg(a);
+            if inv_a {
+                x = m.op(OP_NOT, uint, &[x]);
+            }
+            let y = m.uconst(imm);
+            let v = match op {
+                0 => m.op(OP_BITWISE_AND, uint, &[x, y]),
+                1 => m.op(OP_BITWISE_OR, uint, &[x, y]),
+                2 => m.op(OP_BITWISE_XOR, uint, &[x, y]),
+                _ => y,
+            };
+            m.set(d, v)
+        }
+        Instr::Sel { d, a, b, pred } => {
+            let p = m.pred(pred);
+            let x = m.reg(a);
+            let y = m.operand(at, b, false)?;
+            let v = m.op(OP_SELECT, uint, &[p, x, y]);
+            m.set(d, v)
+        }
+        Instr::Rro { d, b, neg, abs } => {
+            let x = m.foperand(at, b)?;
+            let v = m.modify(x, abs, neg);
+            m.fset(d, v)
         }
         _ => return Err(unsupported),
     }

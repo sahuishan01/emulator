@@ -276,6 +276,68 @@ pub enum Instr {
         ndv: bool,
         nodep: bool,
     },
+    /// Integer -> f32 (32-bit source, byte selector 0, round to nearest).
+    I2f {
+        d: u8,
+        b: Source,
+        signed: bool,
+        neg: bool,
+        abs: bool,
+    },
+    /// f32 -> 32-bit integer; round 0 nearest-even, 1 floor, 2 ceil, 3 trunc.
+    F2i {
+        d: u8,
+        b: Source,
+        signed: bool,
+        round: u8,
+        neg: bool,
+        abs: bool,
+    },
+    Iadd32i {
+        d: u8,
+        a: u8,
+        imm: u32,
+    },
+    Fadd32i {
+        d: u8,
+        a: u8,
+        imm: u32,
+        neg_a: bool,
+        abs_a: bool,
+        neg_b: bool,
+        abs_b: bool,
+    },
+    /// SHL / SHR; `wrap` masks the amount to 5 bits, else >= 32 saturates.
+    Shift {
+        d: u8,
+        a: u8,
+        b: Source,
+        left: bool,
+        signed: bool,
+        wrap: bool,
+    },
+    /// op 0 AND, 1 OR, 2 XOR, 3 PASS_B; `imm` already inverted when requested.
+    Lop32i {
+        d: u8,
+        a: u8,
+        imm: u32,
+        op: u8,
+        inv_a: bool,
+    },
+    /// d = pred ? a : b.
+    Sel {
+        d: u8,
+        a: u8,
+        b: Source,
+        pred: Pred,
+    },
+    /// Range reduction before MUFU; modelled as a float move with modifiers.
+    Rro {
+        d: u8,
+        b: Source,
+        neg: bool,
+        abs: bool,
+    },
     /// Other texture forms: decoded only as "a texture instruction".
     TexOther {
         top: u16,
@@ -434,7 +496,75 @@ pub fn decode_word(word: u64) -> Option<Decoded> {
                 neg_a: bit(word, 48),
                 abs_b: bit(word, 49),
             },
+            // I2F / F2I: 32-bit formats only (bits 8..9 dst, 10..11 src = 2),
+            // byte selector 0; anything else stays undecoded.
+            0x5cb8
+                if field(word, 8, 4) == 0b1010
+                    && field(word, 41, 2) == 0
+                    && field(word, 39, 2) == 0 =>
+            {
+                Instr::I2f {
+                    d,
+                    b,
+                    signed: bit(word, 13),
+                    neg: bit(word, 45),
+                    abs: bit(word, 49),
+                }
+            }
+            0x5cb0 if field(word, 8, 4) == 0b1010 && field(word, 41, 2) == 0 => Instr::F2i {
+                d,
+                b,
+                signed: bit(word, 12),
+                round: field(word, 39, 2) as u8,
+                neg: bit(word, 45),
+                abs: bit(word, 49),
+            },
+            0x5c48 | 0x5c28 if !bit(word, 43) && !bit(word, 47) => Instr::Shift {
+                d,
+                a,
+                b,
+                left: base == 0x5c48,
+                signed: base == 0x5c28 && bit(word, 48),
+                wrap: bit(word, 39),
+            },
+            0x5ca0 => Instr::Sel {
+                d,
+                a,
+                b,
+                pred: Pred::at(word, 39),
+            },
+            0x5c90 => Instr::Rro {
+                d,
+                b,
+                neg: bit(word, 45),
+                abs: bit(word, 49),
+            },
             _ => return None,
+        }
+    } else if top & 0xfe00 == 0x1c00 && field(word, 52, 5) == 0 {
+        Instr::Iadd32i {
+            d,
+            a,
+            imm: field(word, 20, 32) as u32,
+        }
+    } else if top & 0xfc00 == 0x0800 && !bit(word, 52) {
+        Instr::Fadd32i {
+            d,
+            a,
+            imm: field(word, 20, 32) as u32,
+            neg_b: bit(word, 53),
+            abs_a: bit(word, 54),
+            neg_a: bit(word, 56),
+            abs_b: bit(word, 57),
+        }
+    } else if top & 0xfc00 == 0x0400 && !bit(word, 52) && !bit(word, 57) {
+        let imm = field(word, 20, 32) as u32;
+        Instr::Lop32i {
+            d,
+            a,
+            imm: if bit(word, 56) { !imm } else { imm },
+            op: field(word, 53, 2) as u8,
+            inv_a: bit(word, 55),
         }
     } else if matches!(top & 0xff80, 0x5980 | 0x4980 | 0x5180) || top & 0xfe80 == 0x3280 {
         let rc = Source::Reg(reg(word, 39));

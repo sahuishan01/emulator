@@ -36,7 +36,9 @@ fn translate(words: &[u64], sph: &Header) -> Result<Vec<u32>, TranslateError> {
 
 /// Run spirv-val when installed (the test still checks translation without it).
 fn validate(module: &[u32], name: &str) {
-    let dir = std::env::temp_dir().join(format!("emu-spv-{}-{name}", std::process::id()));
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("emu-spv-{}-{name}-{seq}", std::process::id()));
     let bytes: Vec<u8> = module.iter().flat_map(|w| w.to_le_bytes()).collect();
     std::fs::write(&dir, bytes).expect("write");
     let out = std::process::Command::new("spirv-val")
@@ -189,6 +191,10 @@ impl Environment for HostEnv {
         let iy = ((y * 4.0).floor() as i32 + o[1]).clamp(0, 3);
         Some(texel(ix, iy))
     }
+    fn texture_2d_bias(&self, h: u16, x: f32, y: f32, _bias: f32, o: [i32; 2]) -> Option<[f32; 4]> {
+        // Single-level texture: any implicit level resolves to level 0.
+        self.texture_2d(h, x, y, 0.0, o)
+    }
 }
 
 fn differential(words: &[u64], name: &str) {
@@ -322,5 +328,113 @@ fn device_matches_executor_textures() {
             EXIT,
         ],
         "tex",
+    );
+}
+
+const PT: u64 = PT_GUARD;
+fn i2f(d: u64, b: u64, signed: bool) -> u64 {
+    (0x5cb8u64 << 48) | b << 20 | (0xa | u64::from(signed) << 5) << 8 | PT | d
+}
+fn f2i(d: u64, b: u64, signed: bool, round: u64) -> u64 {
+    (0x5cb0u64 << 48) | round << 39 | b << 20 | (0xa | u64::from(signed) << 4) << 8 | PT | d
+}
+fn iadd32i(d: u64, a: u64, imm: u32) -> u64 {
+    (0x1c00u64 << 48) | (imm as u64) << 20 | PT | a << 8 | d
+}
+fn fadd32i(d: u64, a: u64, imm: f32) -> u64 {
+    (0x02u64 << 58) | (imm.to_bits() as u64) << 20 | PT | a << 8 | d
+}
+fn lop32i(d: u64, a: u64, imm: u32, op: u64) -> u64 {
+    (0x01u64 << 58) | op << 53 | (imm as u64) << 20 | PT | a << 8 | d
+}
+fn shift(d: u64, a: u64, b: u64, top: u64, wrap: bool) -> u64 {
+    (top << 48) | u64::from(wrap) << 39 | b << 20 | PT | a << 8 | d
+}
+
+#[test]
+fn integer_conversion_forms_decode() {
+    for w in [
+        i2f(0, 1, true),
+        f2i(0, 1, true, 3),
+        iadd32i(0, 1, 5),
+        fadd32i(0, 1, 1.5),
+        lop32i(0, 1, 3, 2),
+        shift(0, 1, 2, 0x5c29, false),
+    ] {
+        let l = list(&code(&[w, EXIT]));
+        assert!(l.unsupported.is_none(), "{w:#018x}");
+    }
+    // Z-A's observed words decode too.
+    for w in [
+        0x5cb8000000172a07u64,
+        0x5cb0118000070a00,
+        0x1c00000000170007,
+        0x088b727c5ac70305,
+    ] {
+        assert!(list(&code(&[w, EXIT])).unsupported.is_none(), "{w:#018x}");
+    }
+}
+
+#[test]
+fn device_matches_executor_conversions() {
+    differential(
+        &[
+            mov32i(4, (-7i32) as u32, 7),
+            mov32i(5, (-2.5f32).to_bits(), 7),
+            mov32i(6, 3e10f32.to_bits(), 7),
+            i2f(0, 4, true),     // -7.0
+            f2i(1, 5, true, 0),  // round-even(-2.5) = -2
+            f2i(2, 6, true, 3),  // saturates to i32::MAX
+            f2i(3, 5, false, 1), // unsigned floor(-2.5) -> 0
+            EXIT,
+        ],
+        "conv",
+    );
+}
+
+#[test]
+fn device_matches_executor_integer_ops() {
+    differential(
+        &[
+            mov32i(4, 0x8000_00f0, 7),
+            mov32i(5, 36, 7),
+            mov32i(6, 4, 7),
+            iadd32i(0, 4, 0x10),
+            lop32i(1, 4, 0xff, 2),
+            shift(2, 4, 6, 0x5c29, false), // SHR.S32 by 4
+            shift(3, 4, 5, 0x5c29, false), // SHR.S32 by 36 -> sign fill
+            EXIT,
+        ],
+        "int",
+    );
+    differential(
+        &[
+            mov32i(4, 0x8000_00f0, 7),
+            mov32i(5, 36, 7),
+            shift(0, 4, 5, 0x5c48, false), // SHL by 36 -> 0
+            shift(1, 4, 5, 0x5c48, true),  // SHL.W by 36 & 31 = 4
+            mov32i(2, 1.25f32.to_bits(), 7),
+            fadd32i(3, 2, -0.5),
+            EXIT,
+        ],
+        "shift",
+    );
+}
+
+#[test]
+fn device_matches_executor_tex_bias() {
+    let za_tex = 0xc0f8008120770407u64;
+    // TEX.LB R0, R4, R7 (bias), mask RGBA, no AOFFI.
+    let lb =
+        (za_tex & !(7u64 << 55) & !(1u64 << 54) & !(0xf << 31) & !0xff) | (2 << 55) | (0xf << 31);
+    differential(
+        &[
+            mov32i(4, (2.5f32 / 4.0).to_bits(), 7),
+            mov32i(5, (0.5f32 / 4.0).to_bits(), 7),
+            mov32i(7, 0.0f32.to_bits(), 7),
+            lb,
+            EXIT,
+        ],
+        "texlb",
     );
 }
