@@ -258,6 +258,24 @@ pub enum Instr {
         abs_b: bool,
         float_result: bool,
     },
+    /// Non-bindless TEX (top pattern `110000----111---`). Field layout from
+    /// memory of the public encoding: type 28..30, mask 31..34, handle
+    /// 36..48, dc 50, aoffi 54, blod 55..57 (0 none, 1 LZ, 2 LB, 3 LL,
+    /// 6 LBA, 7 LLA). Coordinates start at `a`; `b` holds, in order, the
+    /// lod/bias, the packed AOFFI offset and the depth reference.
+    Tex {
+        d: u8,
+        a: u8,
+        b: u8,
+        handle: u16,
+        tex_type: u8,
+        mask: u8,
+        dc: bool,
+        aoffi: bool,
+        blod: u8,
+        ndv: bool,
+        nodep: bool,
+    },
     /// Other texture forms: decoded only as "a texture instruction".
     TexOther {
         top: u16,
@@ -560,6 +578,20 @@ pub fn decode_word(word: u64) -> Option<Decoded> {
             handle: field(word, 36, 13) as u16,
             mask: field(word, 50, 3) as u8,
             kind: field(word, 53, 4) as u8,
+        }
+    } else if top & 0xfc38 == 0xc038 {
+        Instr::Tex {
+            d,
+            a,
+            b: reg(word, 20),
+            handle: field(word, 36, 13) as u16,
+            tex_type: field(word, 28, 3) as u8,
+            mask: field(word, 31, 4) as u8,
+            dc: bit(word, 50),
+            aoffi: bit(word, 54),
+            blod: field(word, 55, 3) as u8,
+            ndv: bit(word, 35),
+            nodep: bit(word, 49),
         }
     } else if top & 0xc000 == 0xc000 {
         Instr::TexOther { top }

@@ -51,7 +51,7 @@ impl emulator_shader::exec::Environment for Zeros {
     fn attribute(&self, _: u16) -> Option<u32> {
         Some(0)
     }
-    fn texture_2d(&self, _: u16, _: f32, _: f32, _: f32) -> Option<[f32; 4]> {
+    fn texture_2d(&self, _: u16, _: f32, _: f32, _: f32, _: [i32; 2]) -> Option<[f32; 4]> {
         Some([0.0; 4])
     }
 }
@@ -75,7 +75,9 @@ fn forms(listing: &emulator_shader::maxwell::Listing, code: &[u8]) -> Vec<(usize
                 format!("{i:?}")
             }
             Instr::Texs { kind, mask, .. } => format!("Texs kind={kind} mask={mask}"),
-            Instr::TexOther { .. } | Instr::Ipa { .. } => format!("top={:#06x}", word >> 48),
+            Instr::TexOther { .. } | Instr::Tex { .. } | Instr::Ipa { .. } => {
+                format!("top={:#06x}", word >> 48)
+            }
             _ => continue,
         };
         if out.len() < MAX_FORMS && seen.insert(key.clone()) {

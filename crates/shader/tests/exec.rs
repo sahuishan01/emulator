@@ -13,8 +13,8 @@ impl Environment for Env {
     fn attribute(&self, attr: u16) -> Option<u32> {
         (attr == 0x80).then_some(0.25f32.to_bits())
     }
-    fn texture_2d(&self, handle: u16, x: f32, y: f32, lod: f32) -> Option<[f32; 4]> {
-        (handle == 8 && lod == 0.0).then_some([x, y, 0.5, 0.75])
+    fn texture_2d(&self, handle: u16, x: f32, y: f32, lod: f32, o: [i32; 2]) -> Option<[f32; 4]> {
+        (handle == 8 && lod == 0.0).then_some([x + o[0] as f32, y + o[1] as f32, 0.5, 0.75])
     }
 }
 
@@ -42,7 +42,14 @@ fn float_alu_predicates_and_branch() {
     let fadd_imm = (0x3858u64 << 48) | (0x3f800 << 20) | PT_GUARD | 1;
     let fsetp_gt = (0x36b4u64 << 48) | (7 << 39) | (0x40200 << 20) | PT_GUARD | (1 << 8) | 7;
     let bra_p0 = 0xe240_0000_0000_000fu64 | 8 << 20;
-    let ipa = (0xe000u64 << 48) | (0xffu64 << 39) | (0b0111u64 << 47) | (0x80 << 28) | (0xff << 20) | PT_GUARD | (0xff << 8) | 4;
+    let ipa = (0xe000u64 << 48)
+        | (0xffu64 << 39)
+        | (0b0111u64 << 47)
+        | (0x80 << 28)
+        | (0xff << 20)
+        | PT_GUARD
+        | (0xff << 8)
+        | 4;
     // FFMA R5, R1, c[1][4], R1  -> 3 * 0.5 + 3
     let ffma_cbuf = (0x4980u64 << 48) | (1 << 39) | (1 << 34) | (1 << 20) | PT_GUARD | (1 << 8) | 5;
     let s = execute(&[
@@ -190,6 +197,60 @@ fn texs_2d_lz_component_layouts() {
     ));
     assert!(matches!(
         execute(&[texs(10, 255, 0, 1, 8, 1, 1), EXIT]),
+        Err(ExecError::Unsupported { .. })
+    ));
+}
+
+#[test]
+fn tex_2d_lz_aoffi_writes_masked_components() {
+    // Z-A's word at +0xc8: TEX.LZ.AOFFI R7, R4, R7, handle 8, 2D, mask G.
+    let za = 0xc0f8008120770407u64;
+    let l = list(&code(&[za]));
+    match l.instructions[0].1.instr {
+        Instr::Tex {
+            d: 7,
+            a: 4,
+            b: 7,
+            handle: 8,
+            tex_type: 2,
+            mask: 0b0010,
+            dc: false,
+            aoffi: true,
+            blod: 1,
+            ..
+        } => {}
+        other => panic!("{other:?}"),
+    }
+    // offsets x = -1 (0xf), y = 2; coords (1, 3).
+    let s = execute(&[
+        mov32i(4, 1.0f32.to_bits(), 7),
+        mov32i(5, 3.0f32.to_bits(), 7),
+        mov32i(7, 0x2f, 7),
+        za,
+        EXIT,
+    ])
+    .expect("runs");
+    assert_eq!(f32::from_bits(s.registers[7]), 5.0);
+    // Mask R+A -> R7 = x, R8 = alpha; no AOFFI.
+    let ra = (za & !(0xf << 31) & !(1 << 54)) | (0b1001 << 31);
+    let s = execute(&[
+        mov32i(4, 1.0f32.to_bits(), 7),
+        mov32i(5, 3.0f32.to_bits(), 7),
+        ra,
+        EXIT,
+    ])
+    .expect("runs");
+    assert_eq!(
+        (
+            f32::from_bits(s.registers[7]),
+            f32::from_bits(s.registers[8])
+        ),
+        (1.0, 0.75)
+    );
+    // Depth compare stays unsupported.
+    let dc = za | (1 << 50);
+    assert!(matches!(
+        execute(&[dc, EXIT]),
         Err(ExecError::Unsupported { .. })
     ));
 }

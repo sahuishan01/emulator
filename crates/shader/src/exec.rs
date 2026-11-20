@@ -14,9 +14,17 @@ pub trait Environment {
     fn constant(&self, bank: u8, offset: u32) -> Option<u32>;
     /// Interpolated input attribute at byte address `attr` (IPA).
     fn attribute(&self, attr: u16) -> Option<u32>;
-    /// RGBA sample of texture `handle` at (x, y) and explicit level of detail.
+    /// RGBA sample of texture `handle` at (x, y), explicit level of detail
+    /// and integer texel offset (AOFFI; zero when absent).
     /// None when the texture is unbound or unsupported.
-    fn texture_2d(&self, _handle: u16, _x: f32, _y: f32, _lod: f32) -> Option<[f32; 4]> {
+    fn texture_2d(
+        &self,
+        _handle: u16,
+        _x: f32,
+        _y: f32,
+        _lod: f32,
+        _offset: [i32; 2],
+    ) -> Option<[f32; 4]> {
         None
     }
 }
@@ -504,7 +512,7 @@ fn step(at: usize, instr: Instr, env: &dyn Environment, s: &mut State) -> Result
             let comps =
                 texs_components(mask, d1 != RZ).ok_or(ExecError::Unsupported { at, instr })?;
             let texel = env
-                .texture_2d(handle, f(s.reg(a)), f(s.reg(b)), 0.0)
+                .texture_2d(handle, f(s.reg(a)), f(s.reg(b)), 0.0, [0, 0])
                 .ok_or(ExecError::Texture { at, handle })?;
             let targets = [d0, d0.saturating_add(1), d1, d1.saturating_add(1)];
             if d0 == RZ {
@@ -512,6 +520,45 @@ fn step(at: usize, instr: Instr, env: &dyn Environment, s: &mut State) -> Result
             }
             for (i, c) in comps.iter().enumerate() {
                 s.set(targets[i], texel[*c].to_bits());
+            }
+        }
+        // 2D, LZ, optional AOFFI; no depth compare, derivatives or array.
+        Instr::Tex {
+            d,
+            a,
+            b,
+            handle,
+            tex_type: 2,
+            mask,
+            dc: false,
+            aoffi,
+            blod: 1,
+            ndv: false,
+            ..
+        } if d != RZ && a != RZ && (!aoffi || b != RZ) => {
+            let offset = if aoffi {
+                let packed = s.reg(b);
+                let nibble = |v: u32| ((v & 0xf) as i32) << 28 >> 28;
+                [nibble(packed), nibble(packed >> 4)]
+            } else {
+                [0, 0]
+            };
+            let texel = env
+                .texture_2d(
+                    handle,
+                    f(s.reg(a)),
+                    f(s.reg(a.saturating_add(1))),
+                    0.0,
+                    offset,
+                )
+                .ok_or(ExecError::Texture { at, handle })?;
+            // Enabled components are written to consecutive registers from d.
+            let mut target = d;
+            for (c, value) in texel.iter().enumerate() {
+                if mask & (1 << c) != 0 {
+                    s.set(target, value.to_bits());
+                    target = target.saturating_add(1);
+                }
             }
         }
         _ => return Err(ExecError::Unsupported { at, instr }),
