@@ -1009,7 +1009,7 @@ fn print_run_report(
             .map(|(s, (n, e, v))| format!("{s}={n} (exec ok {e}, spirv {v})"))
             .collect();
         println!("  stages: {}", line.join(" "));
-        let slots: Vec<String> = emulator_gpu::pipeline_slots()
+        let slots: Vec<String> = emulator_services::pipeline_slots()
             .iter()
             .map(|((slot, control, off), n)| match control {
                 Some(c) => format!("s{slot}:{c:#x}{}x{n}", if *off { "+off" } else { "" }),
