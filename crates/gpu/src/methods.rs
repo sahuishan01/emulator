@@ -477,7 +477,7 @@ impl MethodState {
         let mut spans = 0;
         // Contiguous LOAD_CONSTANT_BUFFER words not yet turned into a write.
         let mut cb_run: Option<(u64, Vec<u8>)> = None;
-        for write in writes {
+        for (index, write) in writes.iter().enumerate() {
             let cb_data = (CB_DATA_FIRST..=CB_DATA_LAST).contains(&write.method_byte_offset());
             if !cb_data {
                 if let Some(run) = cb_run.take() {
@@ -588,6 +588,12 @@ impl MethodState {
                     let launches = offset == 0x19d0 || DRAW_TRIGGERS.contains(&offset);
                     if launches {
                         draw_registers.record_shaders(space);
+                        census_rest(
+                            space,
+                            (**draw_registers).clone(),
+                            write.subchannel,
+                            &writes[index + 1..],
+                        );
                         return Err(extra.unmodelled_error().expect("recorded"));
                     }
                 }
@@ -1263,5 +1269,33 @@ impl PreparedBatch {
         self.stats.draw_launches += 1;
         self.stats.drawn_bytes += bytes;
         Ok(())
+    }
+}
+
+/// Diagnostics after a refused 3D launch: the batch is discarded, but later
+/// writes may still bind shader programs (Z-A binds its vertex program after
+/// the first clear). Replay only the program-pipeline and code-region
+/// registers of the same subchannel and census the bound programs at every
+/// later launch. No state or memory is changed.
+fn census_rest(
+    space: &GpuAddressSpace,
+    mut draw: crate::draw::Registers,
+    subchannel: u8,
+    rest: &[MethodWrite],
+) {
+    for write in rest {
+        if write.subchannel != subchannel {
+            continue;
+        }
+        let offset = write.method_byte_offset();
+        match offset {
+            0x1608..=0x160c | 0x2000..=0x214c => {
+                let _ = draw.write(offset, write.data);
+            }
+            _ if offset == 0x19d0 || DRAW_TRIGGERS.contains(&offset) || offset == 0x1618 => {
+                draw.record_shaders(space);
+            }
+            _ => {}
+        }
     }
 }

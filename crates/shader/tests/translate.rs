@@ -95,6 +95,8 @@ fn alu_branches_attributes_and_constants_validate() {
             ipa,
             ffma_cbuf,
             xmad(6, 0, 1, 2, 2 << 50),
+            // Second bank: c[3][0x10] (shared block type, distinct binding).
+            (0x4c98u64 << 48) | (3 << 34) | (4 << 20) | PT_GUARD | 8,
             EXIT,
         ],
         &pixel(0xf, false),

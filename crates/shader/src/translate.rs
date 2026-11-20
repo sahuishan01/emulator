@@ -218,6 +218,7 @@ struct Module {
     predicates: BTreeMap<u8, u32>,
     banks: BTreeMap<u8, u32>,
     ptr_uniform_uint: Option<u32>,
+    ptr_uniform_block: Option<u32>,
     generics: BTreeMap<u16, u32>,
     frag_coord: Option<u32>,
     ptr_input_v4f: Option<u32>,
@@ -258,6 +259,7 @@ impl Module {
             predicates: BTreeMap::new(),
             banks: BTreeMap::new(),
             ptr_uniform_uint: None,
+            ptr_uniform_block: None,
             generics: BTreeMap::new(),
             frag_coord: None,
             ptr_input_v4f: None,
@@ -443,19 +445,26 @@ impl Module {
         let var = match self.banks.get(&bank) {
             Some(&v) => v,
             None => {
-                let uint = self.t.uint;
-                let v4u = self.global(OP_TYPE_VECTOR, &[uint, 4]);
-                let len = self.uconst(CBUF_VEC4S);
-                let array = self.global(OP_TYPE_ARRAY, &[v4u, len]);
-                self.decorate(array, &[DEC_ARRAY_STRIDE, 16]);
-                let block = self.global(OP_TYPE_STRUCT, &[array]);
-                self.decorate(block, &[DEC_BLOCK]);
-                push(
-                    &mut self.decorations,
-                    OP_MEMBER_DECORATE,
-                    &[block, 0, DEC_OFFSET, 0],
-                );
-                let ptr = self.global(OP_TYPE_POINTER, &[SC_UNIFORM, block]);
+                let ptr = match self.ptr_uniform_block {
+                    Some(p) => p,
+                    None => {
+                        let uint = self.t.uint;
+                        let v4u = self.global(OP_TYPE_VECTOR, &[uint, 4]);
+                        let len = self.uconst(CBUF_VEC4S);
+                        let array = self.global(OP_TYPE_ARRAY, &[v4u, len]);
+                        self.decorate(array, &[DEC_ARRAY_STRIDE, 16]);
+                        let block = self.global(OP_TYPE_STRUCT, &[array]);
+                        self.decorate(block, &[DEC_BLOCK]);
+                        push(
+                            &mut self.decorations,
+                            OP_MEMBER_DECORATE,
+                            &[block, 0, DEC_OFFSET, 0],
+                        );
+                        let p = self.global(OP_TYPE_POINTER, &[SC_UNIFORM, block]);
+                        self.ptr_uniform_block = Some(p);
+                        p
+                    }
+                };
                 let var = self.global_var(ptr, SC_UNIFORM);
                 self.decorate(var, &[DEC_DESCRIPTOR_SET, 0]);
                 self.decorate(var, &[DEC_BINDING, u32::from(bank)]);
