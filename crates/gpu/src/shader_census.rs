@@ -36,6 +36,8 @@ pub struct ShaderRecord {
     /// Reference executor with every constant and attribute reading zero:
     /// steps-free outcome, or the first explicit failure.
     pub exec: Option<Result<(), emulator_shader::exec::ExecError>>,
+    /// SPIR-V translation of pixel programs: module words, or why it failed.
+    pub spirv: Option<Result<Vec<u32>, emulator_shader::translate::TranslateError>>,
     /// Full 80-byte header when readable.
     pub sph: Option<emulator_shader::sph::Header>,
 }
@@ -149,6 +151,12 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                 )
                 .map(|_| ())
             });
+            let spirv = match (&graph, &sph) {
+                (Ok(g), Some(h)) if h.kind() == emulator_shader::sph::Kind::Pixel => Some(
+                    emulator_shader::translate::translate_fragment(&listing, g, h),
+                ),
+                _ => None,
+            };
             programs.insert(
                 base,
                 ShaderRecord {
@@ -164,6 +172,7 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
                     cfg: graph.map(|g| g.blocks.len()),
                     forms: forms(&listing, &code),
                     exec,
+                    spirv,
                     sph,
                     undecoded_examples: listing.undecoded_examples,
                 },

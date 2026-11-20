@@ -1064,6 +1064,15 @@ fn print_run_report(
                 Some(Err(e)) => println!("    exec (zero inputs): {e:?}"),
                 None => {}
             }
+            match &record.spirv {
+                Some(Ok(words)) => println!(
+                    "    spirv: {} words, spirv-val: {}",
+                    words.len(),
+                    spirv_val(words)
+                ),
+                Some(Err(e)) => println!("    spirv: {e:?}"),
+                None => {}
+            }
             for (o, form) in &record.forms {
                 println!("    form code+{o:#x}: {form}");
             }
@@ -1107,5 +1116,32 @@ fn main() -> ExitCode {
             eprintln!("error: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Validate a translated module with `spirv-val` when it is installed
+/// (diagnostics only; the emulator never depends on it).
+fn spirv_val(words: &[u32]) -> String {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("emulator-census-{}.spv", std::process::id()));
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    if let Err(e) = std::fs::File::create(&path).and_then(|mut f| f.write_all(&bytes)) {
+        return format!("not run ({e})");
+    }
+    let result = std::process::Command::new("spirv-val")
+        .args(["--target-env", "vulkan1.1"])
+        .arg(&path)
+        .output();
+    let _ = std::fs::remove_file(&path);
+    match result {
+        Ok(o) if o.status.success() => "ok".into(),
+        Ok(o) => format!(
+            "FAILED {}",
+            String::from_utf8_lossy(&o.stderr)
+                .lines()
+                .next()
+                .unwrap_or("")
+        ),
+        Err(e) => format!("not run ({e})"),
     }
 }
