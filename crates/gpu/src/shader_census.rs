@@ -93,11 +93,21 @@ fn forms(listing: &emulator_shader::maxwell::Listing, code: &[u8]) -> Vec<(usize
 }
 
 thread_local! {
+    /// (slot, control word, offset set) at each census point.
+    static SLOTS: RefCell<BTreeMap<(u8, Option<u32>, bool), usize>> = RefCell::default();
     static PROGRAMS: RefCell<BTreeMap<u64, ShaderRecord>> = RefCell::default();
 }
 
 /// Record every enabled stage (control word bit 0) at a refused draw.
 pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u32>; 3]; 6]) {
+    SLOTS.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        for (slot, p) in pipeline.iter().enumerate() {
+            if slots.len() < 256 {
+                *slots.entry((slot as u8, p[0], p[1].is_some())).or_default() += 1;
+            }
+        }
+    });
     for (slot, p) in pipeline.iter().enumerate() {
         let (Some(control), Some(offset)) = (p[0], p[1]) else {
             continue;
@@ -187,4 +197,9 @@ pub(crate) fn record(space: &GpuAddressSpace, region: u64, pipeline: &[[Option<u
 /// Programs seen at refused draws on this thread, keyed by GPU address.
 pub fn shader_census() -> Vec<(u64, ShaderRecord)> {
     PROGRAMS.with(|p| p.borrow().iter().map(|(k, v)| (*k, v.clone())).collect())
+}
+
+/// Pipeline slot control words seen at census points: (slot, control, offset set) -> count.
+pub fn pipeline_slots() -> Vec<((u8, Option<u32>, bool), usize)> {
+    SLOTS.with(|s| s.borrow().iter().map(|(k, v)| (*k, *v)).collect())
 }

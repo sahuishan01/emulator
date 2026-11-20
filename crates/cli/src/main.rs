@@ -1009,6 +1009,17 @@ fn print_run_report(
             .map(|(s, (n, e, v))| format!("{s}={n} (exec ok {e}, spirv {v})"))
             .collect();
         println!("  stages: {}", line.join(" "));
+        let slots: Vec<String> = emulator_gpu::pipeline_slots()
+            .iter()
+            .map(|((slot, control, off), n)| match control {
+                Some(c) => format!("s{slot}:{c:#x}{}x{n}", if *off { "+off" } else { "" }),
+                None => format!("s{slot}:unset x{n}"),
+            })
+            .collect();
+        println!(
+            "  pipeline slots (slot:control x census points): {}",
+            slots.join(" ")
+        );
         // Vertex-like stages first so they are never cut by the cap.
         let mut ordered: Vec<_> = shaders.iter().collect();
         ordered.sort_by_key(|(_, r)| r.stage == "Fragment");
